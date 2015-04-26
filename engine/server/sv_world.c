@@ -1353,15 +1353,14 @@ trace_t SV_MoveNoEnts( const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_
 
 /*
 ==================
-SV_TraceTexture
+SV_TraceSurface
 
 find the face where the traceline hit
 assume pTextureEntity is valid
 ==================
 */
-const char *SV_TraceTexture( edict_t *ent, const vec3_t start, const vec3_t end )
+msurface_t *SV_TraceSurface( edict_t *ent, const vec3_t start, const vec3_t end )
 {
-	msurface_t	*surf;
 	matrix4x4		matrix;
 	model_t		*bmodel;
 	hull_t		*hull;
@@ -1385,7 +1384,20 @@ const char *SV_TraceTexture( edict_t *ent, const vec3_t start, const vec3_t end 
 		Matrix4x4_VectorITransform( matrix, end, end_l );
 	}
 
-	surf = PM_RecursiveSurfCheck( bmodel, &bmodel->nodes[hull->firstclipnode], start_l, end_l );
+	return PM_RecursiveSurfCheck( bmodel, &bmodel->nodes[hull->firstclipnode], start_l, end_l );
+}
+
+/*
+==================
+SV_TraceTexture
+
+find the face where the traceline hit
+assume pTextureEntity is valid
+==================
+*/
+const char *SV_TraceTexture( edict_t *ent, const vec3_t start, const vec3_t end )
+{
+	msurface_t	*surf = SV_TraceSurface( ent, start, end );
 
 	if( !surf || !surf->texinfo || !surf->texinfo->texture )
 		return NULL;

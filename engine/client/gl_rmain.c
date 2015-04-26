@@ -1415,6 +1415,9 @@ static int GL_RenderGetParm( int parm, int arg )
 	case PARM_TEX_SRC_HEIGHT:
 		glt = R_GetTexture( arg );
 		return glt->srcHeight;
+	case PARM_TEX_GLFORMAT:
+		glt = R_GetTexture( arg );
+		return glt->format;
 	case PARM_TEX_SKYBOX:
 		ASSERT( arg >= 0 && arg < 6 );
 		return tr.skyboxTextures[arg];
@@ -1594,7 +1597,7 @@ static const char *GL_TextureName( unsigned int texnum )
 	return R_GetTexture( texnum )->name;	
 }
 
-static const byte *GL_TextureData( unsigned int texnum )
+const byte *GL_TextureData( unsigned int texnum )
 {
 	rgbdata_t *pic = R_GetTexture( texnum )->original;
 

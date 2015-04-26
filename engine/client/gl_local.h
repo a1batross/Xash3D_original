@@ -178,6 +178,7 @@ typedef struct
 	int		blankdeluxeTexture;
 	int		normalizeTexture;
 	int		dlightCubeTexture;	// dynamic cubemap
+	int		vsdctCubeTexture;	// Virtual Shadow Depth Cubemap Texture
 	int		grayCubeTexture;
 	int		whiteCubeTexture;
 	int		skyboxTextures[6];	// skybox sides
@@ -521,6 +522,8 @@ enum
 	GL_TEXTURE_ENV_ADD_EXT,
 	GL_CLAMP_TEXBORDER_EXT,
 	GL_ARB_TEXTURE_FLOAT_EXT,
+	GL_ARB_DEPTH_FLOAT_EXT,
+	GL_ARB_SEAMLESS_CUBEMAP,
 	GL_DEPTH_TEXTURE,
 	GL_SHADOW_EXT,
 	GL_EXTCOUNT,		// must be last
@@ -557,6 +560,9 @@ typedef struct
 
 	GLfloat		max_texture_anisotropy;
 	GLfloat		max_texture_lodbias;
+
+	GLint		max_vertex_uniforms;
+	GLint		max_vertex_attribs;
 
 	int		color_bits;
 	int		alpha_bits;

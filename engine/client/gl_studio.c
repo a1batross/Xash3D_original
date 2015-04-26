@@ -2030,7 +2030,7 @@ static void R_StudioDrawPoints( void )
 			pglBlendFunc( GL_SRC_ALPHA, GL_ONE );
 			pglDepthMask( GL_FALSE );
 		}
-		else if( g_nFaceFlags & STUDIO_NF_ALPHA )
+		else if( g_nFaceFlags & STUDIO_NF_ALPHA && !( host.features & ENGINE_DISABLE_HDTEXTURES )) // Paranoia2 collision flag
 		{
 			GL_SetRenderMode( kRenderTransTexture );
 			alpha = RI.currententity->curstate.renderamt * (1.0f / 255.0f);
@@ -3455,6 +3455,9 @@ static void R_StudioLoadTexture( model_t *mod, studiohdr_t *phdr, mstudiotexture
 		// NOTE: replace index with pointer to start of imagebuffer, ImageLib expected it
 		ptexture->index = (int)((byte *)phdr) + ptexture->index;
 		size = sizeof( mstudiotexture_t ) + ptexture->width * ptexture->height + 768;
+
+		if( host.features & ENGINE_DISABLE_HDTEXTURES && ptexture->flags & STUDIO_NF_TRANSPARENT )
+			flags |= TF_KEEP_8BIT; // Paranoia2 alpha-tracing
 
 		// build the texname
 		Q_snprintf( texname, sizeof( texname ), "#%s/%s.mdl", mdlname, name );
