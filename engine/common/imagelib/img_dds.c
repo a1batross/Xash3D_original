@@ -22,10 +22,9 @@ qboolean Image_CheckDXT3Alpha( dds_t *hdr, byte *fin )
 	byte	*alpha; 
 	int	x, y, i, j; 
 
-	// analyze quad 4x4
-	for( y = 0; y < 4; y += 4 )
+	for( y = 0; y < hdr->dwHeight; y += 4 )
 	{
-		for( x = 0; x < 4; x += 4 )
+		for( x = 0; x < hdr->dwWidth; x += 4 )
 		{
 			alpha = fin;
 			fin += 8;
@@ -58,10 +57,9 @@ qboolean Image_CheckDXT5Alpha( dds_t *hdr, byte *fin )
 	byte	*alphamask; 
 	int	x, y, i, j; 
 
-	// analyze quad 4x4
-	for( y = 0; y < 4; y += 4 )
+	for( y = 0; y < hdr->dwHeight; y += 4 )
 	{
-		for( x = 0; x < 4; x += 4 )
+		for( x = 0; x < hdr->dwWidth; x += 4 )
 		{
 			if( y >= hdr->dwHeight || x >= hdr->dwWidth )
 				break;

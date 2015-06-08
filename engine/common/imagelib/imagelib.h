@@ -249,8 +249,8 @@ typedef struct dds_s
 } dds_t;
 
 // imagelib definitions
-#define IMAGE_MAXWIDTH	4096
-#define IMAGE_MAXHEIGHT	4096
+#define IMAGE_MAXWIDTH	8192
+#define IMAGE_MAXHEIGHT	8192
 #define LUMP_MAXWIDTH	1024	// WorldCraft limits
 #define LUMP_MAXHEIGHT	1024
 

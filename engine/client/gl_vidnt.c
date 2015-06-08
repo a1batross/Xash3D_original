@@ -612,7 +612,14 @@ GL_UpdateSwapInterval
 */
 void GL_UpdateSwapInterval( void )
 {
-	if( gl_swapInterval->modified )
+	// disable VSync while level is loading
+	if( cls.state < ca_active )
+	{
+		if( pwglSwapIntervalEXT )
+			pwglSwapIntervalEXT( 0 );
+		gl_swapInterval->modified = true;
+	}
+	else if( gl_swapInterval->modified )
 	{
 		gl_swapInterval->modified = false;
 
