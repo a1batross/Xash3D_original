@@ -36,7 +36,6 @@ void V_SetupRefDef( void )
 	clent = CL_GetLocalPlayer ();
 
 	clgame.entities->curstate.scale = clgame.movevars.waveHeight;
-	VectorCopy( cl.frame.local.client.punchangle, cl.refdef.punchangle );
 	clgame.viewent.curstate.modelindex = cl.frame.local.client.viewmodel;
 	clgame.viewent.model = Mod_Handle( clgame.viewent.curstate.modelindex );
 	clgame.viewent.curstate.number = cl.playernum + 1;
@@ -91,16 +90,18 @@ void V_SetupRefDef( void )
 		V_AdjustFov( &cl.refdef.fov_x, &cl.refdef.fov_y, cl.refdef.viewport[2], cl.refdef.viewport[3], false );
 
 	if( CL_IsPredicted( ) && !cl.refdef.demoplayback )
-	{	
+	{
 		VectorCopy( cl.predicted_origin, cl.refdef.simorg );
 		VectorCopy( cl.predicted_velocity, cl.refdef.simvel );
 		VectorCopy( cl.predicted_viewofs, cl.refdef.viewheight );
+		VectorCopy( cl.predicted_punchangle, cl.refdef.punchangle );
 	}
 	else
 	{
 		VectorCopy( cl.frame.local.client.origin, cl.refdef.simorg );
 		VectorCopy( cl.frame.local.client.view_ofs, cl.refdef.viewheight );
 		VectorCopy( cl.frame.local.client.velocity, cl.refdef.simvel );
+		VectorCopy( cl.frame.local.client.punchangle, cl.refdef.punchangle );
 	}
 }
 

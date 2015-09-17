@@ -632,6 +632,7 @@ void Host_WriteOpenGLConfig( void );
 void Host_WriteVideoConfig( void );
 void Host_WriteConfig( void );
 qboolean Host_IsLocalGame( void );
+qboolean Host_IsLocalClient( void );
 void Host_ShutdownServer( void );
 void Host_Print( const char *txt );
 void Host_Error( const char *error, ... );
@@ -878,6 +879,7 @@ void S_Shutdown( void );
 void S_Activate( qboolean active, void *hInst );
 void S_StopSound( int entnum, int channel, const char *soundname );
 int S_GetCurrentStaticSounds( soundlist_t *pout, int size );
+void S_StopBackgroundTrack( void );
 void S_StopAllSounds( void );
 
 // gamma routines
