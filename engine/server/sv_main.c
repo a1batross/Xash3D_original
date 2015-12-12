@@ -208,7 +208,7 @@ void SV_UpdateMovevars( qboolean initialize )
 
 	// check range
 	if( sv_zmax->value < 256.0f ) Cvar_SetFloat( "sv_zmax", 256.0f );
-	if( sv_zmax->value > 32767.0f ) Cvar_SetFloat( "sv_zmax", 32767.0f );
+	if( sv_zmax->value > 131070.0f ) Cvar_SetFloat( "sv_zmax", 131070.0f );
 
 	svgame.movevars.gravity = sv_gravity->value;
 	svgame.movevars.stopspeed = sv_stopspeed->value;
@@ -438,7 +438,7 @@ void SV_CheckTimeouts( void )
 			continue;
 		}
 
-		if(( cl->state == cs_connected || cl->state == cs_spawned ) && cl->lastmessage < droppoint )
+		if(( cl->state == cs_connected || cl->state == cs_spawned ) && cl->lastmessage < droppoint && !NET_IsLocalAddress( cl->netchan.remote_address ))
 		{
 			SV_BroadcastPrintf( PRINT_HIGH, "%s timed out\n", cl->name );
 			SV_DropClient( cl ); 
@@ -583,7 +583,7 @@ void Master_Add( void )
 	if( !NET_StringToAdr( MASTERSERVER_ADR, &adr ))
 		MsgDev( D_INFO, "Can't resolve adr: %s\n", MASTERSERVER_ADR );
 
-	NET_SendPacket( NS_SERVER, 2, "\x4D\xFF", adr );
+	NET_SendPacket( NS_SERVER, 1, "q", adr );
 }
 
 /*
@@ -620,6 +620,14 @@ Informs all masters that this server is going down
 */
 void Master_Shutdown( void )
 {
+	netadr_t	adr;
+
+	NET_Config( true ); // allow remote
+
+	if( !NET_StringToAdr( MASTERSERVER_ADR, &adr ))
+		MsgDev( D_INFO, "Can't resolve addr: %s\n", MASTERSERVER_ADR );
+
+	NET_SendPacket( NS_SERVER, 2, "\x62\x0A", adr );
 }
 
 //============================================================================
@@ -678,7 +686,7 @@ void SV_Init( void )
 	rcon_password = Cvar_Get( "rcon_password", "", 0, "remote connect password" );
 	sv_stepsize = Cvar_Get( "sv_stepsize", "18", CVAR_ARCHIVE|CVAR_PHYSICINFO, "how high you can step up" );
 	sv_newunit = Cvar_Get( "sv_newunit", "0", 0, "sets to 1 while new unit is loading" );
-	hostname = Cvar_Get( "hostname", "unnamed", CVAR_SERVERNOTIFY|CVAR_SERVERNOTIFY|CVAR_ARCHIVE, "host name" );
+	hostname = Cvar_Get( "hostname", "unnamed", CVAR_SERVERNOTIFY|CVAR_ARCHIVE, "host name" );
 	timeout = Cvar_Get( "timeout", "125", CVAR_SERVERNOTIFY, "connection timeout" );
 	zombietime = Cvar_Get( "zombietime", "2", CVAR_SERVERNOTIFY, "timeout for clients-zombie (who died but not respawned)" );
 	sv_pausable = Cvar_Get( "pausable", "1", CVAR_SERVERNOTIFY, "allow players to pause or not" );
@@ -704,7 +712,7 @@ void SV_Init( void )
 	sv_check_errors = Cvar_Get( "sv_check_errors", "0", CVAR_ARCHIVE, "check edicts for errors" );
 	physinfo = Cvar_Get( "@physinfo", "0", CVAR_READ_ONLY, "" ); // use ->modified value only
 	serverinfo = Cvar_Get( "@serverinfo", "0", CVAR_READ_ONLY, "" ); // use ->modified value only
-	public_server = Cvar_Get ("public", "0", 0, "change server type from private to public" );
+	public_server = Cvar_Get ("public", "0", CVAR_SERVERNOTIFY, "change server type from private to public" );
 	sv_lighting_modulate = Cvar_Get( "r_lighting_modulate", "0.6", CVAR_ARCHIVE, "lightstyles modulate scale" );
 	sv_reconnect_limit = Cvar_Get ("sv_reconnect_limit", "3", CVAR_ARCHIVE, "max reconnect attempts" );
 	sv_failuretime = Cvar_Get( "sv_failuretime", "0.5", 0, "after this long without a packet from client, don't send any more until client starts sending again" );
@@ -785,10 +793,17 @@ void SV_Shutdown( qboolean reconnect )
 	// already freed
 	if( !SV_Active( )) return;
 
-	if( host.type == HOST_DEDICATED ) MsgDev( D_INFO, "SV_Shutdown: %s\n", host.finalmsg );
-	if( svs.clients ) SV_FinalMessage( host.finalmsg, reconnect );
+	// rcon will be disconnected
+	SV_EndRedirect();
 
-	Master_Shutdown();
+	if( host.type == HOST_DEDICATED )
+		MsgDev( D_INFO, "SV_Shutdown: %s\n", host.finalmsg );
+
+	if( svs.clients )
+		SV_FinalMessage( host.finalmsg, reconnect );
+
+	if( public_server->integer && sv_maxclients->integer != 1 )
+		Master_Shutdown();
 
 	if( !reconnect ) SV_UnloadProgs ();
 	else SV_DeactivateServer ();

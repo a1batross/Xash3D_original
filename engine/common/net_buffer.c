@@ -48,13 +48,13 @@ void BF_InitMasks( void )
 		{
 			endbit = startbit + nBitsLeft;
 
-			BitWriteMasks[startbit][nBitsLeft] = BIT( startbit ) - 1;
-			if( endbit < 32 ) BitWriteMasks[startbit][nBitsLeft] |= ~(BIT( endbit ) - 1 );
+			BitWriteMasks[startbit][nBitsLeft] = (uint)BIT( startbit ) - 1;
+			if( endbit < 32 ) BitWriteMasks[startbit][nBitsLeft] |= ~((uint)BIT( endbit ) - 1 );
 		}
 	}
 
 	for( maskBit = 0; maskBit < 32; maskBit++ )
-		ExtraMasks[maskBit] = BIT( maskBit ) - 1;
+		ExtraMasks[maskBit] = (uint)BIT( maskBit ) - 1;
 }
  
 void BF_InitExt( sizebuf_t *bf, const char *pDebugName, void *pData, int nBytes, int nMaxBits )
@@ -255,13 +255,13 @@ void BF_WriteBitAngle( sizebuf_t *bf, float fAngle, int numbits )
 	int	d;
 
 	// clamp the angle before receiving
-	if( fAngle > 360.0f ) fAngle -= 360.0f; 
-	else if( fAngle < 0 ) fAngle += 360.0f;
+	fAngle = fmod( fAngle, 360.0f );
+	if( fAngle < 0 ) fAngle += 360.0f;
 
 	shift = ( 1 << numbits );
 	mask = shift - 1;
 
-	d = (int)( fAngle * shift ) / 360;
+	d = (int)(( fAngle * shift ) / 360.0f );
 	d &= mask;
 
 	BF_WriteUBitLong( bf, (uint)d, numbits );

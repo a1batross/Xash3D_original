@@ -122,7 +122,7 @@ void SV_DirectConnect( netadr_t from )
 	// quick reject
 	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
 	{
-		if( cl->state == cs_free )
+		if( cl->state == cs_free || cl->state == cs_zombie )
 			continue;
 
 		if( NET_CompareBaseAdr( from, cl->netchan.remote_address ) && ( cl->netchan.qport == qport || from.port == cl->netchan.remote_address.port ))
@@ -169,7 +169,7 @@ void SV_DirectConnect( netadr_t from )
 	// if there is already a slot for this ip, reuse it
 	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
 	{
-		if( cl->state == cs_free )
+		if( cl->state == cs_free || cl->state == cs_zombie )
 			continue;
 
 		if( NET_CompareBaseAdr( from, cl->netchan.remote_address ) && ( cl->netchan.qport == qport || from.port == cl->netchan.remote_address.port ))
@@ -289,6 +289,9 @@ void SV_DisconnectClient( edict_t *pClient )
 		Mem_Free( pClient->pvPrivateData );
 		pClient->pvPrivateData = NULL;
 	}
+
+	// invalidate serial number
+	pClient->serialnumber++;
 }
 
 /*
@@ -438,8 +441,16 @@ void SV_DropClient( sv_client_t *drop )
 		Mem_Free( drop->frames );	// fakeclients doesn't have frames
 	drop->frames = NULL;
 
+	if( NET_CompareBaseAdr( drop->netchan.remote_address, host.rd.address ) )
+		SV_EndRedirect();
+
 	// throw away any residual garbage in the channel.
 	Netchan_Clear( &drop->netchan );
+
+	// clean client data on disconnect
+	Q_memset( drop->userinfo, 0, MAX_INFO_STRING );
+	Q_memset( drop->physinfo, 0, MAX_INFO_STRING );
+	drop->edict->v.frags = 0;
 
 	// send notification to all other clients
 	SV_FullClientUpdate( drop, &sv.reliable_datagram );
@@ -502,7 +513,8 @@ void SV_FlushRedirect( netadr_t adr, int dest, char *buf )
 
 void SV_EndRedirect( void )
 {
-	host.rd.flush( host.rd.address, host.rd.target, host.rd.buffer );
+	if( host.rd.flush )
+		host.rd.flush( host.rd.address, host.rd.target, host.rd.buffer );
 
 	host.rd.target = 0;
 	host.rd.buffer = NULL;
@@ -800,16 +812,29 @@ recalc ping on current client
 int SV_CalcPing( sv_client_t *cl )
 {
 	float		ping = 0;
-	int		i, count;
+	int		i, count, back;
 	client_frame_t	*frame;
 
 	// bots don't have a real ping
-	if( cl->fakeclient )
+	if( cl->fakeclient || !cl->frames )
 		return 5;
 
 	count = 0;
 
-	for( i = 0; i < SV_UPDATE_BACKUP; i++ )
+	if ( SV_UPDATE_BACKUP <= 31 )
+	{
+		back = SV_UPDATE_BACKUP / 2;
+		if ( back <= 0 )
+		{
+			return 0;
+		}
+	}
+	else
+	{
+		back = 16;
+	}
+
+	for( i = 0; i < back; i++ )
 	{
 		frame = &cl->frames[(cl->netchan.incoming_acknowledged - (i + 1)) & SV_UPDATE_MASK];
 
@@ -1985,10 +2010,9 @@ void SV_ConnectionlessPacket( netadr_t from, sizebuf_t *msg )
 	char	*args;
 	char	*c, buf[MAX_SYSPATH];
 	int	len = sizeof( buf );
-	dword	challenge;
+	uint	challenge;
 	int	index, count = 0;
-	char	query[512];
-	word	port;
+	char	query[512], ostype = 'w';
 
 	BF_Clear( msg );
 	BF_ReadLong( msg );// skip the -1 marker
@@ -2007,12 +2031,9 @@ void SV_ConnectionlessPacket( netadr_t from, sizebuf_t *msg )
 	else if( !Q_strcmp( c, "connect" )) SV_DirectConnect( from );
 	else if( !Q_strcmp( c, "rcon" )) SV_RemoteCommand( from, msg );
 	else if( !Q_strcmp( c, "netinfo" )) SV_BuildNetAnswer( from );
-	else if( msg->pData[0] == 0xFF && msg->pData[1] == 0xFF && msg->pData[2] == 0xFF && msg->pData[3] == 0xFF && msg->pData[4] == 0x4E && msg->pData[5] == 0x0A )
+	else if( msg->pData[0] == 0xFF && msg->pData[1] == 0xFF && msg->pData[2] == 0xFF && msg->pData[3] == 0xFF && msg->pData[4] == 0x73 && msg->pData[5] == 0x0A )
 	{
-		challenge = *(dword *)&msg->pData[6];
-
-		port = Cvar_Get( "ip_hostport", "0", CVAR_INIT, "network server port" )->integer;
-		if( !port ) port = Cvar_Get( "port", va( "%i", PORT_SERVER ), CVAR_INIT, "network default port" )->integer;
+		Q_memcpy(&challenge, &msg->pData[6], sizeof(int));
 
 		for( index = 0; index < sv_maxclients->integer; index++ )
 		{
@@ -2021,8 +2042,32 @@ void SV_ConnectionlessPacket( netadr_t from, sizebuf_t *msg )
 		}
 
 		Q_snprintf( query, sizeof( query ),
-		"0\n\\protocol\\7\\challenge\\%ld\\players\\%d\\max\\%d\\bots\\0\\gamedir\\%s_xash\\map\\%s\\password\\0\\os\\w\\lan\\0\\region\\255\\gameport\\%d\\specport\\27015\\dedicated\\1\\appid\\70\\type\\d\\secure\\0\\version\\1.1.2.1\\product\\valve\n",
-		challenge, count, sv_maxclients->integer, GI->gamefolder, sv.name, port );
+		"0\n"
+		"\\protocol\\%d"			// protocol version
+		"\\challenge\\%u"			// challenge number that got after FF FF FF FF 73 0A
+		"\\players\\%d"			// current player number
+		"\\max\\%d"			// max_players
+		"\\bots\\0"			// bot number?
+		"\\gamedir\\%s"			// gamedir. _xash appended, because Xash3D is not compatible with GS in multiplayer
+		"\\map\\%s"			// current map
+		"\\type\\d"			// server type
+		"\\password\\0"			// is password set
+		"\\os\\%c"			// server OS?
+		"\\secure\\0"			// server anti-cheat? VAC?
+		"\\lan\\0"			// is LAN server?
+		"\\version\\%f"			// server version
+		"\\region\\255"			// server region
+		"\\product\\%s\n",			// product? Where is the difference with gamedir?
+		PROTOCOL_VERSION,
+		challenge,
+		count,
+		sv_maxclients->integer,
+		GI->gamefolder,
+		sv.name,
+		ostype,
+		XASH_VERSION,
+		GI->gamefolder
+		);
 
 		NET_SendPacket( NS_SERVER, Q_strlen( query ), query, from );
 	}

@@ -152,12 +152,11 @@ void CL_AddLinksToPmove( void )
 		if( !check || check == &clgame.entities[0] )
 			continue;
 
-		if( clgame.pmove->numvisent < MAX_PHYSENTS )
-		{
-			pe = &clgame.pmove->visents[clgame.pmove->numvisent];
-			if( CL_CopyEntityToPhysEnt( pe, check ))
-				clgame.pmove->numvisent++;
-		}
+		if( check->curstate.solid == SOLID_TRIGGER )
+			continue;
+
+		if( ( check->curstate.owner > 0) && cl.playernum == check->curstate.owner -1 )
+			continue;
 
 		// players will be added later
 		if( check->player ) continue;
@@ -167,6 +166,16 @@ void CL_AddLinksToPmove( void )
 			continue;
 
 		solid = check->curstate.solid;
+		
+		if( solid == SOLID_NOT && ( check->curstate.skin == CONTENTS_NONE || check->curstate.modelindex == 0 ))
+			continue;
+
+		if( clgame.pmove->numvisent < MAX_PHYSENTS )
+		{
+			pe = &clgame.pmove->visents[clgame.pmove->numvisent];
+			if( CL_CopyEntityToPhysEnt( pe, check ))
+				clgame.pmove->numvisent++;
+		}
 
 		if( solid == SOLID_BSP || solid == SOLID_BBOX || solid == SOLID_SLIDEBOX || solid == SOLID_CUSTOM )
 		{
@@ -711,24 +720,20 @@ CL_RunUsercmd
 Runs prediction code for user cmd
 =================
 */
-void CL_RunUsercmd(local_state_t * from, local_state_t * to, usercmd_t * u, qboolean runfuncs, double * pfElapsed, unsigned int random_seed)
+void CL_RunUsercmd( local_state_t *from, local_state_t *to, usercmd_t *u, qboolean runfuncs, double *pfElapsed, unsigned int random_seed )
 {
-	usercmd_t cmd;
-	entity_state_t * fs;
-	entity_state_t * ts;
-	clientdata_t * fcd;
-	clientdata_t * tcd;
-	playermove_t *pmove = clgame.pmove;
+	usercmd_t		cmd;
+	entity_state_t	*fs, *ts;
+	clientdata_t	*fcd, *tcd;
+	playermove_t	*pmove = clgame.pmove;
+	local_state_t	temp;
+	usercmd_t		split;
 
-	while (u->msec > 50)
+	while( u->msec > 50 )
 	{
-		local_state_t temp;
-		usercmd_t split;
-
 		split = *u;
-		split.msec /= 2.0;
-		CL_RunUsercmd(from, &temp, &split, runfuncs, pfElapsed, random_seed);
-
+		split.msec /= 2;
+		CL_RunUsercmd( from, &temp, &split, runfuncs, pfElapsed, random_seed );
 		from = &temp;
 		u = &split;
 	}
@@ -841,12 +846,12 @@ Sets cl.predicted_origin and cl.predicted_angles
 */
 void CL_PredictMovement( void )
 {
-	double	time;
+	double		time;
 	int		frame = 1;
 	int		ack, outgoing_command;
 	int		current_command;
 	int		current_command_mod;
-	local_state_t *from, *to;
+	local_state_t	*from = NULL, *to = NULL;
 
 	if( cls.state != ca_active ) return;
 
@@ -883,6 +888,9 @@ void CL_PredictMovement( void )
 
 	time = cl.frame.time;
 
+	CL_SetSolidEntities();
+	CL_SetSolidPlayers( cl.playernum );
+
 	while( 1 )
 	{
 		// we've run too far forward
@@ -903,14 +911,17 @@ void CL_PredictMovement( void )
 			cl.runfuncs[current_command_mod], 
 			&time, cls.netchan.incoming_acknowledged + frame );
 
-		cl.runfuncs[current_command_mod] = FALSE;
+		cl.runfuncs[current_command_mod] = false;
 
 		from = to;
 		frame++;
 	}
 
-	VectorCopy( to->playerstate.origin, cl.predicted_origin );
-	VectorCopy( to->client.velocity, cl.predicted_velocity );
-	VectorCopy( to->client.view_ofs, cl.predicted_viewofs );
-	VectorCopy( to->client.punchangle, cl.predicted_punchangle );
+	if( to )
+	{
+		VectorCopy( to->playerstate.origin, cl.predicted_origin );
+		VectorCopy( to->client.velocity, cl.predicted_velocity );
+		VectorCopy( to->client.view_ofs, cl.predicted_viewofs );
+		VectorCopy( to->client.punchangle, cl.predicted_punchangle );
+	}
 }

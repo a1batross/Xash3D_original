@@ -2265,11 +2265,66 @@ physent_t *pfnGetPhysent( int idx )
 =============
 pfnSetUpPlayerPrediction
 
+FIXME: finalize
 =============
 */
 void pfnSetUpPlayerPrediction( int dopred, int bIncludeLocalClient )
 {
-	// TODO: implement
+#if 0
+	entity_state_t	*playerstate = cl.frames[cl.parsecountmod].playerstate;
+	predicted_player_t	*player = cls.predicted_players;
+	cl_entity_t	*clent;
+	int		j, v12;
+
+	for( j = 0; j < MAX_CLIENTS; j++, player++, playerstate++ )
+	{
+		player->active = false;
+
+		if( playerstate->messagenum != cl.parsecount )
+			continue; // not present this frame
+
+		if( !playerstate->modelindex )
+			continue;
+
+		// special for EF_NODRAW and local client?
+		if(( playerstate->effects & EF_NODRAW ) && !bIncludeLocalClient )
+		{
+			// don't include local player?
+			if( cl.playernum != j )
+			{
+				player->active = true;
+				player->movetype = playerstate->movetype;
+				player->solid = playerstate->solid;
+				player->usehull = playerstate->usehull;
+
+				clent = CL_EDICT_NUM( j + 1 );
+//				CL_ComputePlayerOrigin( v9 );
+				VectorCopy( clent->origin, player->origin );
+				VectorCopy( clent->angles, player->angles );
+			}
+			else continue;
+		}
+		else
+		{
+			if( cl.playernum == j )
+				continue;
+
+			player->active = true;
+			player->movetype = playerstate->movetype;
+			player->solid = playerstate->solid;
+			player->usehull = playerstate->usehull;
+
+			v12 = 17080 * cl.parsecountmod + 340 * j;
+			player->origin[0] = cl.frames[0].playerstate[0].origin[0] + v12;
+			player->origin[1] = cl.frames[0].playerstate[0].origin[1] + v12;
+			player->origin[2] = cl.frames[0].playerstate[0].origin[2] + v12;
+
+			player->angles[0] = cl.frames[0].playerstate[0].angles[0] + v12;
+			player->angles[1] = cl.frames[0].playerstate[0].angles[1] + v12;
+			player->angles[2] = cl.frames[0].playerstate[0].angles[2] + v12;
+		}
+	}
+#endif
 }
 
 /*

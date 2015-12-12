@@ -241,6 +241,17 @@ typedef struct
 	byte		gammaTable[256];
 } client_draw_t;
 
+typedef struct cl_predicted_player_s
+{
+	int	flags;
+	int	movetype;
+	int	solid;
+	int	usehull;
+	qboolean	active;
+	vec3_t	origin; // predicted origin
+	vec3_t	angles;
+} predicted_player_t;
+
 typedef struct
 {
 	int		gl_texturenum;	// this is a real texnum
@@ -430,6 +441,8 @@ typedef struct
 	int		num_client_entities;	// cl.maxclients * CL_UPDATE_BACKUP * MAX_PACKET_ENTITIES
 	int		next_client_entities;	// next client_entity to use
 	entity_state_t	*packet_entities;		// [num_client_entities]
+
+	predicted_player_t	predicted_players[MAX_CLIENTS];
 
 	scrshot_t		scrshot_request;		// request for screen shot
 	scrshot_t		scrshot_action;		// in-action
