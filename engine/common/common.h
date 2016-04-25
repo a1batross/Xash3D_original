@@ -85,7 +85,7 @@ typedef enum
 #include "com_model.h"
 #include "crtlib.h"
 
-#define XASH_VERSION	0.97f		// engine current version
+#define XASH_VERSION	0.98f		// engine current version
 
 // PERFORMANCE INFO
 #define MIN_FPS         	15.0		// host minimum fps value for maxfps.
@@ -459,6 +459,18 @@ typedef enum
 	IL_DDS_HARDWARE	= BIT(4),	// DXT compression is support
 } ilFlags_t;
 
+// goes into rgbdata_t->encode
+#define DXT_ENCODE_DEFAULT		0	// don't use custom encoders
+#define DXT_ENCODE_COLOR_YCoCg	0x1A01	// make sure that value dosn't collide with anything
+#define DXT_ENCODE_ALPHA_1BIT		0x1A02	// normal 1-bit alpha
+#define DXT_ENCODE_ALPHA_8BIT		0x1A03	// normal 8-bit alpha
+#define DXT_ENCODE_ALPHA_SDF		0x1A04	// signed distance field
+#define DXT_ENCODE_NORMAL_AG_ORTHO	0x1A05	// orthographic projection
+#define DXT_ENCODE_NORMAL_AG_STEREO	0x1A06	// stereographic projection
+#define DXT_ENCODE_NORMAL_AG_PARABOLOID	0x1A07	// paraboloid projection
+#define DXT_ENCODE_NORMAL_AG_QUARTIC	0x1A08	// newton method
+#define DXT_ENCODE_NORMAL_AG_AZIMUTHAL	0x1A09	// Lambert Azimuthal Equal-Area
+
 // rgbdata output flags
 typedef enum
 {
@@ -506,6 +518,7 @@ typedef struct rgbdata_s
 	word	depth;		// image depth
 	uint	type;		// compression type
 	uint	flags;		// misc image flags
+	word	encode;		// DXT may have custom encoder, that will be decoded in GLSL-side
 	byte	numMips;		// mipmap count
 	byte	*palette;		// palette if present
 	byte	*buffer;		// image buffer
@@ -651,6 +664,7 @@ CLIENT / SERVER SYSTEMS
 void CL_Init( void );
 void CL_Shutdown( void );
 void Host_ClientFrame( void );
+void Host_RenderFrame( void );
 qboolean CL_Active( void );
 
 void SV_Init( void );
@@ -716,7 +730,7 @@ void CRC32_ProcessBuffer( dword *pulCRC, const void *pBuffer, int nBuffer );
 void CRC32_ProcessByte( dword *pulCRC, byte ch );
 void CRC32_Final( dword *pulCRC );
 qboolean CRC32_File( dword *crcvalue, const char *filename );
-qboolean CRC32_MapFile( dword *crcvalue, const char *filename );
+qboolean CRC32_MapFile( dword *crcvalue, const char *filename, qboolean multiplayer );
 void MD5Init( MD5Context_t *ctx );
 void MD5Update( MD5Context_t *ctx, const byte *buf, uint len );
 void MD5Final( byte digest[16], MD5Context_t *ctx );

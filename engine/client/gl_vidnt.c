@@ -27,6 +27,11 @@ GNU General Public License for more details.
 #define WINDOW_EX_STYLE		(0)
 #define WINDOW_NAME			"Xash Window" // Half-Life
 
+#ifdef WIN32
+// Enable NVIDIA High Performance Graphics while using Integrated Graphics.
+__declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+#endif
+
 convar_t	*renderinfo;
 convar_t	*gl_allow_software;
 convar_t	*gl_extensions;

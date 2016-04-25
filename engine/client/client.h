@@ -36,7 +36,7 @@ GNU General Public License for more details.
 #define MAX_MOVIES		8
 #define MAX_CDTRACKS	32
 #define MAX_IMAGES		256	// SpriteTextures
-#define MAX_EFRAGS		1024
+#define MAX_EFRAGS		4096
 #define MAX_REQUESTS	32
 
 // screenshot types
@@ -56,13 +56,28 @@ typedef struct frame_s
 	double		latency;
 	double		time;		// server timestamp
 
-	local_state_t	local;		// local client state
+	clientdata_t	client;		// local client private data
 	entity_state_t	playerstate[MAX_CLIENTS];
+	weapon_data_t	weapondata[64];
+
 	int		num_entities;
 	int		first_entity;	// into the circular cl_packet_entities[]
 
 	qboolean		valid;		// cleared if delta parsing was invalid
 } frame_t;
+
+typedef struct runcmd_s
+{
+	double		senttime;
+	double		receivedtime;
+	float		frame_lerp;
+
+	usercmd_t		cmd;
+
+	qboolean		processedfuncs;
+	qboolean		heldback;
+	int		sendsize;
+} runcmd_t;
 
 #define CMD_BACKUP		MULTIPLAYER_BACKUP	// allow a lot of command backups for very fast systems
 #define CMD_MASK		(CMD_BACKUP - 1)
@@ -107,9 +122,8 @@ typedef struct
 	frame_t		frame;			// received from server
 	
 	frame_t		frames[MULTIPLAYER_BACKUP];	// alloced on svc_serverdata
-	usercmd_t		cmds[MULTIPLAYER_BACKUP];	// each mesage will send several old cmds
+	runcmd_t		commands[MULTIPLAYER_BACKUP];	// each mesage will send several old cmds
 	local_state_t	predict[MULTIPLAYER_BACKUP];	// local client state
-	qboolean		runfuncs[MULTIPLAYER_BACKUP];
 
 	double		time;			// this is the time value that the client
 						// is rendering at.  always <= cls.realtime
@@ -118,6 +132,7 @@ typedef struct
 						// to decay light values and smooth step ups
 
 	float		lerpFrac;			// interpolation value
+	float		lerpBack;			// invert interpolation value
 	ref_params_t	refdef;			// shared refdef
 
 	char		serverinfo[MAX_INFO_STRING];
@@ -129,6 +144,8 @@ typedef struct
 	vec3_t		predicted_viewofs;
 	vec3_t		predicted_velocity;
 	vec3_t		predicted_punchangle;
+	vec3_t		predicted_origins[CMD_BACKUP];
+	vec3_t		prediction_error;
 
 	// server state information
 	int		playernum;
@@ -243,13 +260,13 @@ typedef struct
 
 typedef struct cl_predicted_player_s
 {
-	int	flags;
-	int	movetype;
-	int	solid;
-	int	usehull;
-	qboolean	active;
-	vec3_t	origin; // predicted origin
-	vec3_t	angles;
+	int		flags;
+	int		movetype;
+	int		solid;
+	int		usehull;
+	qboolean		active;
+	vec3_t		origin; // predicted origin
+	vec3_t		angles;
 } predicted_player_t;
 
 typedef struct
@@ -438,6 +455,8 @@ typedef struct
 	HSPRITE		hChromeSprite;		// this is a really HudSprite handle, not texnum!
 	cl_font_t		creditsFont;		// shared creditsfont
 
+	float		latency;			// rolling average of frame latencey (receivedtime - senttime) values.
+
 	int		num_client_entities;	// cl.maxclients * CL_UPDATE_BACKUP * MAX_PACKET_ENTITIES
 	int		next_client_entities;	// next client_entity to use
 	entity_state_t	*packet_entities;		// [num_client_entities]
@@ -499,6 +518,7 @@ extern convar_t	*cl_envshot_size;
 extern convar_t	*cl_timeout;
 extern convar_t	*cl_nodelta;
 extern convar_t	*cl_interp;
+extern convar_t	*cl_showerror;
 extern convar_t	*cl_crosshair;
 extern convar_t	*cl_testlights;
 extern convar_t	*cl_solid_players;
@@ -682,7 +702,7 @@ int CL_TruePointContents( const vec3_t p );
 int CL_PointContents( const vec3_t p );
 int CL_WaterEntity( const float *rgflPos );
 cl_entity_t *CL_GetWaterEntity( const float *rgflPos );
-void CL_SetupPMove( playermove_t *pmove, clientdata_t *cd, entity_state_t *state, usercmd_t *ucmd );
+void CL_SetupPMove( playermove_t *pmove, local_state_t *from, usercmd_t *ucmd, qboolean runfuncs, double time );
 pmtrace_t CL_TraceLine( vec3_t start, vec3_t end, int flags );
 void CL_ClearPhysEnts( void );
 

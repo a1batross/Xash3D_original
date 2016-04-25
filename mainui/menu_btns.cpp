@@ -138,7 +138,8 @@ void UI_LoadBmpButtons( void )
 	// determine buttons count by image height...
 	int pic_count = ( pInfoHdr->biHeight / uiStatic.buttons_height );
 
-	int cutted_img_sz = ( pInfoHdr->biWidth * uiStatic.buttons_height * ( pInfoHdr->biBitCount >> 3 ));
+	int stride = (pInfoHdr->biWidth * pInfoHdr->biBitCount / 8);
+	int cutted_img_sz = ((stride + 3 ) & ~3) * uiStatic.buttons_height;
 	int CuttedBmpSize = sizeof( BITMAPFILEHEADER ) + sizeof( BITMAPINFOHEADER ) + palette_sz + cutted_img_sz;
 	byte *img_data = &bmp_buffer[pFileHdr->bfOffBits + cutted_img_sz * ( pic_count - 1 )];
 
