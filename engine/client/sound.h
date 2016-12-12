@@ -20,17 +20,14 @@ extern byte *sndpool;
 
 #include "mathlib.h"
 
-// local flags (never sending acorss the net)
-#define SND_LOCALSOUND	(1<<9)	// not paused, not looped, for internal use
-#define SND_STOP_LOOPING	(1<<10)	// stop all looping sounds on the entity.
-
 // sound engine rate defines
-#define SOUND_DMA_SPEED	44100	// hardware playback rate
-#define SOUND_11k		11025	// 11khz sample rate
-#define SOUND_16k		16000	// 16khz sample rate
-#define SOUND_22k		22050	// 22khz sample rate
-#define SOUND_32k		32000	// 32khz sample rate
-#define SOUND_44k		44100	// 44khz sample rate
+#define SOUND_DMA_SPEED		44100	// hardware playback rate
+#define SOUND_11k			11025	// 11khz sample rate
+#define SOUND_16k			16000	// 16khz sample rate
+#define SOUND_22k			22050	// 22khz sample rate
+#define SOUND_32k			32000	// 32khz sample rate
+#define SOUND_44k			44100	// 44khz sample rate
+#define DMA_MSEC_PER_SAMPLE		((float)(1000.0 / SOUND_DMA_SPEED))
 
 #define SND_TRACE_UPDATE_MAX  	2	// max of N channels may be checked for obscured source per frame
 #define SND_RADIUS_MAX		240.0f	// max sound source radius
@@ -50,14 +47,14 @@ extern byte *sndpool;
 #define SND_GAIN_PLAYER_WEAPON_DB	2.0f	// increase player weapon gain by N dB
 
 // fixed point stuff for real-time resampling
-#define FIX_BITS		28
-#define FIX_SCALE		(1 << FIX_BITS)
-#define FIX_MASK		((1 << FIX_BITS)-1)
-#define FIX_FLOAT(a)	((int)((a) * FIX_SCALE))
-#define FIX(a)		(((int)(a)) << FIX_BITS)
-#define FIX_INTPART(a)	(((int)(a)) >> FIX_BITS)
-#define FIX_FRACTION(a,b)	(FIX(a)/(b))
-#define FIX_FRACPART(a)	((a) & FIX_MASK)
+#define FIX_BITS			28
+#define FIX_SCALE			(1 << FIX_BITS)
+#define FIX_MASK			((1 << FIX_BITS)-1)
+#define FIX_FLOAT(a)		((int)((a) * FIX_SCALE))
+#define FIX(a)			(((int)(a)) << FIX_BITS)
+#define FIX_INTPART(a)		(((int)(a)) >> FIX_BITS)
+#define FIX_FRACTION(a,b)		(FIX(a)/(b))
+#define FIX_FRACPART(a)		((a) & FIX_MASK)
 
 #define SNDLVL_TO_DIST_MULT( sndlvl ) \
 	( sndlvl ? ((pow( 10, s_refdb->value / 20 ) / pow( 10, (float)sndlvl / 20 )) / s_refdist->value ) : 0 )
@@ -66,25 +63,29 @@ extern byte *sndpool;
 	(int)( dist_mult ? ( 20 * log10( pow( 10, s_refdb->value / 20 ) / (dist_mult * s_refdist->value ))) : 0 )
 
 // NOTE: clipped sound at 32760 to avoid overload
-#define CLIP( x )		(( x ) > 32760 ? 32760 : (( x ) < -32760 ? -32760 : ( x )))
-#define SWAP( a, b, t )	{(t) = (a); (a) = (b); (b) = (t);}
-#define AVG( a, b )		(((a) + (b)) >> 1 )
-#define AVG4( a, b, c, d )	(((a) + (b) + (c) + (d)) >> 2 )
+#define CLIP( x )			(( x ) > 32760 ? 32760 : (( x ) < -32760 ? -32760 : ( x )))
+#define SWAP( a, b, t )		{(t) = (a); (a) = (b); (b) = (t);}
+#define AVG( a, b )			(((a) + (b)) >> 1 )
+#define AVG4( a, b, c, d )		(((a) + (b) + (c) + (d)) >> 2 )
 
-#define PAINTBUFFER_SIZE	1024	// 44k: was 512
-#define PAINTBUFFER		(g_curpaintbuffer)
-#define CPAINTBUFFERS	3
+#define PAINTBUFFER_SIZE		1024	// 44k: was 512
+#define PAINTBUFFER			(g_curpaintbuffer)
+#define CPAINTBUFFERS		3
+
+// sound mixing buffer
+#define CPAINTFILTERMEM		3
+#define CPAINTFILTERS		4	// maximum number of consecutive upsample passes per paintbuffer
+
+#define S_RAW_SOUND_IDLE_SEC		10	// time interval for idling raw sound before it's freed
+#define S_RAW_SOUND_BACKGROUNDTRACK	-2
+#define S_RAW_SOUND_SOUNDTRACK	-1
+#define S_RAW_SAMPLES_PRECISION_BITS	14
 
 typedef struct
 {
-	int		left;
-	int		right;
+	int			left;
+	int			right;
 } portable_samplepair_t;
-
-// sound mixing buffer
-
-#define CPAINTFILTERMEM		3
-#define CPAINTFILTERS		4	// maximum number of consecutive upsample passes per paintbuffer
 
 typedef struct
 {
@@ -104,7 +105,6 @@ typedef struct sfx_s
 	struct sfx_s	*hashNext;
 } sfx_t;
 
-extern portable_samplepair_t	drybuffer[];
 extern portable_samplepair_t	paintbuffer[];
 extern portable_samplepair_t	roombuffer[];
 extern portable_samplepair_t	temppaintbuffer[];
@@ -145,6 +145,20 @@ typedef struct
 	double 		forcedEndSample;
 	qboolean		finished;
 } mixer_t;
+
+typedef struct
+{
+	int			entnum;
+	int			master_vol;
+	int			leftvol;		// 0-255 left volume
+	int			rightvol;		// 0-255 right volume
+	float			dist_mult;	// distance multiplier (attenuation/clipK)
+	vec3_t			origin;		// only use if fixed_origin is set
+	float			radius;		// radius of this sound effect
+	volatile uint		s_rawend;
+	size_t			max_samples;	// buffer length
+	portable_samplepair_t	rawsamples[1];	// variable sized
+} rawchan_t;
 
 typedef struct channel_s
 {
@@ -196,8 +210,9 @@ typedef struct
 	qboolean		inmenu;		// listener in-menu ?
 	qboolean		paused;
 	qboolean		streaming;	// playing AVI-file
-	qboolean		lerping;		// lerp stream ?
 	qboolean		stream_paused;	// pause only background track
+
+	byte		pasbytes[(MAX_MAP_LEAFS+7)/8];// actual PHS for current frame
 } listener_t;
 
 typedef struct
@@ -226,18 +241,19 @@ void SNDDMA_Submit( void );
 
 #define MAX_DYNAMIC_CHANNELS	(28 + NUM_AMBIENTS)
 #define MAX_CHANNELS	(128 + MAX_DYNAMIC_CHANNELS)	// Scourge Of Armagon has too many static sounds on hip2m4.bsp
+#define MAX_RAW_CHANNELS	16
 #define MAX_RAW_SAMPLES	8192
 
 extern sound_t	ambient_sfx[NUM_AMBIENTS];
 extern qboolean	snd_ambient;
 extern channel_t	channels[MAX_CHANNELS];
+extern rawchan_t	*raw_channels[MAX_RAW_CHANNELS];
 extern int	total_channels;
 extern int	paintedtime;
-extern int	s_rawend;
 extern int	soundtime;
-extern dma_t	dma;
 extern listener_t	s_listener;
 extern int	idsp_room;
+extern dma_t	dma;
 
 extern convar_t	*s_volume;
 extern convar_t	*s_musicvolume;
@@ -245,10 +261,7 @@ extern convar_t	*s_show;
 extern convar_t	*s_mixahead;
 extern convar_t	*s_lerping;
 extern convar_t	*dsp_off;
-extern convar_t	*s_test;
-extern convar_t	*s_phs;
-
-extern portable_samplepair_t		s_rawsamples[MAX_RAW_SAMPLES];
+extern convar_t	*s_test;		// cvar to testify new effects
 
 void S_InitScaletable( void );
 wavdata_t *S_LoadSound( sfx_t *sfx );
@@ -296,7 +309,11 @@ channel_t *SND_PickStaticChannel( int entnum, sfx_t *sfx, const vec3_t pos );
 int S_GetCurrentStaticSounds( soundlist_t *pout, int size );
 int S_GetCurrentDynamicSounds( soundlist_t *pout, int size );
 sfx_t *S_GetSfxByHandle( sound_t handle );
+rawchan_t *S_FindRawChannel( int entnum, qboolean create );
+void S_RawSamples( uint samples, uint rate, word width, word channels, const byte *data, int entnum );
 void S_StopSound( int entnum, int channel, const char *soundname );
+uint S_GetRawSamplesLength( int entnum );
+void S_ClearRawChannel( int entnum );
 void S_StopAllSounds( void );
 void S_FreeSounds( void );
 

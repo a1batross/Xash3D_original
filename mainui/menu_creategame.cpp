@@ -375,7 +375,7 @@ static void UI_CreateGame_Init( void )
 	uiCreateGame.hostName.generic.width = 205;
 	uiCreateGame.hostName.generic.height = 32;
 	uiCreateGame.hostName.generic.callback = UI_CreateGame_Callback;
-	uiCreateGame.hostName.maxLength = 16;
+	uiCreateGame.hostName.maxLength = 28;
 	strcpy( uiCreateGame.hostName.buffer, CVAR_GET_STRING( "hostname" ));
 
 	uiCreateGame.maxClients.generic.id = ID_MAXCLIENTS;

@@ -20,194 +20,6 @@ GNU General Public License for more details.
 #include "gl_local.h"
 #include "vgui_draw.h"
 
-/*
-===============
-V_SetupRefDef
-
-update refdef values each frame
-===============
-*/
-void V_SetupRefDef( void )
-{
-	cl_entity_t	*clent;
-	int		size;
-	int		sb_lines;
-
-	clent = CL_GetLocalPlayer ();
-
-	clgame.entities->curstate.scale = clgame.movevars.waveHeight;
-	clgame.viewent.curstate.modelindex = cl.frame.client.viewmodel;
-	clgame.viewent.model = Mod_Handle( clgame.viewent.curstate.modelindex );
-	clgame.viewent.curstate.number = cl.playernum + 1;
-	clgame.viewent.curstate.entityType = ET_NORMAL;
-	clgame.viewent.index = cl.playernum + 1;
-
-	cl.refdef.movevars = &clgame.movevars;
-	cl.refdef.onground = ( cl.frame.client.flags & FL_ONGROUND ) ? 1 : 0;
-	cl.refdef.health = cl.frame.client.health;
-	cl.refdef.playernum = cl.playernum;
-	cl.refdef.max_entities = clgame.maxEntities;
-	cl.refdef.maxclients = cl.maxclients;
-	cl.refdef.time = cl.time;
-	cl.refdef.frametime = cl.time - cl.oldtime;
-	cl.refdef.demoplayback = cls.demoplayback;
-	cl.refdef.smoothing = cl_smooth->integer;
-	cl.refdef.viewsize = scr_viewsize->integer;
-	cl.refdef.waterlevel = cl.frame.client.waterlevel;		
-	cl.refdef.onlyClientDraw = 0;	// reset clientdraw
-	cl.refdef.hardware = true;	// always true
-	cl.refdef.spectator = (clent->curstate.spectator != 0);
-	cl.refdef.nextView = 0;
-
-	SCR_AddDirtyPoint( 0, 0 );
-	SCR_AddDirtyPoint( scr_width->integer - 1, scr_height->integer - 1 );
-
-	if( cl.refdef.viewsize >= 120 )
-		sb_lines = 0;		// no status bar at all
-	else if( cl.refdef.viewsize >= 110 )
-		sb_lines = 24;		// no inventory
-	else sb_lines = 48;
-
-	size = min( scr_viewsize->integer, 100 );
-
-	cl.refdef.viewport[2] = scr_width->integer * size / 100;
-	cl.refdef.viewport[3] = scr_height->integer * size / 100;
-
-	if( cl.refdef.viewport[3] > scr_height->integer - sb_lines )
-		cl.refdef.viewport[3] = scr_height->integer - sb_lines;
-	if( cl.refdef.viewport[3] > scr_height->integer )
-		cl.refdef.viewport[3] = scr_height->integer;
-
-	cl.refdef.viewport[0] = (scr_width->integer - cl.refdef.viewport[2]) / 2;
-	cl.refdef.viewport[1] = (scr_height->integer - sb_lines - cl.refdef.viewport[3]) / 2;
-
-	// calc FOV
-	cl.refdef.fov_x = cl.data.fov; // this is a final fov value
-	cl.refdef.fov_y = V_CalcFov( &cl.refdef.fov_x, cl.refdef.viewport[2], cl.refdef.viewport[3] );
-
-	// adjust FOV for widescreen
-	if( glState.wideScreen && r_adjust_fov->integer )
-		V_AdjustFov( &cl.refdef.fov_x, &cl.refdef.fov_y, cl.refdef.viewport[2], cl.refdef.viewport[3], false );
-
-	if( CL_IsPredicted( ) && !cl.refdef.demoplayback )
-	{
-		VectorMA( cl.predicted_origin, -cl.lerpBack, cl.prediction_error, cl.refdef.simorg );
-		VectorCopy( cl.predicted_origin, cl.refdef.simorg );
-		VectorCopy( cl.predicted_velocity, cl.refdef.simvel );
-		VectorCopy( cl.predicted_viewofs, cl.refdef.viewheight );
-		VectorCopy( cl.predicted_punchangle, cl.refdef.punchangle );
-	}
-	else
-	{
-		VectorCopy( cl.frame.client.origin, cl.refdef.simorg );
-		VectorCopy( cl.frame.client.view_ofs, cl.refdef.viewheight );
-		VectorCopy( cl.frame.client.velocity, cl.refdef.simvel );
-		VectorCopy( cl.frame.client.punchangle, cl.refdef.punchangle );
-	}
-}
-
-/*
-===============
-V_SetupOverviewState
-
-Get initial overview values
-===============
-*/
-void V_SetupOverviewState( void )
-{
-	ref_overview_t	*ov = &clgame.overView;
-	float		mapAspect, screenAspect, aspect;
-
-	ov->rotated = ( world.size[1] <= world.size[0] ) ? true : false;
-
-	// calculate nearest aspect
-	mapAspect = world.size[!ov->rotated] / world.size[ov->rotated];
-	screenAspect = (float)glState.width / (float)glState.height;
-	aspect = max( mapAspect, screenAspect );
-
-	ov->zNear = world.maxs[2];
-	ov->zFar = world.mins[2];
-	ov->flZoom = ( 8192.0f / world.size[ov->rotated] ) / aspect;
-
-	VectorAverage( world.mins, world.maxs, ov->origin );
-}
-
-/*
-===============
-V_WriteOverviewScript
-
-Create overview scrip file
-===============
-*/
-void V_WriteOverviewScript( void )
-{
-	ref_overview_t	*ov = &clgame.overView;
-	string		filename;
-	file_t		*f;
-
-	Q_snprintf( filename, sizeof( filename ), "overviews/%s.txt", clgame.mapname );
-
-	f = FS_Open( filename, "w", false );
-	if( !f ) return;
-
-	FS_Printf( f, "// overview description file for %s.bsp\n\n", clgame.mapname );
-	FS_Print( f, "global\n{\n" );
-	FS_Printf( f, "\tZOOM\t%.2f\n", ov->flZoom );
-	FS_Printf( f, "\tORIGIN\t%.f\t%.f\t%.f\n", ov->origin[0], ov->origin[1], ov->zFar + 1 );
-	FS_Printf( f, "\tROTATED\t%i\n", ov->rotated ? 1 : 0 );
-	FS_Print( f, "}\n\nlayer\n{\n" );
-	FS_Printf( f, "\tIMAGE\t\"overviews/%s.bmp\"\n", clgame.mapname );
-	FS_Printf( f, "\tHEIGHT\t%.f\n", ov->zFar + 1 );	// ???
-	FS_Print( f, "}\n" );
-
-	FS_Close( f );
-}
-
-/*
-===============
-V_ProcessOverviewCmds
-
-Transform user movement into overview adjust
-===============
-*/
-void V_ProcessOverviewCmds( usercmd_t *cmd )
-{
-	ref_overview_t	*ov = &clgame.overView;
-	int		sign = 1;
-
-	if( !gl_overview->integer ) return;
-
-	if( ov->flZoom < 0.0f ) sign = -1;
-
-	if( cmd->upmove > 0.0f ) ov->zNear += 1.0f;
-	else if( cmd->upmove < 0.0f ) ov->zNear -= 1.0f;
-
-	if( cmd->buttons & IN_JUMP ) ov->zFar += 1.0f;
-	else if( cmd->buttons & IN_DUCK ) ov->zFar -= 1.0f;
-
-	if( cmd->buttons & IN_FORWARD ) ov->origin[ov->rotated] -= sign * 1.0f;
-	else if( cmd->buttons & IN_BACK ) ov->origin[ov->rotated] += sign * 1.0f;
-
-	if( ov->rotated )
-	{
-		if( cmd->buttons & ( IN_RIGHT|IN_MOVERIGHT ))
-			ov->origin[0] -= sign * 1.0f;
-		else if( cmd->buttons & ( IN_LEFT|IN_MOVELEFT ))
-			ov->origin[0] += sign * 1.0f;
-	}
-	else
-	{
-		if( cmd->buttons & ( IN_RIGHT|IN_MOVERIGHT ))
-			ov->origin[1] += sign * 1.0f;
-		else if( cmd->buttons & ( IN_LEFT|IN_MOVELEFT ))
-			ov->origin[1] -= sign * 1.0f;
-	}
-
-	if( cmd->buttons & IN_ATTACK ) ov->flZoom += 0.01f;
-	else if( cmd->buttons & IN_ATTACK2 ) ov->flZoom -= 0.01f;
-
-	if( ov->flZoom == 0.0f ) ov->flZoom = 0.0001f; // to prevent disivion by zero
-}
 
 /*
 ===============
@@ -216,7 +28,7 @@ V_MergeOverviewRefdef
 merge refdef with overview settings
 ===============
 */
-void V_MergeOverviewRefdef( ref_params_t *fd )
+void V_MergeOverviewRefdef( void )
 {
 	ref_overview_t	*ov = &clgame.overView;
 	float		aspect;
@@ -243,99 +55,134 @@ void V_MergeOverviewRefdef( ref_params_t *fd )
 		ov->flZoom, ov->origin[0], ov->origin[1], ov->origin[2], ov->zNear, ov->zFar, ov->rotated );
 	}
 
-	VectorCopy( ov->origin, fd->vieworg );
-	fd->vieworg[2] = ov->zFar + ov->zNear;
-	Vector2Copy( fd->vieworg, mins );
-	Vector2Copy( fd->vieworg, maxs );
+	VectorCopy( ov->origin, cl.refdef.vieworg );
+	cl.refdef.vieworg[2] = ov->zFar + ov->zNear;
+	Vector2Copy( cl.refdef.vieworg, mins );
+	Vector2Copy( cl.refdef.vieworg, maxs );
 
 	mins[!ov->rotated] += ov->xLeft;
 	maxs[!ov->rotated] += ov->xRight;
 	mins[ov->rotated] += ov->xTop;
 	maxs[ov->rotated] += ov->xBottom;
 
-	fd->viewangles[0] = 90.0f;
-	fd->viewangles[1] = 90.0f;
-	fd->viewangles[2] = (ov->rotated) ? (ov->flZoom < 0.0f) ? 180.0f : 0.0f : (ov->flZoom < 0.0f) ? -90.0f : 90.0f;
+	cl.refdef.viewangles[0] = 90.0f;
+	cl.refdef.viewangles[1] = 90.0f;
+	cl.refdef.viewangles[2] = (ov->rotated) ? (ov->flZoom < 0.0f) ? 180.0f : 0.0f : (ov->flZoom < 0.0f) ? -90.0f : 90.0f;
 
 	Mod_SetOrthoBounds( mins, maxs );
 }
 
 /*
 ===============
-V_ProcessShowTexturesCmds
+V_CalcViewRect
 
-navigate around texture atlas
+calc frame rectangle (Quake1 style)
 ===============
 */
-void V_ProcessShowTexturesCmds( usercmd_t *cmd )
+void V_CalcViewRect( void )
 {
-	static int	oldbuttons;
-	int		changed;
-	int		pressed, released;
+	int	size, sb_lines;
 
-	if( !gl_showtextures->integer ) return;
+	if( scr_viewsize->integer >= 120 )
+		sb_lines = 0;		// no status bar at all
+	else if( scr_viewsize->integer >= 110 )
+		sb_lines = 24;		// no inventory
+	else sb_lines = 48;
 
-	changed = (oldbuttons ^ cmd->buttons);
-	pressed =  changed & cmd->buttons;
-	released = changed & (~cmd->buttons);
+	size = Q_min( scr_viewsize->integer, 100 );
 
-	if( released & ( IN_RIGHT|IN_MOVERIGHT ))
-		Cvar_SetFloat( "r_showtextures", gl_showtextures->integer + 1 );
-	if( released & ( IN_LEFT|IN_MOVELEFT ))
-		Cvar_SetFloat( "r_showtextures", max( 1, gl_showtextures->integer - 1 ));
-	oldbuttons = cmd->buttons;
+	cl.refdef.viewport[2] = scr_width->integer * size / 100;
+	cl.refdef.viewport[3] = scr_height->integer * size / 100;
+
+	if( cl.refdef.viewport[3] > scr_height->integer - sb_lines )
+		cl.refdef.viewport[3] = scr_height->integer - sb_lines;
+	if( cl.refdef.viewport[3] > scr_height->integer )
+		cl.refdef.viewport[3] = scr_height->integer;
+
+	cl.refdef.viewport[0] = ( scr_width->integer - cl.refdef.viewport[2] ) / 2;
+	cl.refdef.viewport[1] = ( scr_height->integer - sb_lines - cl.refdef.viewport[3] ) / 2;
+
 }
 
 /*
 ===============
-V_CalcRefDef
+V_SetupRefDef
 
-sets cl.refdef view values
+update refdef values each frame
 ===============
 */
-void V_CalcRefDef( void )
+void V_SetupRefDef( void )
 {
-	R_Set2DMode( false );
-	tr.framecount++;	// g-cont. keep actual frame for all viewpasses
+	cl_entity_t	*clent;
 
-	do
+	// compute viewport rectangle
+	V_CalcViewRect();
+
+	clent = CL_GetLocalPlayer ();
+
+	clgame.entities->curstate.scale = clgame.movevars.waveHeight;
+
+	cl.refdef.movevars = &clgame.movevars;
+	cl.refdef.health = cl.frame.client.health;
+	cl.refdef.playernum = cl.playernum;
+	cl.refdef.max_entities = clgame.maxEntities;
+	cl.refdef.maxclients = cl.maxclients;
+	cl.refdef.time = cl.time;
+	cl.refdef.frametime = cl.time - cl.oldtime;
+	cl.refdef.demoplayback = cls.demoplayback;
+	cl.refdef.viewsize = scr_viewsize->integer;
+	cl.refdef.onlyClientDraw = 0;	// reset clientdraw
+	cl.refdef.hardware = true;	// always true
+	cl.refdef.spectator = (clent->curstate.spectator != 0);
+	cl.refdef.smoothing = cl.first_frame; // NOTE: currently this used to prevent ugly un-duck effect while level is changed
+	cl.scr_fov = bound( 1.0f, cl.scr_fov, 179.0f );
+	cl.refdef.nextView = 0;
+
+	// calc FOV
+	cl.refdef.fov_x = cl.scr_fov; // this is a final fov value
+	cl.refdef.fov_y = V_CalcFov( &cl.refdef.fov_x, cl.refdef.viewport[2], cl.refdef.viewport[3] );
+
+	// adjust FOV for widescreen
+	if( glState.wideScreen && r_adjust_fov->integer )
+		V_AdjustFov( &cl.refdef.fov_x, &cl.refdef.fov_y, cl.refdef.viewport[2], cl.refdef.viewport[3], false );
+
+	if( CL_IsPredicted( ) && !cl.first_frame )
+	{
+		VectorCopy( cl.predicted.origin, cl.refdef.simorg );
+		VectorCopy( cl.predicted.velocity, cl.refdef.simvel );
+		VectorCopy( cl.predicted.viewofs, cl.refdef.viewheight );
+		VectorCopy( cl.predicted.punchangle, cl.refdef.punchangle );
+		cl.refdef.onground = ( cl.predicted.onground == -1 ) ? false : true;
+		cl.refdef.waterlevel = cl.predicted.waterlevel;
+	}
+	else
+	{
+		VectorCopy( cl.frame.client.origin, cl.refdef.simorg );
+		VectorCopy( cl.frame.client.view_ofs, cl.refdef.viewheight );
+		VectorCopy( cl.frame.client.velocity, cl.refdef.simvel );
+		VectorCopy( cl.frame.client.punchangle, cl.refdef.punchangle );
+		cl.refdef.onground = (cl.frame.client.flags & FL_ONGROUND) ? 1 : 0;
+		cl.refdef.waterlevel = cl.frame.client.waterlevel;
+	}
+
+	// setup the viewent variables
+	if( cl_lw->value ) clgame.viewent.curstate.modelindex = cl.predicted.viewmodel;
+	else clgame.viewent.curstate.modelindex = cl.frame.client.viewmodel;
+	clgame.viewent.model = Mod_Handle( clgame.viewent.curstate.modelindex );
+	clgame.viewent.curstate.number = cl.playernum + 1;
+	clgame.viewent.curstate.entityType = ET_NORMAL;
+	clgame.viewent.index = cl.playernum + 1;
+
+	// calc refdef first so viewent can get an actual
+	// player position, angles etc
+	if( FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
 	{
 		clgame.dllFuncs.pfnCalcRefdef( &cl.refdef );
-		V_MergeOverviewRefdef( &cl.refdef );
-		R_RenderFrame( &cl.refdef, true );
-		cl.refdef.onlyClientDraw = false;
-	} while( cl.refdef.nextView );
-
-	// Xash3D extension. draw debug triangles on a server
-	SV_DrawDebugTriangles ();
-
-	SCR_AddDirtyPoint( cl.refdef.viewport[0], cl.refdef.viewport[1] );
-	SCR_AddDirtyPoint( cl.refdef.viewport[0] + cl.refdef.viewport[2] - 1, cl.refdef.viewport[1] + cl.refdef.viewport[3] - 1 );
-}
-
-//============================================================================
-
-/*
-==================
-V_RenderView
-
-==================
-*/
-void V_RenderView( void )
-{
-	if( !cl.video_prepped || ( UI_IsVisible() && !cl.background ))
-		return; // still loading
-
-	if( cl.frame.valid && ( cl.force_refdef || !cl.refdef.paused ))
-	{
-		cl.force_refdef = false;
+		V_MergeOverviewRefdef();
 
 		R_ClearScene ();
 		CL_AddEntities ();
-		V_SetupRefDef ();
 	}
-
-	V_CalcRefDef ();
 }
 
 /*
@@ -361,7 +208,7 @@ qboolean V_PreRender( void )
 	{
 		if(( host.realtime - cls.disable_screen ) > cl_timeout->value )
 		{
-			MsgDev( D_NOTE, "V_PreRender: loading plaque timed out.\n" );
+			MsgDev( D_ERROR, "V_PreRender: loading plaque timed out\n" );
 			cls.disable_screen = 0.0f;
 		}
 		return false;
@@ -372,6 +219,53 @@ qboolean V_PreRender( void )
 	return true;
 }
 
+//============================================================================
+
+/*
+==================
+V_RenderView
+
+==================
+*/
+void V_RenderView( void )
+{
+	if( !cl.video_prepped || ( UI_IsVisible() && !cl.background ))
+		return; // still loading
+
+	if( !FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
+	{
+		if( cl.frame.valid && ( cl.force_refdef || !cl.refdef.paused ))
+		{
+			cl.force_refdef = false;
+
+			R_ClearScene ();
+			CL_AddEntities ();
+			V_SetupRefDef ();
+		}
+	}
+
+	R_Set2DMode( false );
+	SCR_AddDirtyPoint( 0, 0 );
+	SCR_AddDirtyPoint( scr_width->integer - 1, scr_height->integer - 1 );
+
+	tr.framecount++;	// g-cont. keep actual frame for all viewpasses
+
+	if( !FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
+	{
+		do
+		{
+			clgame.dllFuncs.pfnCalcRefdef( &cl.refdef );
+			V_MergeOverviewRefdef();
+			R_RenderFrame( &cl.refdef, true );
+			cl.refdef.onlyClientDraw = false;
+		} while( cl.refdef.nextView );
+	}
+	else R_RenderFrame( &cl.refdef, true );
+
+	// draw debug triangles on a server
+	SV_DrawDebugTriangles ();
+}
+
 /*
 ==================
 V_PostRender
@@ -380,11 +274,12 @@ V_PostRender
 */
 void V_PostRender( void )
 {
-	qboolean	draw_2d = false;
+	static double	oldtime;
+	qboolean		draw_2d = false;
 
 	R_Set2DMode( true );
 
-	if( cls.state == ca_active )
+	if( cls.state == ca_active && cls.scrshot_action != scrshot_mapshot )
 	{
 		SCR_TileClear();
 		CL_DrawHUD( CL_ACTIVE );
@@ -404,16 +299,28 @@ void V_PostRender( void )
 	{
 		SCR_RSpeeds();
 		SCR_NetSpeeds();
-		SCR_DrawFPS();
+		SCR_DrawNetGraph();
 		SV_DrawOrthoTriangles();
 		CL_DrawDemoRecording();
-		R_ShowTextures();
 		CL_DrawHUD( CL_CHANGELEVEL );
+		R_ShowTextures();
 		Con_DrawConsole();
 		UI_UpdateMenu( host.realtime );
 		Con_DrawVersion();
 		Con_DrawDebug(); // must be last
-		S_ExtraUpdate();
+
+		if( !FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
+			S_ExtraUpdate();
+	}
+
+	if( FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
+	{
+		// don't update sound too fast
+		if(( host.realtime - oldtime ) >= HOST_FRAMETIME )
+		{
+			oldtime = host.realtime;
+			CL_ExtraUpdate();
+		}
 	}
 
 	SCR_MakeScreenShot();

@@ -30,6 +30,7 @@ GNU General Public License for more details.
 #include "vgui_draw.h"
 #include "sound.h"		// SND_STOP_LOOPING
 
+#define MAX_LINELENGTH	80
 #define MAX_TEXTCHANNELS	8		// must be power of two (GoldSrc uses 4 channels)
 #define TEXT_MSGNAME	"TextMessage%i"
 
@@ -88,6 +89,8 @@ static dllfunc_t cdll_new_exports[] = 	// allowed only in SDK 2.3 and higher
 { "HUD_GetRenderInterface", (void **)&clgame.dllFuncs.pfnGetRenderInterface },	// Xash3D ext
 { "HUD_GetPlayerTeam", (void **)&clgame.dllFuncs.pfnGetPlayerTeam },
 { "HUD_ClipMoveToEntity", (void **)&clgame.dllFuncs.pfnClipMoveToEntity },	// Xash3D ext
+{ "HUD_UpdateEntityState", (void **)&clgame.dllFuncs.pfnUpdateEntityState },
+{ "HUD_InterpolateEntity", (void **)&clgame.dllFuncs.pfnInterpolateEntity },
 { NULL, NULL }
 };
 
@@ -406,30 +409,6 @@ static void SPR_AdjustSize( float *x, float *y, float *w, float *h )
 
 /*
 ====================
-TextAdjustSize
-
-draw hudsprite routine
-====================
-*/
-void TextAdjustSize( int *x, int *y, int *w, int *h )
-{
-	float	xscale, yscale;
-
-	if( !clgame.ds.adjust_size ) return;
-	if( !x && !y && !w && !h ) return;
-
-	// scale for screen sizes
-	xscale = scr_width->integer / (float)clgame.scrInfo.iWidth;
-	yscale = scr_height->integer / (float)clgame.scrInfo.iHeight;
-
-	if( x ) *x *= xscale;
-	if( y ) *y *= yscale;
-	if( w ) *w *= xscale;
-	if( h ) *h *= yscale;
-}
-
-/*
-====================
 PictAdjustSize
 
 draw hudsprite routine
@@ -573,7 +552,7 @@ void CL_DrawCenterPrint( void )
 	char	*pText;
 	int	i, j, x, y;
 	int	width, lineLength;
-	byte	*colorDefault, line[80];
+	byte	*colorDefault, line[MAX_LINELENGTH];
 	int	charWidth, charHeight;
 
 	if( !clgame.centerPrint.time )
@@ -596,7 +575,7 @@ void CL_DrawCenterPrint( void )
 		lineLength = 0;
 		width = 0;
 
-		while( *pText && *pText != '\n' )
+		while( *pText && *pText != '\n' && lineLength < MAX_LINELENGTH )
 		{
 			byte c = *pText;
 			line[lineLength] = c;
@@ -605,6 +584,9 @@ void CL_DrawCenterPrint( void )
 			lineLength++;
 			pText++;
 		}
+
+		if( lineLength == MAX_LINELENGTH )
+			lineLength--;
 
 		pText++; // Skip LineFeed
 		line[lineLength] = 0;
@@ -643,7 +625,7 @@ void CL_DrawScreenFade( void )
 	// all done?
 	if(( cl.time > sf->fadeReset ) && ( cl.time > sf->fadeEnd ))
 	{
-		Q_memset( &clgame.fade, 0, sizeof( clgame.fade ));
+		memset( &clgame.fade, 0, sizeof( clgame.fade ));
 		return;
 	}
 
@@ -718,7 +700,7 @@ void CL_ParseTextMessage( sizebuf_t *msg )
 	int			channel;
 
 	// read channel ( 0 - auto)
-	channel = BF_ReadByte( msg );
+	channel = MSG_ReadByte( msg );
 
 	if( channel <= 0 || channel > ( MAX_TEXTCHANNELS - 1 ))
 	{
@@ -731,27 +713,27 @@ void CL_ParseTextMessage( sizebuf_t *msg )
 	// grab message channel
 	text = &cl_textmessage[channel];
 
-	text->x = (float)(BF_ReadShort( msg ) / 8192.0f);
-	text->y = (float)(BF_ReadShort( msg ) / 8192.0f);
-	text->effect = BF_ReadByte( msg );
-	text->r1 = BF_ReadByte( msg );
-	text->g1 = BF_ReadByte( msg );
-	text->b1 = BF_ReadByte( msg );
-	text->a1 = BF_ReadByte( msg );
-	text->r2 = BF_ReadByte( msg );
-	text->g2 = BF_ReadByte( msg );
-	text->b2 = BF_ReadByte( msg );
-	text->a2 = BF_ReadByte( msg );
-	text->fadein = (float)(BF_ReadShort( msg ) / 256.0f );
-	text->fadeout = (float)(BF_ReadShort( msg ) / 256.0f );
-	text->holdtime = (float)(BF_ReadShort( msg ) / 256.0f );
+	text->x = (float)(MSG_ReadShort( msg ) / 8192.0f);
+	text->y = (float)(MSG_ReadShort( msg ) / 8192.0f);
+	text->effect = MSG_ReadByte( msg );
+	text->r1 = MSG_ReadByte( msg );
+	text->g1 = MSG_ReadByte( msg );
+	text->b1 = MSG_ReadByte( msg );
+	text->a1 = MSG_ReadByte( msg );
+	text->r2 = MSG_ReadByte( msg );
+	text->g2 = MSG_ReadByte( msg );
+	text->b2 = MSG_ReadByte( msg );
+	text->a2 = MSG_ReadByte( msg );
+	text->fadein = (float)(MSG_ReadShort( msg ) / 256.0f );
+	text->fadeout = (float)(MSG_ReadShort( msg ) / 256.0f );
+	text->holdtime = (float)(MSG_ReadShort( msg ) / 256.0f );
 
 	if( text->effect == 2 )
-		text->fxtime = (float)(BF_ReadShort( msg ) / 256.0f );
+		text->fxtime = (float)(MSG_ReadShort( msg ) / 256.0f );
 	else text->fxtime = 0.0f;
 
 	// to prevent grab too long messages
-	Q_strncpy( (char *)text->pMessage, BF_ReadString( msg ), 512 ); 		
+	Q_strncpy( (char *)text->pMessage, MSG_ReadString( msg ), 512 ); 		
 
 	// NOTE: a "HudText" message contain only 'string' with message name, so we
 	// don't needs to use MSG_ routines here, just directly write msgname into netbuffer
@@ -1084,8 +1066,10 @@ void CL_InitEdicts( void )
 {
 	ASSERT( clgame.entities == NULL );
 
+	if( !clgame.mempool ) return; // Host_Error without client
+
 	CL_UPDATE_BACKUP = ( cl.maxclients == 1 ) ? SINGLEPLAYER_BACKUP : MULTIPLAYER_BACKUP;
-	cls.num_client_entities = CL_UPDATE_BACKUP * 64;
+	cls.num_client_entities = CL_UPDATE_BACKUP * NUM_PACKET_ENTITIES;
 	cls.packet_entities = Z_Realloc( cls.packet_entities, sizeof( entity_state_t ) * cls.num_client_entities );
 	clgame.entities = Mem_Alloc( clgame.mempool, sizeof( cl_entity_t ) * clgame.maxEntities );
 	clgame.static_entities = Mem_Alloc( clgame.mempool, sizeof( cl_entity_t ) * MAX_STATIC_ENTITIES );
@@ -1097,10 +1081,22 @@ void CL_InitEdicts( void )
 		clgame.maxRemapInfos = clgame.maxEntities + 1; 
 		clgame.remap_info = (remap_info_t **)Mem_Alloc( clgame.mempool, sizeof( remap_info_t* ) * clgame.maxRemapInfos );
 	}
+
+	if( clgame.drawFuncs.R_ProcessEntData != NULL )
+	{
+		// let the client.dll free custom data
+		clgame.drawFuncs.R_ProcessEntData( true );
+	}
 }
 
 void CL_FreeEdicts( void )
 {
+	if( clgame.drawFuncs.R_ProcessEntData != NULL )
+	{
+		// let the client.dll free custom data
+		clgame.drawFuncs.R_ProcessEntData( false );
+	}
+
 	if( clgame.entities )
 		Mem_Free( clgame.entities );
 	clgame.entities = NULL;
@@ -1208,7 +1204,8 @@ HSPRITE pfnSPR_LoadExt( const char *szPicName, uint texFlags )
 	// load new model
 	if( CL_LoadHudSprite( name, &clgame.sprites[i], false, texFlags ))
 	{
-		clgame.sprites[i].needload = clgame.load_sequence;
+		if( i < ( MAX_IMAGES - 1 ))
+			clgame.sprites[i].needload = clgame.load_sequence;
 		return i;
 	}
 	return 0;
@@ -1414,11 +1411,11 @@ static client_sprite_t *pfnSPR_GetList( char *psz, int *piCount )
 
 /*
 =============
-pfnFillRGBA
+CL_FillRGBA
 
 =============
 */
-static void pfnFillRGBA( int x, int y, int width, int height, int r, int g, int b, int a )
+void CL_FillRGBA( int x, int y, int width, int height, int r, int g, int b, int a )
 {
 	r = bound( 0, r, 255 );
 	g = bound( 0, g, 255 );
@@ -1474,7 +1471,7 @@ static int pfnGetScreenInfo( SCREENINFO *pscrinfo )
 		clgame.scrInfo.iSize = pscrinfo->iSize;
 
 	// copy screeninfo out
-	Q_memcpy( pscrinfo, &clgame.scrInfo, clgame.scrInfo.iSize );
+	memcpy( pscrinfo, &clgame.scrInfo, clgame.scrInfo.iSize );
 
 	return 1;
 }
@@ -1583,7 +1580,7 @@ static void pfnGetPlayerInfo( int ent_num, hud_player_info_t *pinfo )
 
 	if( ent_num >= cl.maxclients || ent_num < 0 || !cl.players[ent_num].name[0] )
 	{
-		Q_memset( pinfo, 0, sizeof( *pinfo ));
+		memset( pinfo, 0, sizeof( *pinfo ));
 		return;
 	}
 
@@ -1938,7 +1935,7 @@ void pfnCalcShake( void )
 
 	if(( cl.time > clgame.shake.time ) || clgame.shake.amplitude <= 0 || clgame.shake.frequency <= 0 )
 	{
-		Q_memset( &clgame.shake, 0, sizeof( clgame.shake ));
+		memset( &clgame.shake, 0, sizeof( clgame.shake ));
 		return;
 	}
 
@@ -2098,7 +2095,7 @@ static void pfnHookEvent( const char *filename, pfnEventHook pfn )
 
 		if( !Q_stricmp( name, ev->name ) && ev->func != NULL )
 		{
-			MsgDev( D_WARN, "CL_HookEvent: %s already hooked!\n" );
+			MsgDev( D_WARN, "CL_HookEvent: %s already hooked!\n", name );
 			return;
 		}
 	}
@@ -2199,6 +2196,8 @@ pfnLocalPlayerDucking
 */
 int pfnLocalPlayerDucking( void )
 {
+	if( CL_IsPredicted( ))
+		return (cl.predicted.usehull == 1);
 	return cl.frame.client.bInDuck;
 }
 
@@ -2214,7 +2213,7 @@ void pfnLocalPlayerViewheight( float *view_ofs )
 	if( !view_ofs ) return;
 
 	if( CL_IsPredicted( ))
-		VectorCopy( cl.predicted_viewofs, view_ofs );		
+		VectorCopy( cl.predicted.viewofs, view_ofs );		
 	else VectorCopy( cl.frame.client.view_ofs, view_ofs );
 }
 
@@ -2267,101 +2266,12 @@ physent_t *pfnGetPhysent( int idx )
 
 /*
 =============
-pfnSetUpPlayerPrediction
-
-FIXME: finalize
-=============
-*/
-void pfnSetUpPlayerPrediction( int dopred, int bIncludeLocalClient )
-{
-#if 0
-	entity_state_t	*playerstate = cl.frames[cl.parsecountmod].playerstate;
-	predicted_player_t	*player = cls.predicted_players;
-	cl_entity_t	*clent;
-	int		j, v12;
-
-	for( j = 0; j < MAX_CLIENTS; j++, player++, playerstate++ )
-	{
-		player->active = false;
-
-		if( playerstate->messagenum != cl.parsecount )
-			continue; // not present this frame
-
-		if( !playerstate->modelindex )
-			continue;
-
-		// special for EF_NODRAW and local client?
-		if(( playerstate->effects & EF_NODRAW ) && !bIncludeLocalClient )
-		{
-			// don't include local player?
-			if( cl.playernum != j )
-			{
-				player->active = true;
-				player->movetype = playerstate->movetype;
-				player->solid = playerstate->solid;
-				player->usehull = playerstate->usehull;
-
-				clent = CL_EDICT_NUM( j + 1 );
-//				CL_ComputePlayerOrigin( v9 );
-				VectorCopy( clent->origin, player->origin );
-				VectorCopy( clent->angles, player->angles );
-			}
-			else continue;
-		}
-		else
-		{
-			if( cl.playernum == j )
-				continue;
-
-			player->active = true;
-			player->movetype = playerstate->movetype;
-			player->solid = playerstate->solid;
-			player->usehull = playerstate->usehull;
-
-			v12 = 17080 * cl.parsecountmod + 340 * j;
-			player->origin[0] = cl.frames[0].playerstate[0].origin[0] + v12;
-			player->origin[1] = cl.frames[0].playerstate[0].origin[1] + v12;
-			player->origin[2] = cl.frames[0].playerstate[0].origin[2] + v12;
-
-			player->angles[0] = cl.frames[0].playerstate[0].angles[0] + v12;
-			player->angles[1] = cl.frames[0].playerstate[0].angles[1] + v12;
-			player->angles[2] = cl.frames[0].playerstate[0].angles[2] + v12;
-		}
-	}
-#endif
-}
-
-/*
-=============
-pfnPushPMStates
-
-=============
-*/
-void pfnPushPMStates( void )
-{
-	clgame.oldcount = clgame.pmove->numphysent;
-}
-
-/*
-=============
-pfnPopPMStates
-
-=============
-*/
-void pfnPopPMStates( void )
-{
-	clgame.pmove->numphysent = clgame.oldcount;
-}
-
-/*
-=============
 pfnSetTraceHull
 
 =============
 */
 void CL_SetTraceHull( int hull )
 {
-	clgame.old_trace_hull = clgame.pmove->usehull;
 	clgame.pmove->usehull = bound( 0, hull, 3 );
 
 }
@@ -2376,7 +2286,6 @@ void CL_PlayerTrace( float *start, float *end, int traceFlags, int ignore_pe, pm
 {
 	if( !tr ) return;
 	*tr = PM_PlayerTraceExt( clgame.pmove, start, end, traceFlags, clgame.pmove->numphysent, clgame.pmove->physents, ignore_pe, NULL );
-	clgame.pmove->usehull = clgame.old_trace_hull;	// restore old trace hull 
 }
 
 /*
@@ -2389,7 +2298,6 @@ void CL_PlayerTraceExt( float *start, float *end, int traceFlags, int (*pfnIgnor
 {
 	if( !tr ) return;
 	*tr = PM_PlayerTraceExt( clgame.pmove, start, end, traceFlags, clgame.pmove->numphysent, clgame.pmove->physents, -1, pfnIgnore );
-	clgame.pmove->usehull = clgame.old_trace_hull;	// restore old trace hull 
 }
 
 /*
@@ -2594,7 +2502,7 @@ const char *PlayerInfo_ValueForKey( int playerNum, const char *key )
 	if(( playerNum > cl.maxclients ) || ( playerNum < 1 ))
 		return NULL;
 
-	if(( cl.players[playerNum-1].name == NULL ) || (*(cl.players[playerNum-1].name) == 0 ))
+	if( !cl.players[playerNum-1].name[0] )
 		return NULL;
 
 	return Info_ValueForKey( cl.players[playerNum-1].userinfo, key );
@@ -2681,8 +2589,8 @@ int pfnServerCmdUnreliable( char *szCmdString )
 	if( !szCmdString || !szCmdString[0] )
 		return 0;
 
-	BF_WriteByte( &cls.datagram, clc_stringcmd );
-	BF_WriteString( &cls.datagram, szCmdString );
+	MSG_WriteByte( &cls.datagram, clc_stringcmd );
+	MSG_WriteString( &cls.datagram, szCmdString );
 
 	return 1;
 }
@@ -2788,6 +2696,24 @@ void pfnSetLightmapScale( float scale )
 
 /*
 =============
+pfnParseFile
+
+handle colon separately
+=============
+*/
+char *pfnParseFile( char *data, char *token )
+{
+	char	*out;
+
+	host.com_handlecolon = true;
+	out = COM_ParseFile( data, token );
+	host.com_handlecolon = false;
+
+	return out;
+}
+
+/*
+=============
 pfnSPR_DrawGeneric
 
 =============
@@ -2808,7 +2734,11 @@ TODO: implement
 */
 int pfnDrawString( int x, int y, const char *str, int r, int g, int b )
 {
-	return 0;
+	// draw the string until we hit the null character or a newline character
+	for( ; *str != 0 && *str != '\n'; str++ )
+		x += pfnDrawCharacter( x, y, (byte)*str, r, g, b );
+
+	return x;
 }
 
 /*
@@ -2820,7 +2750,14 @@ TODO: implement
 */
 int pfnDrawStringReverse( int x, int y, const char *str, int r, int g, int b )
 {
-	return 0;
+	char	*szIt;
+
+	// find the end of the string
+	for( szIt = (char *)str; *szIt != 0; szIt++ )
+		x -= clgame.scrInfo.charWidths[(byte)*szIt];
+	pfnDrawString( x, y, str, r, g, b );
+
+	return x;
 }
 
 /*
@@ -2920,11 +2857,11 @@ void pfnPlaySoundByNameAtPitch( char *filename, float volume, int pitch )
 
 /*
 =============
-pfnFillRGBABlend
+CL_FillRGBABlend
 
 =============
 */
-void pfnFillRGBABlend( int x, int y, int width, int height, int r, int g, int b, int a )
+void CL_FillRGBABlend( int x, int y, int width, int height, int r, int g, int b, int a )
 {
 	r = bound( 0, r, 255 );
 	g = bound( 0, g, 255 );
@@ -2951,7 +2888,7 @@ pfnGetAppID
 */
 int pfnGetAppID( void )
 {
-	return 220; // standard Valve value
+	return 130; // borrowed from SDLash3D
 }
 
 /*
@@ -3137,7 +3074,7 @@ void TriBrightness( float brightness )
 	rgba[1] = clgame.ds.triColor[1] * brightness;
 	rgba[2] = clgame.ds.triColor[2] * brightness;
 
-	pglColor3ub( rgba[0], rgba[1], rgba[2] );
+	pglColor4ub( rgba[0], rgba[1], rgba[2], clgame.ds.triColor[3] );
 }
 
 /*
@@ -3185,7 +3122,7 @@ int TriSpriteTexture( model_t *pSpriteModel, int frame )
 	if( psprite->texFormat == SPR_ALPHTEST )
 	{
 		pglEnable( GL_ALPHA_TEST );
-		pglAlphaFunc( GL_GREATER, 0.0f );
+		pglAlphaFunc( GL_GEQUAL, 0.5f );
 	}
 
 	GL_Bind( GL_TEXTURE0, gl_texturenum );
@@ -3322,7 +3259,8 @@ TriForParams
 */
 void TriFogParams( float flDensity, int iFogSkybox )
 {
-	// TODO: implement
+	RI.fogDensity = flDensity;
+	RI.fogCustom = iFogSkybox;
 }
 
 /*
@@ -3405,7 +3343,7 @@ void NetAPI_Status( net_status_t *status )
 	status->connected = NET_IsLocalAddress( cls.netchan.remote_address ) ? false : true;
 	status->connection_time = host.realtime - cls.netchan.connect_time;
 	status->remote_address = cls.netchan.remote_address;
-	status->packet_loss = cls.packet_loss / 100; // percent
+	status->packet_loss = cls.packet_loss / 100.0; // percent
 	status->latency = cl.frame.latency;
 	status->local_address = net_local;
 	status->rate = cls.netchan.rate;
@@ -3433,15 +3371,14 @@ void NetAPI_SendRequest( int context, int request, int flags, double timeout, ne
 	for( i = 0; i < MAX_REQUESTS; i++ )
 	{
 		nr = &clgame.net_requests[i];
-		if( !nr->pfnFunc || nr->timeout < host.realtime )
-			break;
+		if( !nr->pfnFunc ) break;
 	}
 
 	if( i == MAX_REQUESTS )
 	{
 		double	max_timeout = 0;
 
-		// no free requests? use older
+		// no free requests? use oldest
 		for( i = 0, nr = NULL; i < MAX_REQUESTS; i++ )
 		{
 			if(( host.realtime - clgame.net_requests[i].timesend ) > max_timeout )
@@ -3455,7 +3392,7 @@ void NetAPI_SendRequest( int context, int request, int flags, double timeout, ne
 	ASSERT( nr != NULL );
 
 	// clear slot
-	Q_memset( nr, 0, sizeof( *nr ));
+	memset( nr, 0, sizeof( *nr ));
 
 	// create a new request
 	nr->timesend = host.realtime;
@@ -3468,11 +3405,20 @@ void NetAPI_SendRequest( int context, int request, int flags, double timeout, ne
 
 	if( request == NETAPI_REQUEST_SERVERLIST )
 	{
-		// UNDONE: build request for master-server
+		char	fullquery[512] = "1\xFF" "0.0.0.0:0\0" "\\gamedir\\";
+
+		// make sure what port is specified
+		if( !nr->resp.remote_address.port ) nr->resp.remote_address.port = MSG_BigShort( PORT_MASTER );
+
+		// grab the list from the master server
+		Q_strcpy( &fullquery[22], GI->gamedir );
+		NET_SendPacket( NS_CLIENT, Q_strlen( GI->gamedir ) + 23, fullquery, nr->resp.remote_address );
+		clgame.request_type = NET_REQUEST_CLIENT;
+		clgame.master_request = nr; // holds the master request unitl the master acking
 	}
 	else
 	{
-		// send request over the net
+		// local servers request
 		Q_snprintf( req, sizeof( req ), "netinfo %i %i %i", PROTOCOL_VERSION, context, request );
 		Netchan_OutOfBandPrint( NS_CLIENT, nr->resp.remote_address, req );
 	}
@@ -3486,15 +3432,31 @@ NetAPI_CancelRequest
 */
 void NetAPI_CancelRequest( int context )
 {
-	int	i;
+	net_request_t	*nr;
+	int		i;
 
 	// find a specified request
 	for( i = 0; i < MAX_REQUESTS; i++ )
 	{
+		nr = &clgame.net_requests[i];
+
 		if( clgame.net_requests[i].resp.context == context )
 		{
-			MsgDev( D_NOTE, "Request with context %i cancelled\n", context );
-			Q_memset( &clgame.net_requests[i], 0, sizeof( net_request_t ));
+			if( nr->pfnFunc )
+			{
+				SetBits( nr->resp.error, NET_ERROR_TIMEOUT );
+				nr->resp.ping = host.realtime - nr->timesend;
+				nr->pfnFunc( &nr->resp );
+                              }
+
+			memset( &clgame.net_requests[i], 0, sizeof( net_request_t ));
+
+			if( clgame.net_requests[i].resp.type == NETAPI_REQUEST_SERVERLIST && &clgame.net_requests[i] == clgame.master_request )
+			{
+				if( clgame.request_type == NET_REQUEST_CLIENT )
+					clgame.request_type = NET_REQUEST_CANCEL;
+				clgame.master_request = NULL;
+			}
 			break;
 		}
 	}
@@ -3508,7 +3470,22 @@ NetAPI_CancelAllRequests
 */
 void NetAPI_CancelAllRequests( void )
 {
-	Q_memset( clgame.net_requests, 0, sizeof( clgame.net_requests ));
+	net_request_t	*nr;
+	int		i;
+
+	// tell the user about cancel
+	for( i = 0; i < MAX_REQUESTS; i++ )
+	{
+		nr = &clgame.net_requests[i];
+		if( !nr->pfnFunc ) continue;	// not used
+		SetBits( nr->resp.error, NET_ERROR_TIMEOUT );
+		nr->resp.ping = host.realtime - nr->timesend;
+		nr->pfnFunc( &nr->resp );
+	}
+
+	memset( clgame.net_requests, 0, sizeof( clgame.net_requests ));
+	clgame.request_type = NET_REQUEST_CANCEL;
+	clgame.master_request = NULL;
 }
 
 /*
@@ -3758,9 +3735,9 @@ static event_api_t gEventApi =
 	pfnLocalPlayerBounds,
 	pfnIndexFromTrace,
 	pfnGetPhysent,
-	pfnSetUpPlayerPrediction,
-	pfnPushPMStates,
-	pfnPopPMStates,
+	CL_SetUpPlayerPrediction,
+	CL_PushPMStates,
+	CL_PopPMStates,
 	CL_SetSolidPlayers,
 	CL_SetTraceHull,
 	CL_PlayerTrace,
@@ -3823,13 +3800,13 @@ static cl_enginefunc_t gEngfuncs =
 	SPR_EnableScissor,
 	SPR_DisableScissor,
 	pfnSPR_GetList,
-	pfnFillRGBA,
+	CL_FillRGBA,
 	pfnGetScreenInfo,
 	pfnSetCrosshair,
-	pfnCvar_RegisterVariable,
+	pfnCvar_RegisterClientVariable,
 	Cvar_VariableValue,
 	Cvar_VariableString,
-	pfnAddClientCommand,
+	Cmd_AddClientCommand,
 	pfnHookUserMsg,
 	pfnServerCmd,
 	pfnClientCmd,
@@ -3892,7 +3869,7 @@ static cl_enginefunc_t gEngfuncs =
 	VGui_GetPanel,
 	VGui_ViewportPaintBackground,
 	COM_LoadFile,
-	COM_ParseFile,
+	pfnParseFile,
 	COM_FreeFile,
 	&gTriApi,
 	&gEfxApi,
@@ -3942,7 +3919,7 @@ static cl_enginefunc_t gEngfuncs =
 	pfnConstructTutorMessageDecayBuffer,
 	pfnResetTutorMessageDecayData,
 	pfnPlaySoundByNameAtPitch,
-	pfnFillRGBABlend,
+	CL_FillRGBABlend,
 	pfnGetAppID,
 	Cmd_AliasGetList,
 	pfnVguiWrap2_GetMouseDelta,
@@ -3970,9 +3947,9 @@ void CL_UnloadProgs( void )
 	Com_FreeLibrary( clgame.hInstance );
 	Mem_FreePool( &cls.mempool );
 	Mem_FreePool( &clgame.mempool );
-	Q_memset( &clgame, 0, sizeof( clgame ));
+	memset( &clgame, 0, sizeof( clgame ));
 
-	Cvar_Unlink();
+	Cvar_Unlink( CVAR_CLIENTDLL );
 	Cmd_Unlink( CMD_CLIENTDLL );
 }
 
@@ -4073,8 +4050,8 @@ qboolean CL_LoadProgs( const char *name )
 		return false;
 	}
 
-	Cvar_Get( "cl_nopred", "1", CVAR_ARCHIVE|CVAR_USERINFO, "disable client movement predicting" );
-	Cvar_Get( "cl_lw", "0", CVAR_ARCHIVE|CVAR_USERINFO, "enable client weapon predicting" );
+	Cvar_Get( "cl_nopred", "1", CVAR_ARCHIVE, "disable client movement predicting" );
+	cl_lw = Cvar_Get( "cl_lw", "0", CVAR_ARCHIVE|CVAR_USERINFO, "enable client weapon predicting" );
 	Cvar_Get( "cl_lc", "0", CVAR_ARCHIVE|CVAR_USERINFO, "enable lag compensation" );
 	Cvar_FullSet( "host_clientloaded", "1", CVAR_INIT );
 
@@ -4086,13 +4063,12 @@ qboolean CL_LoadProgs( const char *name )
 	CL_InitParticles ();
 	CL_InitViewBeams ();
 	CL_InitTempEnts ();
-	CL_InitEdicts ();	// initailize local player and world
-	CL_InitClientMove(); // initialize pm_shared
 
 	if( !R_InitRenderAPI())	// Xash3D extension
-	{
 		MsgDev( D_WARN, "CL_LoadProgs: couldn't get render API\n" );
-	}
+
+	CL_InitEdicts ();		// initailize local player and world
+	CL_InitClientMove();	// initialize pm_shared
 
 	// initialize game
 	clgame.dllFuncs.pfnInit();

@@ -123,14 +123,13 @@ void CL_DuplicateTexture( mstudiotexture_t *ptexture, int topcolor, int bottomco
 
 	// backup original palette
 	pal = (byte *)(tx + 1) + (tx->width * tx->height);
-	Q_memcpy( paletteBackup, pal, 768 );
+	memcpy( paletteBackup, pal, 768 );
 
 	raw = CL_CreateRawTextureFromPixels( tx, &size, topcolor, bottomcolor );
 	ptexture->index = GL_LoadTexture( texname, raw, size, TF_FORCE_COLOR, NULL ); // do copy
-	GL_SetTextureType( ptexture->index, TEX_REMAP );
 
 	// restore original palette
-	Q_memcpy( pal, paletteBackup, 768 );
+	memcpy( pal, paletteBackup, 768 );
 }
 
 /*
@@ -174,7 +173,7 @@ void CL_UpdateTexture( mstudiotexture_t *ptexture, int topcolor, int bottomcolor
 
 	// backup original palette
 	pal = (byte *)(tx + 1) + (tx->width * tx->height);
-	Q_memcpy( paletteBackup, pal, 768 );
+	memcpy( paletteBackup, pal, 768 );
 
 	raw = CL_CreateRawTextureFromPixels( tx, &size, topcolor, bottomcolor );
 	pic = FS_LoadImage( glt->name, raw, size );
@@ -188,7 +187,7 @@ void CL_UpdateTexture( mstudiotexture_t *ptexture, int topcolor, int bottomcolor
 	FS_FreeImage( pic );
 
 	// restore original palette
-	Q_memcpy( pal, paletteBackup, 768 );
+	memcpy( pal, paletteBackup, 768 );
 
 	ASSERT( index == ptexture->index );
 }
@@ -265,7 +264,7 @@ void CL_AllocRemapInfo( int topcolor, int bottomcolor )
 	dst = info->ptexture;
 
 	// copy unchanged first
-	Q_memcpy( dst, src, sizeof( mstudiotexture_t ) * phdr->numtextures );
+	memcpy( dst, src, sizeof( mstudiotexture_t ) * phdr->numtextures );
 
 	// make local copies for remap textures
 	for( i = 0; i < info->numtextures; i++ )

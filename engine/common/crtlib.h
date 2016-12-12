@@ -27,20 +27,12 @@ enum
 	TIME_FILENAME,
 };
 
-#define CMD_EXTDLL		BIT( 0 )		// added by game.dll
+#define CMD_SERVERDLL	BIT( 0 )		// added by server.dll
 #define CMD_CLIENTDLL	BIT( 1 )		// added by client.dll
+#define CMD_GAMEUIDLL	BIT( 2 )		// added by GameUI.dll
 
 typedef void (*setpair_t)( const char *key, const char *value, void *buffer, void *numpairs );
 typedef void (*xcommand_t)( void );
-
-typedef enum
-{
-	src_client,	// came in over a net connection as a clc_stringcmd
-			// host_client will be valid during this state.
-	src_command	// from the command buffer
-} cmd_source_t;
-
-extern cmd_source_t		cmd_source;
 
 // NOTE: if this is changed, it must be changed in cvardef.h too
 typedef struct convar_s
@@ -63,25 +55,26 @@ typedef struct convar_s
 // cvar flags
 typedef enum
 {
-	CVAR_ARCHIVE	= BIT(0),	// set to cause it to be saved to config.cfg
-	CVAR_USERINFO	= BIT(1),	// added to userinfo  when changed
-	CVAR_SERVERNOTIFY	= BIT(2),	// notifies players when changed
-	CVAR_EXTDLL	= BIT(3),	// defined by external DLL
-	CVAR_CLIENTDLL	= BIT(4),	// defined by the client dll
-	CVAR_PROTECTED	= BIT(5),	// it's a server cvar, but we don't send the data since it's a password, etc.
-	CVAR_SPONLY	= BIT(6),	// this cvar cannot be changed by clients connected to a multiplayer server.
-	CVAR_PRINTABLEONLY	= BIT(7),	// this cvar's string cannot contain unprintable characters ( player name )
-	CVAR_UNLOGGED	= BIT(8),	// if this is a FCVAR_SERVER, don't log changes to the log file / console
-	CVAR_SERVERINFO	= BIT(9),	// added to serverinfo when changed
-	CVAR_PHYSICINFO	= BIT(10),// added to physinfo when changed
-	CVAR_RENDERINFO	= BIT(11),// save to a seperate config called opengl.cfg
-	CVAR_CHEAT	= BIT(12),// can not be changed if cheats are disabled
-	CVAR_INIT		= BIT(13),// don't allow change from console at all, but can be set from the command line
-	CVAR_LATCH	= BIT(14),// save changes until server restart
-	CVAR_READ_ONLY	= BIT(15),// display only, cannot be set by user at all
-	CVAR_LATCH_VIDEO	= BIT(16),// save changes until render restart
-	CVAR_USER_CREATED	= BIT(17),// created by a set command (dll's used)
-	CVAR_GLCONFIG	= BIT(18),// set to cause it to be saved to opengl.cfg
+	CVAR_ARCHIVE	= BIT( 0 ),	// set to cause it to be saved to config.cfg
+	CVAR_USERINFO	= BIT( 1 ),	// added to userinfo when changed
+	CVAR_SERVERNOTIFY	= BIT( 2 ),	// notifies players when changed
+	CVAR_SERVERDLL	= BIT( 3 ),	// defined by the server DLL
+	CVAR_CLIENTDLL	= BIT( 4 ),	// defined by the client dll
+	CVAR_PROTECTED	= BIT( 5 ),	// it's a server cvar, but we don't send the data since it's a password, etc.
+	CVAR_SPONLY	= BIT( 6 ),	// this cvar cannot be changed by clients connected to a multiplayer server.
+	CVAR_PRINTABLEONLY	= BIT( 7 ),	// this cvar's string cannot contain unprintable characters ( player name )
+	CVAR_UNLOGGED	= BIT( 8 ),	// if this is a FCVAR_SERVER, don't log changes to the log file / console
+	CVAR_NOWHITEPACE	= BIT( 9 ),	// strip trailing/leading white space from this cvar
+	CVAR_SERVERINFO	= BIT( 10 ),	// added to serverinfo when changed
+	CVAR_PHYSICINFO	= BIT( 11 ),	// added to physinfo when changed
+	CVAR_RENDERINFO	= BIT( 12 ),	// save to a seperate config called opengl.cfg
+	CVAR_CHEAT	= BIT( 13 ),	// can not be changed if cheats are disabled
+	CVAR_INIT		= BIT( 14 ),	// don't allow change from console at all, but can be set from the command line
+	CVAR_LATCH	= BIT( 15 ),	// save changes until server restart
+	CVAR_READ_ONLY	= BIT( 16 ),	// display only, cannot be set by user at all
+	CVAR_GAMEUIDLL	= BIT( 17 ),	// defined by the GameUI DLL
+	CVAR_GLCONFIG	= BIT( 18 ),	// set to cause it to be saved to opengl.cfg
+	CVAR_USER_CREATED	= BIT( 19 ),	// created by a set command (dll's used)
 } cvar_flags_t;
 
 #include "cvardef.h"
@@ -109,7 +102,7 @@ void Cvar_WriteVariables( file_t *f );
 void Cvar_Init( void );
 char *Cvar_Userinfo( void );
 char *Cvar_Serverinfo( void );
-void Cvar_Unlink( void );
+void Cvar_Unlink( int group );
 
 //
 // cmd.c
@@ -125,8 +118,9 @@ char *Cmd_Argv( int arg );
 void Cmd_Init( void );
 void Cmd_Unlink( int group );
 void Cmd_AddCommand( const char *cmd_name, xcommand_t function, const char *cmd_desc );
-void Cmd_AddGameCommand( const char *cmd_name, xcommand_t function );
-void Cmd_AddClientCommand( const char *cmd_name, xcommand_t function );
+void Cmd_AddServerCommand( const char *cmd_name, xcommand_t function );
+int Cmd_AddClientCommand( const char *cmd_name, xcommand_t function );
+int Cmd_AddGameUICommand( const char *cmd_name, xcommand_t function );
 void Cmd_RemoveCommand( const char *cmd_name );
 qboolean Cmd_Exists( const char *cmd_name );
 void Cmd_LookupCmds( char *buffer, void *ptr, setpair_t callback );
@@ -134,7 +128,7 @@ qboolean Cmd_GetMapList( const char *s, char *completedname, int length );
 qboolean Cmd_GetDemoList( const char *s, char *completedname, int length );
 qboolean Cmd_GetMovieList( const char *s, char *completedname, int length );
 void Cmd_TokenizeString( char *text );
-void Cmd_ExecuteString( char *text, cmd_source_t src );
+void Cmd_ExecuteString( char *text );
 void Cmd_ForwardToServer( void );
 
 //
@@ -145,6 +139,7 @@ void Q_strnupr( const char *in, char *out, size_t size_out );
 #define Q_strlwr( int, out ) Q_strnlwr( in, out, 99999 )
 void Q_strnlwr( const char *in, char *out, size_t size_out );
 int Q_strlen( const char *string );
+int Q_colorstr( const char *string );
 char Q_toupper( const char in );
 char Q_tolower( const char in );
 #define Q_strcat( dst, src ) Q_strncat( dst, src, 99999 )
@@ -153,6 +148,7 @@ size_t Q_strncat( char *dst, const char *src, size_t siz );
 size_t Q_strncpy( char *dst, const char *src, size_t siz );
 #define copystring( s ) _copystring( host.mempool, s, __FILE__, __LINE__ )
 char *_copystring( byte *mempool, const char *s, const char *filename, int fileline );
+uint Q_hashkey( const char *string, uint hashSize, qboolean caseinsensitive );
 qboolean Q_isdigit( const char *str );
 int Q_atoi( const char *str );
 float Q_atof( const char *str );
@@ -174,14 +170,6 @@ int Q_sprintf( char *buffer, const char *format, ... );
 #define Q_memprint( val ) Q_pretifymem( val, 2 )
 char *Q_pretifymem( float value, int digitsafterdecimal );
 char *va( const char *format, ... );
-#define Q_memcpy( dest, src, size ) _Q_memcpy( dest, src, size, __FILE__, __LINE__ )
-#define Q_memset( dest, val, size ) _Q_memset( dest, val, size, __FILE__, __LINE__ )
-#define Q_memcmp( src0, src1, siz ) _Q_memcmp( src0, src1, siz, __FILE__, __LINE__ )
-#define Q_memmove( dest, src, size ) _Q_memmove( dest, src, size, __FILE__, __LINE__ )
-void _Q_memset( void *dest, int set, size_t count, const char *filename, int fileline );
-void _Q_memcpy( void *dest, const void *src, size_t count, const char *filename, int fileline );
-int _Q_memcmp( const void *src0, const void *src1, size_t count, const char *filename, int fileline );
-void _Q_memmove( void *dest, const void *src, size_t count, const char *filename, int fileline );
 
 //
 // zone.c
@@ -206,7 +194,5 @@ void Mem_PrintStats( void );
 #define Mem_EmptyPool( pool ) _Mem_EmptyPool( pool, __FILE__, __LINE__ )
 #define Mem_IsAllocated( mem ) Mem_IsAllocatedExt( NULL, mem )
 #define Mem_Check() _Mem_Check( __FILE__, __LINE__ )
-
-void CRT_Init( void ); // must be call first
 	
 #endif//STDLIB_H

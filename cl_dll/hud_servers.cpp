@@ -17,7 +17,7 @@
 static int	context_id;
 
 // Default master server address in case we can't read any from woncomm.lst file
-#define VALVE_MASTER_ADDRESS "half-life.east.won.net"
+#define VALVE_MASTER_ADDRESS "ms.xash.su"
 #define PORT_MASTER	 27010
 #define PORT_SERVER  27015
 
@@ -902,7 +902,7 @@ void CHudServers::RequestList( void )
 	NET_API->InitNetworking();
 
 	// Kill off left overs if any
-	NET_API->CancelAllRequests();
+	CancelRequest();
 
 	// Request Server List from master
 	NET_API->SendRequest( context_id++, NETAPI_REQUEST_SERVERLIST, 0, 5.0, &adr, ::ListResponse );
@@ -935,7 +935,7 @@ void CHudServers::RequestBroadcastList( int clearpending )
 	if ( clearpending )
 	{
 		// Kill off left overs if any
-		NET_API->CancelAllRequests();
+		CancelRequest();
 	}
 
 	adr.type = NA_BROADCAST;

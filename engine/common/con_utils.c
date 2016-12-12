@@ -67,7 +67,7 @@ qboolean Cmd_GetMapList( const char *s, char *completedname, int length )
 		int		ver = -1, mapver = -1, lumpofs = 0, lumplen = 0;
 		const char	*ext = FS_FileExtension( t->filenames[i] ); 
 		char		*ents = NULL, *pfile;
-		qboolean		paranoia = false;
+		int		version = 0;
 		qboolean		gearbox = false;
 			
 		if( Q_stricmp( ext, "bsp" )) continue;
@@ -79,7 +79,7 @@ qboolean Cmd_GetMapList( const char *s, char *completedname, int length )
 			dheader_t		*header;
 			dextrahdr_t	*hdrext;
 
-			Q_memset( buf, 0, sizeof( buf ));
+			memset( buf, 0, sizeof( buf ));
 			FS_Read( f, buf, sizeof( buf ));
 			header = (dheader_t *)buf;
 			ver = header->version;
@@ -108,8 +108,7 @@ qboolean Cmd_GetMapList( const char *s, char *completedname, int length )
 				hdrext = (dextrahdr_t *)((byte *)buf + sizeof( dheader31_t ));	
 			else hdrext = (dextrahdr_t *)((byte *)buf + sizeof( dheader_t ));
 
-			if( hdrext->id == IDEXTRAHEADER && hdrext->version == EXTRA_VERSION )
-				paranoia = true;
+			if( hdrext->id == IDEXTRAHEADER ) version = hdrext->version;
 
 			Q_strncpy( entfilename, t->filenames[i], sizeof( entfilename ));
 			FS_StripExtension( entfilename );
@@ -163,11 +162,17 @@ qboolean Cmd_GetMapList( const char *s, char *completedname, int length )
 			break;
 		case HLBSP_VERSION:
 			if( gearbox ) Q_strncpy( buf, "Blue-Shift", sizeof( buf ));
-			else if( paranoia ) Q_strncpy( buf, "Paranoia 2", sizeof( buf ));
+			else if( version == 1 ) Q_strncpy( buf, "XashXT old format", sizeof( buf ));
+			else if( version == 2 ) Q_strncpy( buf, "Paranoia 2: Savior", sizeof( buf ));
+			else if( version == 3 ) Q_strncpy( buf, "not supported", sizeof( buf ));
+			else if( version == 4 ) Q_strncpy( buf, "Half-Life extended", sizeof( buf ));
 			else Q_strncpy( buf, "Half-Life", sizeof( buf ));
 			break;
 		case XTBSP_VERSION:
-			if( paranoia ) Q_strncpy( buf, "Paranoia 2", sizeof( buf ));
+			if( version == 1 ) Q_strncpy( buf, "XashXT old format", sizeof( buf ));
+			else if( version == 2 ) Q_strncpy( buf, "Paranoia 2: Savior", sizeof( buf ));
+			else if( version == 3 ) Q_strncpy( buf, "not supported", sizeof( buf ));
+			else if( version == 4 ) Q_strncpy( buf, "Xash3D extended", sizeof( buf ));
 			else Q_strncpy( buf, "Xash3D", sizeof( buf ));
 			break;
 		default:	Q_strncpy( buf, "??", sizeof( buf )); break;
@@ -304,8 +309,8 @@ qboolean Cmd_GetMusicList( const char *s, char *completedname, int length )
 	{
 		const char *ext = FS_FileExtension( t->filenames[i] ); 
 
-		if( !Q_stricmp( ext, "wav" ) || !Q_stricmp( ext, "mp3" ));
-		else continue;
+		if( Q_stricmp( ext, "wav" ) && Q_stricmp( ext, "mp3" ))
+			continue;
 
 		FS_FileBase( t->filenames[i], matchbuf );
 		Msg( "%16s\n", matchbuf );
@@ -563,61 +568,6 @@ qboolean Cmd_GetCustomList( const char *s, char *completedname, int length )
 
 /*
 =====================================
-Cmd_GetTexturemodes
-
-Prints or complete sound filename
-=====================================
-*/
-qboolean Cmd_GetTexturemodes( const char *s, char *completedname, int length )
-{
-	int	i, numtexturemodes;
-	string	texturemodes[6];	// keep an actual ( sizeof( gl_texturemode) / sizeof( gl_texturemode[0] ))
-	string	matchbuf;
-
-	const char *gl_texturemode[] =
-	{
-	"GL_LINEAR",
-	"GL_LINEAR_MIPMAP_LINEAR",
-	"GL_LINEAR_MIPMAP_NEAREST",
-	"GL_NEAREST",
-	"GL_NEAREST_MIPMAP_LINEAR",
-	"GL_NEAREST_MIPMAP_NEAREST",
-	};
-
-	// compare gamelist with current keyword
-	for( i = 0, numtexturemodes = 0; i < 6; i++ )
-	{
-		if(( *s == '*' ) || !Q_strnicmp( gl_texturemode[i], s, Q_strlen( s )))
-			Q_strcpy( texturemodes[numtexturemodes++], gl_texturemode[i] ); 
-	}
-
-	if( !numtexturemodes ) return false;
-	Q_strncpy( matchbuf, gl_texturemode[0], MAX_STRING ); 
-	if( completedname && length ) Q_strncpy( completedname, matchbuf, length );
-	if( numtexturemodes == 1 ) return true;
-
-	for( i = 0; i < numtexturemodes; i++ )
-	{
-		Q_strncpy( matchbuf, texturemodes[i], MAX_STRING ); 
-		Msg( "%16s\n", matchbuf );
-	}
-
-	Msg( "\n^3 %i filters found.\n", numtexturemodes );
-
-	// cut shortestMatch to the amount common with s
-	if( completedname && length )
-	{
-		for( i = 0; matchbuf[i]; i++ )
-		{
-			if( Q_tolower( completedname[i] ) != Q_tolower( matchbuf[i] ))
-				completedname[i] = 0;
-		}
-	}
-	return true;
-}
-
-/*
-=====================================
 Cmd_GetGameList
 
 Prints or complete gamedir name
@@ -652,6 +602,63 @@ qboolean Cmd_GetGamesList( const char *s, char *completedname, int length )
 	}
 
 	Msg( "\n^3 %i games found.\n", numgamedirs );
+
+	// cut shortestMatch to the amount common with s
+	if( completedname && length )
+	{
+		for( i = 0; matchbuf[i]; i++ )
+		{
+			if( Q_tolower( completedname[i] ) != Q_tolower( matchbuf[i] ))
+				completedname[i] = 0;
+		}
+	}
+	return true;
+}
+
+/*
+=====================================
+Cmd_GetCDList
+
+Prints or complete CD command name
+=====================================
+*/
+qboolean Cmd_GetCDList( const char *s, char *completedname, int length )
+{
+	int i, numcdcommands;
+	string	cdcommands[8];
+	string	matchbuf;
+
+	const char *cd_command[] =
+	{
+	"info",
+	"loop",
+	"off",
+	"on",
+	"pause",
+	"play",
+	"resume",
+	"stop",
+	};
+
+	// compare CD command list with current keyword
+	for( i = 0, numcdcommands = 0; i < 8; i++ )
+	{
+		if(( *s == '*' ) || !Q_strnicmp( cd_command[i], s, Q_strlen( s )))
+			Q_strcpy( cdcommands[numcdcommands++], cd_command[i] );
+	}
+
+	if( !numcdcommands ) return false;
+	Q_strncpy( matchbuf, cdcommands[0], MAX_STRING );
+	if( completedname && length ) Q_strncpy( completedname, matchbuf, length );
+	if( numcdcommands == 1 ) return true;
+
+	for( i = 0; i < numcdcommands; i++ )
+	{
+		Q_strncpy( matchbuf, cdcommands[i], MAX_STRING );
+		Msg( "%16s\n", matchbuf );
+	}
+
+	Msg( "\n^3 %i commands found.\n", numcdcommands );
 
 	// cut shortestMatch to the amount common with s
 	if( completedname && length )
@@ -711,7 +718,7 @@ qboolean Cmd_CheckMapsList_R( qboolean fRefresh, qboolean onlyingamedir )
 			int	num_spawnpoints = 0;
 			dheader_t	*header;
 
-			Q_memset( buf, 0, MAX_SYSPATH );
+			memset( buf, 0, MAX_SYSPATH );
 			FS_Read( f, buf, MAX_SYSPATH );
 			ver = *(uint *)buf;
                               
@@ -815,7 +822,6 @@ qboolean Cmd_CheckMapsList( qboolean fRefresh )
 
 autocomplete_list_t cmd_list[] =
 {
-{ "gl_texturemode", Cmd_GetTexturemodes },
 { "map_background", Cmd_GetMapList },
 { "changelevel", Cmd_GetMapList },
 { "playdemo", Cmd_GetDemoList, },
@@ -832,6 +838,7 @@ autocomplete_list_t cmd_list[] =
 { "load", Cmd_GetSavesList },
 { "play", Cmd_GetSoundList },
 { "map", Cmd_GetMapList },
+{ "cd", Cmd_GetCDList },
 { NULL }, // termiantor
 };
 

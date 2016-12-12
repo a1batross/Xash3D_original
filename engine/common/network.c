@@ -175,7 +175,7 @@ char *NET_ErrorString( void )
 
 static void NET_NetadrToSockadr( netadr_t *a, struct sockaddr *s )
 {
-	Q_memset( s, 0, sizeof( *s ));
+	memset( s, 0, sizeof( *s ));
 
 	if( a->type == NA_BROADCAST )
 	{
@@ -192,15 +192,15 @@ static void NET_NetadrToSockadr( netadr_t *a, struct sockaddr *s )
 	else if( a->type == NA_IPX )
 	{
 		((struct sockaddr_ipx *)s)->sa_family = AF_IPX;
-		Q_memcpy(((struct sockaddr_ipx *)s)->sa_netnum, &a->ipx[0], 4 );
-		Q_memcpy(((struct sockaddr_ipx *)s)->sa_nodenum, &a->ipx[4], 6 );
+		memcpy(((struct sockaddr_ipx *)s)->sa_netnum, &a->ipx[0], 4 );
+		memcpy(((struct sockaddr_ipx *)s)->sa_nodenum, &a->ipx[4], 6 );
 		((struct sockaddr_ipx *)s)->sa_socket = a->port;
 	}
 	else if( a->type == NA_BROADCAST_IPX )
 	{
 		((struct sockaddr_ipx *)s)->sa_family = AF_IPX;
-		Q_memset(((struct sockaddr_ipx *)s)->sa_netnum, 0, 4 );
-		Q_memset(((struct sockaddr_ipx *)s)->sa_nodenum, 0xff, 6 );
+		memset(((struct sockaddr_ipx *)s)->sa_netnum, 0, 4 );
+		memset(((struct sockaddr_ipx *)s)->sa_nodenum, 0xff, 6 );
 		((struct sockaddr_ipx *)s)->sa_socket = a->port;
 	}
 }
@@ -217,8 +217,8 @@ static void NET_SockadrToNetadr( struct sockaddr *s, netadr_t *a )
 	else if( s->sa_family == AF_IPX )
 	{
 		a->type = NA_IPX;
-		Q_memcpy( &a->ipx[0], ((struct sockaddr_ipx *)s)->sa_netnum, 4 );
-		Q_memcpy( &a->ipx[4], ((struct sockaddr_ipx *)s)->sa_nodenum, 6 );
+		memcpy( &a->ipx[0], ((struct sockaddr_ipx *)s)->sa_netnum, 4 );
+		memcpy( &a->ipx[4], ((struct sockaddr_ipx *)s)->sa_nodenum, 6 );
 		a->port = ((struct sockaddr_ipx *)s)->sa_socket;
 	}
 }
@@ -247,7 +247,7 @@ static qboolean NET_StringToSockaddr( const char *s, struct sockaddr *sadr )
 	char		copy[MAX_SYSPATH];
 	int		val;
 	
-	Q_memset( sadr, 0, sizeof( *sadr ));
+	memset( sadr, 0, sizeof( *sadr ));
 
 	if((Q_strlen( s ) >= 23 ) && ( s[8] == ':' ) && ( s[21] == ':' )) // check for an IPX address
 	{
@@ -333,14 +333,14 @@ qboolean NET_CompareBaseAdr( const netadr_t a, const netadr_t b )
 
 	if( a.type == NA_IP )
 	{
-		if( !Q_memcmp( a.ip, b.ip, 4 ))
+		if( !memcmp( a.ip, b.ip, 4 ))
 			return true;
 		return false;
 	}
 
 	if( a.type == NA_IPX )
 	{
-		if( !Q_memcmp( a.ipx, b.ipx, 10 ))
+		if( !memcmp( a.ipx, b.ipx, 10 ))
 			return true;
 		return false;
 	}
@@ -359,14 +359,14 @@ qboolean NET_CompareAdr( const netadr_t a, const netadr_t b )
 
 	if( a.type == NA_IP )
 	{
-		if(!Q_memcmp( a.ip, b.ip, 4 ) && a.port == b.port )
+		if(!memcmp( a.ip, b.ip, 4 ) && a.port == b.port )
 			return true;
 		return false;
 	}
 
 	if( a.type == NA_IPX )
 	{
-		if(!Q_memcmp( a.ipx, b.ipx, 10 ) && a.port == b.port )
+		if(!memcmp( a.ipx, b.ipx, 10 ) && a.port == b.port )
 			return true;
 		return false;
 	}
@@ -394,7 +394,7 @@ qboolean NET_StringToAdr( const char *string, netadr_t *adr )
 
 	if( !Q_stricmp( string, "localhost" ))
 	{
-		Q_memset( adr, 0, sizeof( netadr_t ));
+		memset( adr, 0, sizeof( netadr_t ));
 		adr->type = NA_LOOPBACK;
 		return true;
 	}
@@ -431,10 +431,10 @@ static qboolean NET_GetLoopPacket( netsrc_t sock, netadr_t *from, byte *data, si
 	i = loop->get & MASK_LOOPBACK;
 	loop->get++;
 
-	Q_memcpy( data, loop->msgs[i].data, loop->msgs[i].datalen );
+	memcpy( data, loop->msgs[i].data, loop->msgs[i].datalen );
 	*length = loop->msgs[i].datalen;
 
-	Q_memset( from, 0, sizeof( *from ));
+	memset( from, 0, sizeof( *from ));
 	from->type = NA_LOOPBACK;
 
 	return true;
@@ -450,7 +450,7 @@ static void NET_SendLoopPacket( netsrc_t sock, size_t length, const void *data, 
 	i = loop->send & MASK_LOOPBACK;
 	loop->send++;
 
-	Q_memcpy( loop->msgs[i].data, data, length );
+	memcpy( loop->msgs[i].data, data, length );
 	loop->msgs[i].datalen = length;
 }
 
@@ -710,8 +710,8 @@ static int NET_IPXSocket( int port )
 	}
 
 	addr.sa_family = AF_IPX;
-	Q_memset( addr.sa_netnum, 0, 4 );
-	Q_memset( addr.sa_nodenum, 0, 6 );
+	memset( addr.sa_netnum, 0, 4 );
+	memset( addr.sa_nodenum, 0, 6 );
 
 	if( port == PORT_ANY ) addr.sa_socket = 0;
 	else addr.sa_socket = pHtons((short)port );
@@ -773,7 +773,7 @@ void NET_GetLocalAddress( void )
 	struct sockaddr_in	address;
 	int		namelen;
 
-	Q_memset( &net_local, 0, sizeof( netadr_t ));
+	memset( &net_local, 0, sizeof( netadr_t ));
 
 	if( noip )
 	{

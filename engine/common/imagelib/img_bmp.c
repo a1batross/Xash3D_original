@@ -14,6 +14,7 @@ GNU General Public License for more details.
 */
 
 #include "imagelib.h"
+#include "mathlib.h"
 
 /*
 =============
@@ -26,6 +27,7 @@ qboolean Image_LoadBMP( const char *name, const byte *buffer, size_t filesize )
 	byte	palette[256][4];
 	int	i, columns, column, rows, row, bpp = 1;
 	int	cbPalBytes = 0, padSize = 0, bps = 0;
+	int	reflectivity[3] = { 0, 0, 0 };
 	qboolean	load_qfont = false;
 	bmp_t	bhdr;
 
@@ -53,7 +55,7 @@ qboolean Image_LoadBMP( const char *name, const byte *buffer, size_t filesize )
 	if( bhdr.reserved0 != 0 ) return false;
 	if( bhdr.planes != 1 ) return false;
 
-	if( Q_memcmp( bhdr.id, "BM", 2 ))
+	if( memcmp( bhdr.id, "BM", 2 ))
 	{
 		MsgDev( D_ERROR, "Image_LoadBMP: only Windows-style BMP files supported (%s)\n", name );
 		return false;
@@ -108,7 +110,7 @@ qboolean Image_LoadBMP( const char *name, const byte *buffer, size_t filesize )
 		else cbPalBytes = bhdr.colors * sizeof( RGBQUAD );
 	}
 
-	Q_memcpy( palette, buf_p, cbPalBytes );
+	memcpy( palette, buf_p, cbPalBytes );
 
 	if( host.overview_loading && bhdr.bitsPerPixel == 8 )
 	{
@@ -280,13 +282,20 @@ qboolean Image_LoadBMP( const char *name, const byte *buffer, size_t filesize )
 				Mem_Free( image.rgba );
 				return false;
 			}
+
 			if( !Image_CheckFlag( IL_KEEP_8BIT ) && ( red != green || green != blue ))
 				image.flags |= IMAGE_HAS_COLOR;
+
+			reflectivity[0] += red;
+			reflectivity[1] += green;
+			reflectivity[2] += blue;
 		}
 		buf_p += padSize;	// actual only for 4-bit bmps
 	}
 
+	VectorDivide( reflectivity, ( image.width * image.height ), image.fogParams );
 	if( image.palette ) Image_GetPaletteBMP( image.palette );
+	image.depth = 1;
 
 	return true;
 }
@@ -378,7 +387,7 @@ qboolean Image_SaveBMP( const char *name, rgbdata_t *pix )
 
 	if( host.write_to_clipboard )
 	{
-		Q_memcpy( clipbuf + cur_size, &bmih, sizeof( bmih ));
+		memcpy( clipbuf + cur_size, &bmih, sizeof( bmih ));
 		cur_size += sizeof( bmih );
 	}
 	else
@@ -409,7 +418,7 @@ qboolean Image_SaveBMP( const char *name, rgbdata_t *pix )
 
 		if( host.write_to_clipboard )
 		{
-			Q_memcpy( clipbuf + cur_size, rgrgbPalette, cbPalBytes );
+			memcpy( clipbuf + cur_size, rgrgbPalette, cbPalBytes );
 			cur_size += cbPalBytes;
 		}
 		else
@@ -450,7 +459,7 @@ qboolean Image_SaveBMP( const char *name, rgbdata_t *pix )
 
 	if( host.write_to_clipboard )
 	{
-		Q_memcpy( clipbuf + cur_size, pbBmpBits, cbBmpBits );
+		memcpy( clipbuf + cur_size, pbBmpBits, cbBmpBits );
 		cur_size += cbBmpBits;
 		Sys_SetClipboardData( clipbuf, total_size );
 		Z_Free( clipbuf );

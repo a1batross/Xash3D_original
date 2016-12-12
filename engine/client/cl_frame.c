@@ -38,7 +38,7 @@ qboolean CL_IsPredicted( void )
 	if( !cl_predict->integer || !cl.frame.valid || cl.background )
 		return false;
 
-	if(( cls.netchan.outgoing_sequence - cls.netchan.incoming_acknowledged ) >= ( CL_UPDATE_BACKUP - 1 ))
+	if( !cl.validsequence || ( cls.netchan.outgoing_sequence - cls.netchan.incoming_acknowledged ) >= CL_UPDATE_MASK )
 		return false;
 
 	return true;
@@ -123,7 +123,7 @@ qboolean CL_FindInterpolationUpdates( cl_entity_t *ent, float targettime, positi
 
 int CL_InterpolateModel( cl_entity_t *e )
 {
-	position_history_t	*ph0, *ph1;
+	position_history_t  *ph0 = NULL, *ph1 = NULL;
 	vec3_t		origin, angles, delta;
 	float		t, t1, t2, frac;
 	int		i;
@@ -131,13 +131,20 @@ int CL_InterpolateModel( cl_entity_t *e )
 	VectorCopy( e->curstate.origin, e->origin );
 	VectorCopy( e->curstate.angles, e->angles );
 
-	if( e->model == NULL || cl.maxclients <= 1 )
+	if( cl.first_frame ) return 0;
+
+	if( !e->model || ( e->model->name[0] == '*' && !cl_bmodelinterp->integer ) || RP_LOCALCLIENT( e ) || cl.maxclients <= 1 )
 		return 1;
+
+	if( cl.predicted.moving && cl.predicted.onground == e->index )
+		return 1;
+
+	if( e->curstate.starttime != 0.0f && e->curstate.impacttime != 0.0f )
+		return 1;	// don't interpolate parametric entities
 
 	t = cl.time - cl_interp->value;
 
-	if( !CL_FindInterpolationUpdates( e, t, &ph0, &ph1, NULL ))
-		return 0;
+	CL_FindInterpolationUpdates( e, t, &ph0, &ph1, NULL );
 
 	if( ph0 == NULL || ph1 == NULL )
 		return 0;
@@ -148,7 +155,7 @@ int CL_InterpolateModel( cl_entity_t *e )
 	if( t - t2 < 0.0f )
 		return 0;
 
-	if( t2 == 0.0f || VectorIsNull( ph1->origin ) && !VectorIsNull( ph0->origin ))
+	if( t2 == 0.0f || ( VectorIsNull( ph1->origin ) && !VectorIsNull( ph0->origin )))
 	{
 		VectorCopy( ph0->origin, e->origin );
 		VectorCopy( ph0->angles, e->angles );
@@ -193,6 +200,36 @@ int CL_InterpolateModel( cl_entity_t *e )
 	return 1;
 }
 
+void CL_InterpolateMovingEntity( cl_entity_t *ent )
+{
+	float		d, f = 0.0f;
+	int		i;
+
+	// don't do it if the goalstarttime hasn't updated in a while.
+	// NOTE: Because we need to interpolate multiplayer characters, the interpolation time limit
+	// was increased to 1.0 s., which is 2x the max lag we are accounting for.
+	if(( cl.time < ent->curstate.animtime + 1.0f ) && ( ent->curstate.animtime != ent->latched.prevanimtime ))
+		f = ( cl.time - ent->curstate.animtime ) / ( ent->curstate.animtime - ent->latched.prevanimtime );
+
+	f = f - 1.0f;
+
+	ent->origin[0] += ( ent->origin[0] - ent->latched.prevorigin[0] ) * f;
+	ent->origin[1] += ( ent->origin[1] - ent->latched.prevorigin[1] ) * f;
+	ent->origin[2] += ( ent->origin[2] - ent->latched.prevorigin[2] ) * f;
+
+	for( i = 0; i < 3; i++ )
+	{
+		float	ang1, ang2;
+
+		ang1 = ent->angles[i];
+		ang2 = ent->latched.prevangles[i];
+		d = ang1 - ang2;
+		if( d > 180.0f ) d -= 360.0f;
+		else if( d < -180.0f ) d += 360.0f;
+		ent->angles[i] += d * f;
+	}
+}
+
 void CL_UpdateEntityFields( cl_entity_t *ent )
 {
 	// parametric rockets code
@@ -217,8 +254,12 @@ void CL_UpdateEntityFields( cl_entity_t *ent )
 	if( ent->player && RP_LOCALCLIENT( ent )) // stupid Half-Life bug
 		ent->angles[PITCH] = -ent->angles[PITCH] / 3.0f;
 
-	// make me lerp
-	if( ent->model && ent->model->type == mod_brush && ent->curstate.animtime != 0.0f )
+	// make me lerp (multiplayer only. this code visually breaks XashXT parent system)
+	if( ent->index == cl.predicted.onground && cl.predicted.moving && ( cl.maxclients > 1 ))
+	{
+		CL_InterpolateMovingEntity( ent );
+	}
+	else if( ent->model && ent->model->type == mod_brush && ent->curstate.animtime != 0.0f )
 	{
 		float		d, f = 0.0f;
 		int		i;
@@ -324,7 +365,7 @@ void CL_UpdateEntityFields( cl_entity_t *ent )
 				}
 			}
 
-			// move code from StudioSetupTransform here
+			// moved code from StudioSetupTransform here
 			if( host.features & ENGINE_COMPUTE_STUDIO_LERP )
 			{
 				ent->origin[0] += ( ent->curstate.origin[0] - ent->latched.prevorigin[0] ) * f;
@@ -513,7 +554,8 @@ void CL_WeaponAnim( int iAnim, int body )
 {
 	cl_entity_t	*view = &clgame.viewent;
 
-	view->curstate.modelindex = cl.frame.client.viewmodel;
+	cl.weaponstarttime = 0;
+	cl.weaponsequence = iAnim;
 
 	// anim is changed. update latchedvars
 	if( iAnim != view->curstate.sequence )
@@ -537,6 +579,9 @@ void CL_WeaponAnim( int iAnim, int body )
 	view->curstate.scale = 1.0f;
 	view->curstate.frame = 0.0f;
 	view->curstate.body = body;
+
+	view->curstate.rendermode = kRenderNormal;
+	view->curstate.renderamt = 255;
 
 #if 0	// g-cont. for GlowShell testing
 	view->curstate.renderfx = kRenderFxGlowShell;
@@ -652,8 +697,16 @@ void CL_DeltaEntity( sizebuf_t *msg, frame_t *frame, int newnum, entity_state_t 
 	qboolean		newent = (old) ? false : true;
 	qboolean		result = true;
 
-	ent = CL_EDICT_NUM( newnum );
 	state = &cls.packet_entities[cls.next_client_entities % cls.num_client_entities];
+
+	if(( newnum < 0 ) || ( newnum >= clgame.maxEntities ))
+	{
+		if( !unchanged )
+			MSG_ReadDeltaEntity( msg, old, state, newnum, CL_IsPlayerIndex( newnum ), cl.mtime[0] );
+		return;
+	}
+
+	ent = CL_EDICT_NUM( newnum );
 	ent->index = newnum;
 
 	if( newent ) old = &ent->baseline;
@@ -663,7 +716,21 @@ void CL_DeltaEntity( sizebuf_t *msg, frame_t *frame, int newnum, entity_state_t 
 
 	if( !result )
 	{
-		if( newent ) Host_Error( "Cl_DeltaEntity: tried to release new entity\n" );
+		if( newent )
+		{
+			MsgDev( D_WARN, "Cl_DeltaEntity: tried to release new entity\n" );
+
+			// perform remove, entity was created and removed between packets
+			if( state->number == -1 )
+			{
+				MsgDev( D_NOTE, "Entity %i was removed from server\n", newnum );
+				ent->curstate.messagenum = 0;
+				ent->baseline.number = 0;
+			}
+			else MsgDev( D_NOTE, "Entity %i was removed from delta-message\n", newnum );
+
+			return;
+		}
 
 		CL_KillDeadBeams( ent ); // release dead beams
 #if 0
@@ -703,14 +770,21 @@ void CL_DeltaEntity( sizebuf_t *msg, frame_t *frame, int newnum, entity_state_t 
 		ent->prevstate = ent->curstate;
 	}
 
-	// NOTE: always check modelindex for new state not current
-	if( Mod_GetType( state->modelindex ) == mod_studio )
+	if( clgame.dllFuncs.pfnUpdateEntityState != NULL )
 	{
-		CL_UpdateStudioVars( ent, state, newent );
+		clgame.dllFuncs.pfnUpdateEntityState( ent, state, newent );
 	}
-	else if( Mod_GetType( state->modelindex ) == mod_brush )
+	else
 	{
-		CL_UpdateBmodelVars( ent, state, newent );
+		// NOTE: always check modelindex for new state not current
+		if( Mod_GetType( state->modelindex ) == mod_studio )
+		{
+			CL_UpdateStudioVars( ent, state, newent );
+		}
+		else if( Mod_GetType( state->modelindex ) == mod_brush )
+		{
+			CL_UpdateBmodelVars( ent, state, newent );
+		}
 	}
 
 	// set right current state
@@ -722,6 +796,8 @@ void CL_DeltaEntity( sizebuf_t *msg, frame_t *frame, int newnum, entity_state_t 
 /*
 =================
 CL_FlushEntityPacket
+
+Read and ignore whole entity packet.
 =================
 */
 void CL_FlushEntityPacket( sizebuf_t *msg )
@@ -729,8 +805,7 @@ void CL_FlushEntityPacket( sizebuf_t *msg )
 	int		newnum;
 	entity_state_t	from, to;
 
-	MsgDev( D_INFO, "FlushEntityPacket()\n" );
-	Q_memset( &from, 0, sizeof( from ));
+	memset( &from, 0, sizeof( from ));
 
 	cl.frames[cl.parsecountmod].valid = false;
 	cl.validsequence = 0; // can't render a frame
@@ -738,10 +813,10 @@ void CL_FlushEntityPacket( sizebuf_t *msg )
 	// read it all, but ignore it
 	while( 1 )
 	{
-		newnum = BF_ReadWord( msg );
+		newnum = MSG_ReadWord( msg );
 		if( !newnum ) break; // done
 
-		if( BF_CheckOverflow( msg ))
+		if( MSG_CheckOverflow( msg ))
 			Host_Error( "CL_FlushEntityPacket: read overflow\n" );
 
 		MSG_ReadDeltaEntity( msg, &from, &to, newnum, CL_IsPlayerIndex( newnum ), cl.mtime[0] );
@@ -756,11 +831,13 @@ An svc_packetentities has just been parsed, deal with the
 rest of the data stream.
 ==================
 */
-void CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
+int CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 {
 	frame_t		*newframe, *oldframe;
 	int		oldindex, newnum, oldnum;
+	int		playerbytes = 0;
 	int		oldpacket;
+	int		bufStart;
 	cl_entity_t	*player;
 	entity_state_t	*oldent;
 	int		i, count;
@@ -770,7 +847,7 @@ void CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 		CL_WriteDemoJumpTime();
 
 	// first, allocate packet for new frame
-	count = BF_ReadWord( msg );
+	count = MSG_ReadWord( msg );
 
 	newframe = &cl.frames[cl.parsecountmod];
 
@@ -778,35 +855,40 @@ void CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 	newframe->first_entity = cls.next_client_entities;
 	newframe->num_entities = 0;
 	newframe->valid = true; // assume valid
+	memset( &newframe->graphdata, 0, sizeof( netbandwidthgraph_t ));
 
 	if( delta )
 	{
 		int	subtracted;
 
-		oldpacket = BF_ReadByte( msg );
+		oldpacket = MSG_ReadByte( msg );
 		subtracted = ((( cls.netchan.incoming_sequence & 0xFF ) - oldpacket ) & 0xFF );
 
 		if( subtracted == 0 )
 		{
-			Host_Error( "CL_DeltaPacketEntities: update too old, connection dropped.\n" );
-			return;
+			MsgDev( D_NOTE, "CL_DeltaPacketEntities: update too old (flush)\n" );
+			Con_NPrintf( 2, "^3Warning:^1 update too old\n^7\n" );
+			CL_FlushEntityPacket( msg );
+			return playerbytes;
 		}
 
 		if( subtracted >= CL_UPDATE_MASK )
 		{	
 			// we can't use this, it is too old
+			MsgDev( D_NOTE, "CL_ParsePacketEntities: delta frame is too old: overflow (flush)\n");
 			Con_NPrintf( 2, "^3Warning:^1 delta frame is too old^7\n" );
 			CL_FlushEntityPacket( msg );
-			return;
+			return playerbytes;
 		}
 
 		oldframe = &cl.frames[oldpacket & CL_UPDATE_MASK];
 
 		if(( cls.next_client_entities - oldframe->first_entity ) > ( cls.num_client_entities - 128 ))
 		{
+			MsgDev( D_NOTE, "CL_ParsePacketEntities: delta frame is too old (flush)\n");
 			Con_NPrintf( 2, "^3Warning:^1 delta frame is too old^7\n" );
 			CL_FlushEntityPacket( msg );
-			return;
+			return playerbytes;
 		}
 	}
 	else
@@ -814,7 +896,7 @@ void CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 		// this is a full update that we can start delta compressing from now
 		oldframe = NULL;
 		oldpacket = -1;		// delta too old or is initial message
-		cl.force_send_usercmd = true;	// send reply
+		cl.send_reply = true;	// send reply
 		cls.demowaiting = false;	// we can start recording now
 	}
 
@@ -843,16 +925,19 @@ void CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 
 	while( 1 )
 	{
-		newnum = BF_ReadWord( msg );
+		newnum = MSG_ReadWord( msg );
 		if( !newnum ) break; // end of packet entities
 
-		if( BF_CheckOverflow( msg ))
+		if( MSG_CheckOverflow( msg ))
 			Host_Error( "CL_ParsePacketEntities: read overflow\n" );
 
 		while( oldnum < newnum )
 		{	
+			bufStart = MSG_GetNumBytesRead( msg );
 			// one or more entities from the old packet are unchanged
 			CL_DeltaEntity( msg, newframe, oldnum, oldent, true );
+			if( CL_IsPlayerIndex( oldnum ) )
+				playerbytes += MSG_GetNumBytesRead( msg ) - bufStart;
 			
 			oldindex++;
 
@@ -870,7 +955,10 @@ void CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 		if( oldnum == newnum )
 		{	
 			// delta from previous state
+			bufStart = MSG_GetNumBytesRead( msg );
 			CL_DeltaEntity( msg, newframe, newnum, oldent, false );
+			if( CL_IsPlayerIndex( newnum ) )
+				playerbytes += MSG_GetNumBytesRead( msg ) - bufStart;
 			oldindex++;
 
 			if( oldindex >= oldframe->num_entities )
@@ -888,7 +976,10 @@ void CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 		if( oldnum > newnum )
 		{	
 			// delta from baseline ?
+			bufStart = MSG_GetNumBytesRead( msg );
 			CL_DeltaEntity( msg, newframe, newnum, NULL, false );
+			if( CL_IsPlayerIndex( newnum ) )
+				playerbytes += MSG_GetNumBytesRead( msg ) - bufStart;
 			continue;
 		}
 	}
@@ -897,7 +988,10 @@ void CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 	while( oldnum != MAX_ENTNUMBER )
 	{	
 		// one or more entities from the old packet are unchanged
+		bufStart = MSG_GetNumBytesRead( msg );
 		CL_DeltaEntity( msg, newframe, oldnum, oldent, true );
+		if( CL_IsPlayerIndex( oldnum ) )
+			playerbytes += MSG_GetNumBytesRead( msg ) - bufStart;
 		oldindex++;
 
 		if( oldindex >= oldframe->num_entities )
@@ -916,7 +1010,7 @@ void CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 
 	cl.frame = *newframe;
 
-	if( !cl.frame.valid ) return;
+	if( !cl.frame.valid ) return playerbytes; // frame is not valid but message was parsed
 
 	player = CL_GetLocalPlayer();
 
@@ -950,11 +1044,15 @@ void CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 
 		if(( cls.demoplayback || cls.disable_servercount != cl.servercount ) && cl.video_prepped )
 			SCR_EndLoadingPlaque(); // get rid of loading plaque
+		cl.first_frame = true;		// first server frame received
 	}
 	else
 	{
 		CL_CheckPredictionError();
+		cl.first_frame = false;
 	}
+
+	return playerbytes;
 }
 
 /*
@@ -972,23 +1070,34 @@ CL_SetIdealPitch
 void CL_SetIdealPitch( void )
 {
 	float	angleval, sinval, cosval;
-	vec3_t	top, bottom;
-	float	z[MAX_FORWARD];
+	float	z[MAX_FORWARD], view_z;
+	vec3_t	top, bottom, origin;
 	int	i, j;
 	int	step, dir, steps;
 	pmtrace_t	tr;
 
 	if( !( cl.frame.client.flags & FL_ONGROUND ))
 		return;
-		
+
+	if( CL_IsPredicted( ))
+	{
+		VectorCopy( cl.predicted.origin, origin );
+		view_z = cl.predicted.viewofs[2];
+	}
+	else
+	{
+		VectorCopy( cl.frame.client.origin, origin );
+		view_z = cl.frame.client.view_ofs[2];
+	}		
+
 	angleval = cl.frame.playerstate[cl.playernum].angles[YAW] * M_PI2 / 360.0f;
 	SinCos( angleval, &sinval, &cosval );
 
 	for( i = 0; i < MAX_FORWARD; i++ )
 	{
-		top[0] = cl.frame.client.origin[0] + cosval * (i + 3.0f) * 12.0f;
-		top[1] = cl.frame.client.origin[1] + sinval * (i + 3.0f) * 12.0f;
-		top[2] = cl.frame.client.origin[2] + cl.frame.client.view_ofs[2];
+		top[0] = origin[0] + cosval * (i + 3.0f) * 12.0f;
+		top[1] = origin[1] + sinval * (i + 3.0f) * 12.0f;
+		top[2] = origin[2] + view_z;
 		
 		bottom[0] = top[0];
 		bottom[1] = top[1];
@@ -1052,7 +1161,9 @@ void CL_AddPacketEntities( frame_t *frame )
 		if( !ent || ent == clgame.entities )
 			continue;
 
-		CL_UpdateEntityFields( ent );
+		if( clgame.dllFuncs.pfnInterpolateEntity != NULL )
+			clgame.dllFuncs.pfnInterpolateEntity( ent, cl.lerpFrac );
+		else CL_UpdateEntityFields( ent );
 
 		if( ent->player ) entityType = ET_PLAYER;
 		else if( ent->curstate.entityType == ENTITY_BEAM )

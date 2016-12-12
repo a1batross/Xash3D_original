@@ -68,7 +68,7 @@ void VGui_Startup( void )
 {
 	if( rootpanel )
 	{
-		rootpanel->setSize( menu.globals->scrWidth, menu.globals->scrHeight );
+		rootpanel->setSize( gameui.globals->scrWidth, gameui.globals->scrHeight );
 		return;
 	}
 

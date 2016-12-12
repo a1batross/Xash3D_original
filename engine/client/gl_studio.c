@@ -28,7 +28,7 @@ GNU General Public License for more details.
 #define STUDIO_MERGE_TEXTURES
 
 #define EVENT_CLIENT	5000	// less than this value it's a server-side studio events
-#define MAXARRAYVERTS	20000	// used for draw shadows
+#define MAXARRAYVERTS	32768	// used for draw shadows
 #define LEGS_BONES_COUNT	8
 
 static vec3_t hullcolor[8] = 
@@ -138,7 +138,7 @@ R_StudioInit
 */
 void R_StudioInit( void )
 {
-	float	pixelAspect;
+	float	pixelAspect, fov_x = 90.0f, fov_y;
 
 	r_studio_lambert = Cvar_Get( "r_studio_lambert", "2", CVAR_ARCHIVE, "bonelighting lambert value" );
 	r_studio_lerping = Cvar_Get( "r_studio_lerping", "1", CVAR_ARCHIVE, "enables studio animation lerping" );
@@ -156,7 +156,8 @@ void R_StudioInit( void )
 		pixelAspect *= (320.0f / 240.0f);
 	else pixelAspect *= (640.0f / 480.0f);
 
-	aliasXscale = (float)scr_width->integer / RI.refdef.fov_y;
+	fov_y = V_CalcFov( &fov_x, scr_width->integer, scr_height->integer );
+	aliasXscale = (float)scr_width->integer / fov_y; // stub
 	aliasYscale = aliasXscale * pixelAspect;
 
 	Matrix3x4_LoadIdentity( g_aliastransform );
@@ -257,10 +258,22 @@ static qboolean R_StudioComputeBBox( cl_entity_t *e, vec3_t bbox[8] )
 
 	// rotate the bounding box
 	VectorCopy( e->angles, angles );
-
+#if 0
 	if( e->player ) angles[PITCH] = 0.0f; // don't rotate player model, only aim
 	AngleVectors( angles, vectors[0], vectors[1], vectors[2] );
+#else
+	vectors[0][0] = g_rotationmatrix[0][0];
+	vectors[0][1] = g_rotationmatrix[1][0];
+	vectors[0][2] = g_rotationmatrix[2][0];
 
+	vectors[1][0] = g_rotationmatrix[0][1];
+	vectors[1][1] = g_rotationmatrix[1][1];
+	vectors[1][2] = g_rotationmatrix[2][1];
+
+	vectors[2][0] = g_rotationmatrix[0][2];
+	vectors[2][1] = g_rotationmatrix[1][2];
+	vectors[2][2] = g_rotationmatrix[2][2];
+#endif
 	// compute a full bounding box
 	for( i = 0; i < 8; i++ )
 	{
@@ -270,7 +283,7 @@ static qboolean R_StudioComputeBBox( cl_entity_t *e, vec3_t bbox[8] )
 
 		// rotate by YAW
 		p2[0] = DotProduct( p1, vectors[0] );
-		p2[1] = DotProduct( p1, vectors[1] );
+		p2[1] = -DotProduct( p1, vectors[1] );
 		p2[2] = DotProduct( p1, vectors[2] );
 
 		if( bbox ) VectorAdd( p2, e->origin, bbox[i] );
@@ -308,7 +321,7 @@ pfnPlayerInfo
 static player_info_t *pfnPlayerInfo( int index )
 {
 	if( cls.key_dest == key_menu && !index )
-		return &menu.playerinfo;
+		return &gameui.playerinfo;
 
 	if( index < 0 || index > cl.maxclients )
 		return NULL;
@@ -676,7 +689,7 @@ mstudioanim_t *R_StudioGetAnim( model_t *m_pSubModel, mstudioseqdesc_t *pseqdesc
 		MsgDev( D_INFO, "loading: %s\n", filepath );
 			
 		paSequences[pseqdesc->seqgroup].data = Mem_Alloc( com_studiocache, filesize );
-		Q_memcpy( paSequences[pseqdesc->seqgroup].data, buf, filesize );
+		memcpy( paSequences[pseqdesc->seqgroup].data, buf, filesize );
 		Mem_Free( buf );
 	}
 
@@ -736,7 +749,7 @@ StudioCalcBoneAdj
 void R_StudioCalcBoneAdj( float dadt, float *adj, const byte *pcontroller1, const byte *pcontroller2, byte mouthopen )
 {
 	mstudiobonecontroller_t	*pbonecontroller;
-	float			value;	
+	float			value = 0.0f;	
 	int			i, j;
 
 	pbonecontroller = (mstudiobonecontroller_t *)((byte *)m_pStudioHeader + m_pStudioHeader->bonecontrollerindex);
@@ -875,13 +888,13 @@ void R_StudioCalcBoneQuaterion( int frame, float s, mstudiobone_t *pbone, mstudi
 
 	if( !VectorCompare( angle1, angle2 ))
 	{
-		AngleQuaternion( angle1, q1 );
-		AngleQuaternion( angle2, q2 );
+		AngleQuaternion( angle1, q1, true );
+		AngleQuaternion( angle2, q2, true );
 		QuaternionSlerp( q1, q2, s, q );
 	}
 	else
 	{
-		AngleQuaternion( angle1, q );
+		AngleQuaternion( angle1, q, true );
 	}
 }
 
@@ -2017,10 +2030,10 @@ static void R_StudioDrawPoints( void )
 			pglColor4ub( clr->r, clr->g, clr->b, 255 );
 			alpha = 1.0f;
 		}
-		else if( g_nFaceFlags & STUDIO_NF_TRANSPARENT && R_StudioOpaque( RI.currententity ))
+		else if( g_nFaceFlags & STUDIO_NF_TRANSPARENT && R_StudioOpaque( g_iRenderMode ))
 		{
 			GL_SetRenderMode( kRenderTransAlpha );
-			pglAlphaFunc( GL_GREATER, 0.0f );
+			pglAlphaFunc( GL_GEQUAL, 0.5f );
 			alpha = 1.0f;
 		}
 		else if( g_nFaceFlags & STUDIO_NF_ADDITIVE )
@@ -2443,8 +2456,8 @@ static model_t *R_StudioSetupPlayerModel( int index )
 
 	if( cls.key_dest == key_menu && !index )
 	{
-		// we are in menu.
-		info = &menu.playerinfo;
+		// we are in gameui.
+		info = &gameui.playerinfo;
 	}
 	else
 	{
@@ -2565,15 +2578,16 @@ R_StudioSetupRenderer
 */
 static void R_StudioSetupRenderer( int rendermode )
 {
+	if( rendermode > kRenderTransAdd ) rendermode = 0;
 	g_iRenderMode = bound( 0, rendermode, kRenderTransAdd );
-	pglShadeModel( GL_SMOOTH );	// enable gouraud shading
 	if( clgame.ds.cullMode != GL_NONE ) GL_Cull( GL_FRONT );
 
 	// enable depthmask on studiomodels
 	if( glState.drawTrans && g_iRenderMode != kRenderTransAdd )
 		pglDepthMask( GL_TRUE );
 
-	pglAlphaFunc( GL_GREATER, 0.0f );
+	pglAlphaFunc( GL_GEQUAL, 0.5f );
+	pglShadeModel( GL_SMOOTH );
 
 	if( g_iBackFaceCull )
 		GL_FrontFace( true );
@@ -2588,7 +2602,6 @@ R_StudioRestoreRenderer
 static void R_StudioRestoreRenderer( void )
 {
 	pglTexEnvf( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
-	pglShadeModel( GL_FLAT );
 
 	// restore depthmask state for sprites etc
 	if( glState.drawTrans && g_iRenderMode != kRenderTransAdd )
@@ -2948,7 +2961,7 @@ R_StudioDrawPlayer
 static int R_StudioDrawPlayer( int flags, entity_state_t *pplayer )
 {
 	int	m_nPlayerIndex;
-	float	gaitframe, gaityaw;
+	float	gaitframe = 0.0f, gaityaw = 0.0f;
 	vec3_t	dir, prevgaitorigin;
 	alight_t	lighting;
 
@@ -3043,7 +3056,7 @@ static int R_StudioDrawPlayer( int flags, entity_state_t *pplayer )
 		if( RI.currententity->index > 0 )
 		{
 			cl_entity_t *ent = CL_GetEntityByIndex( RI.currententity->index );
-			Q_memcpy( ent->attachment, RI.currententity->attachment, sizeof( vec3_t ) * 4 );
+			memcpy( ent->attachment, RI.currententity->attachment, sizeof( vec3_t ) * 4 );
 		}
 	}
 
@@ -3186,7 +3199,7 @@ static int R_StudioDrawModel( int flags )
 		if( RI.currententity->index > 0 )
 		{
 			cl_entity_t *ent = CL_GetEntityByIndex( RI.currententity->index );
-			Q_memcpy( ent->attachment, RI.currententity->attachment, sizeof( vec3_t ) * 4 );
+			memcpy( ent->attachment, RI.currententity->attachment, sizeof( vec3_t ) * 4 );
 		}
 	}
 
@@ -3305,6 +3318,10 @@ void R_RunViewmodelEvents( void )
 	RI.currentmodel = RI.currententity->model;
 	if( !RI.currentmodel ) return;
 
+	if( !cl.weaponstarttime ) cl.weaponstarttime = cl.time;
+	RI.currententity->curstate.animtime = cl.weaponstarttime;
+	RI.currententity->curstate.sequence = cl.weaponsequence;
+
 	pStudioDraw->StudioDrawModel( STUDIO_EVENTS );
 
 	RI.currententity = NULL;
@@ -3343,6 +3360,10 @@ void R_DrawViewModel( void )
 	// backface culling for left-handed weapons
 	if( r_lefthand->integer == 1 || g_iBackFaceCull )
 		GL_FrontFace( !glState.frontFace );
+
+	if( !cl.weaponstarttime ) cl.weaponstarttime = cl.time;
+	RI.currententity->curstate.animtime = cl.weaponstarttime;
+	RI.currententity->curstate.sequence = cl.weaponsequence;
 
 	pStudioDraw->StudioDrawModel( STUDIO_RENDER );
 
@@ -3416,7 +3437,7 @@ static void R_StudioLoadTexture( model_t *mod, studiohdr_t *phdr, mstudiotexture
 
 		// the pixels immediately follow the structures
 		pixels = (byte *)phdr + ptexture->index;
-		Q_memcpy( tx+1, pixels, size );
+		memcpy( tx+1, pixels, size );
 
 		ptexture->flags |= STUDIO_NF_COLORMAP;	// yes, this is colormap image
 		flags |= TF_FORCE_COLOR;
@@ -3433,7 +3454,7 @@ static void R_StudioLoadTexture( model_t *mod, studiohdr_t *phdr, mstudiotexture
 		filter = R_FindTexFilter( va( "%s.mdl/%s", mdlname, name )); // grab texture filter
 
 	// NOTE: colormaps must have the palette for properly work. Ignore it.
-	if( Mod_AllowMaterials( ) && !( ptexture->flags & STUDIO_NF_COLORMAP ))
+	if( Mod_AllowMaterials( ) && !FBitSet( ptexture->flags, STUDIO_NF_COLORMAP ))
 	{
 		int	gl_texturenum = 0;
 
@@ -3455,7 +3476,7 @@ static void R_StudioLoadTexture( model_t *mod, studiohdr_t *phdr, mstudiotexture
 		ptexture->index = (int)((byte *)phdr) + ptexture->index;
 		size = sizeof( mstudiotexture_t ) + ptexture->width * ptexture->height + 768;
 
-		if( host.features & ENGINE_DISABLE_HDTEXTURES && ptexture->flags & STUDIO_NF_TRANSPARENT )
+		if( FBitSet( host.features, ENGINE_DISABLE_HDTEXTURES ) && FBitSet( ptexture->flags, STUDIO_NF_TRANSPARENT ))
 			flags |= TF_KEEP_8BIT; // Paranoia2 alpha-tracing
 
 		// build the texname
@@ -3473,7 +3494,6 @@ static void R_StudioLoadTexture( model_t *mod, studiohdr_t *phdr, mstudiotexture
 	{
 		// duplicate texnum for easy acess 
 		if( tx ) tx->gl_texturenum = ptexture->index;
-		GL_SetTextureType( ptexture->index, TEX_STUDIO );
 	}
 }
 
@@ -3552,7 +3572,7 @@ void Mod_LoadStudioModel( model_t *mod, const void *buffer, qboolean *loaded )
 			size1 = thdr->numtextures * sizeof( mstudiotexture_t );
 			size2 = thdr->numskinfamilies * thdr->numskinref * sizeof( short );
 			mod->cache.data = Mem_Alloc( loadmodel->mempool, phdr->length + size1 + size2 );
-			Q_memcpy( loadmodel->cache.data, buffer, phdr->length ); // copy main mdl buffer
+			memcpy( loadmodel->cache.data, buffer, phdr->length ); // copy main mdl buffer
 			phdr = (studiohdr_t *)loadmodel->cache.data; // get the new pointer on studiohdr
 			phdr->numskinfamilies = thdr->numskinfamilies;
 			phdr->numtextures = thdr->numtextures;
@@ -3562,7 +3582,7 @@ void Mod_LoadStudioModel( model_t *mod, const void *buffer, qboolean *loaded )
 
 			in = (byte *)thdr + thdr->textureindex;
 			out = (byte *)phdr + phdr->textureindex;
-			Q_memcpy( out, in, size1 + size2 );	// copy textures + skinrefs
+			memcpy( out, in, size1 + size2 );	// copy textures + skinrefs
 			phdr->length += size1 + size2;
 			Mem_Free( buffer2 ); // release T.mdl
 		}
@@ -3571,13 +3591,13 @@ void Mod_LoadStudioModel( model_t *mod, const void *buffer, qboolean *loaded )
 	{
 		// NOTE: we wan't keep raw textures in memory. just cutoff model pointer above texture base
 		loadmodel->cache.data = Mem_Alloc( loadmodel->mempool, phdr->texturedataindex );
-		Q_memcpy( loadmodel->cache.data, buffer, phdr->texturedataindex );
+		memcpy( loadmodel->cache.data, buffer, phdr->texturedataindex );
 		phdr->length = phdr->texturedataindex;	// update model size
 	}
 #else
 	// just copy model into memory
 	loadmodel->cache.data = Mem_Alloc( loadmodel->mempool, phdr->length );
-	Q_memcpy( loadmodel->cache.data, buffer, phdr->length );
+	memcpy( loadmodel->cache.data, buffer, phdr->length );
 #endif
 	// setup bounding box
 	VectorCopy( phdr->bbmin, loadmodel->mins );
@@ -3632,7 +3652,7 @@ void Mod_UnloadStudioModel( model_t *mod )
 	}
 
 	Mem_FreePool( &mod->mempool );
-	Q_memset( mod, 0, sizeof( *mod ));
+	memset( mod, 0, sizeof( *mod ));
 }
 		
 static engine_studio_api_t gStudioAPI =

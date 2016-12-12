@@ -375,31 +375,25 @@ void learn( void )
 	if( rad <= 1 ) rad = 0;
 
 	for( i = 0; i < rad; i++ ) 
-	{
-		radpower[i] = alpha * (((rad * rad - i * i) * radbias) / (rad * rad));
-	}	
+		radpower[i] = alpha * ((( rad * rad - i * i ) * radbias ) / ( rad * rad ));	
+
+	if( delta <= 0 ) return;
 
 	if(( lengthcount % prime1 ) != 0 )
 	{
-		step = image.bpp * prime1;
+		step = prime1 * image.bpp;
+	}
+	else if(( lengthcount % prime2 ) != 0 )
+	{
+		step = prime2 * image.bpp;
+	}
+	else if(( lengthcount % prime3 ) != 0 )
+	{
+		step = prime3 * image.bpp;
 	}
 	else
 	{
-		if(( lengthcount % prime2 ) != 0 )
-		{
-			step = image.bpp * prime2;
-		}
-		else
-		{
-			if(( lengthcount % prime3 ) != 0 )
-			{
-				step = image.bpp * prime3;
-			}
-			else
-			{
-				step = image.bpp * prime4;
-			}
-		}
+		step = prime4 * image.bpp;
 	}
 	
 	i = 0;
@@ -427,7 +421,7 @@ void learn( void )
 			if( rad <= 1 ) rad = 0;
 
 			for( j = 0; j < rad; j++ ) 
-				radpower[j] = alpha * (((rad * rad - j * j) * radbias) / (rad * rad));
+				radpower[j] = alpha * ((( rad * rad - j * j ) * radbias ) / ( rad * rad ));
 		}
 	}
 }
@@ -470,7 +464,7 @@ rgbdata_t *Image_Quantize( rgbdata_t *pic )
 	}
 
 	pic->buffer = Mem_Realloc( host.imagepool, pic->buffer, image.size );
-	Q_memcpy( pic->buffer, image.tempbuffer, image.size );
+	memcpy( pic->buffer, image.tempbuffer, image.size );
 	pic->type = PF_INDEXED_24;
 	pic->size = image.size;
 

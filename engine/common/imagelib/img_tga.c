@@ -14,6 +14,7 @@ GNU General Public License for more details.
 */
 
 #include "imagelib.h"
+#include "mathlib.h"
 
 /*
 =============
@@ -26,6 +27,7 @@ qboolean Image_LoadTGA( const char *name, const byte *buffer, size_t filesize )
 	byte	*buf_p, *pixbuf, *targa_rgba;
 	byte	palette[256][4], red = 0, green = 0, blue = 0, alpha = 0;
 	int	readpixelcount, pixelcount;
+	int	reflectivity[3] = { 0, 0, 0 };
 	qboolean	compressed;
 	tga_t	targa_header;
 
@@ -193,6 +195,10 @@ qboolean Image_LoadTGA( const char *name, const byte *buffer, size_t filesize )
 			if( red != green || green != blue )
 				image.flags |= IMAGE_HAS_COLOR;
 
+			reflectivity[0] += red;
+			reflectivity[1] += green;
+			reflectivity[2] += blue;
+
 			*pixbuf++ = red;
 			*pixbuf++ = green;
 			*pixbuf++ = blue;
@@ -206,6 +212,10 @@ qboolean Image_LoadTGA( const char *name, const byte *buffer, size_t filesize )
 			}
 		}
 	}
+
+	VectorDivide( reflectivity, ( image.width * image.height ), image.fogParams );
+	image.depth = 1;
+
 	return true;
 }
 
@@ -229,7 +239,6 @@ qboolean Image_SaveTGA( const char *name, rgbdata_t *pix )
 	else outsize = pix->width * pix->height * 3 + 18 + Q_strlen( comment );
 
 	buffer = (byte *)Mem_Alloc( host.imagepool, outsize );
-	Q_memset( buffer, 0, 18 );
 
 	// prepare header
 	buffer[0] = Q_strlen( comment ); // tga comment length

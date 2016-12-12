@@ -44,21 +44,21 @@ static qboolean	scr_init = false;
 SCR_DrawFPS
 ==============
 */
-void SCR_DrawFPS( void )
+void SCR_DrawFPS( int height )
 {
 	float		calc;
 	rgba_t		color;
+	double		newtime;
 	static double	nexttime = 0, lasttime = 0;
 	static double	framerate = 0;
 	static int	framecount = 0;
 	static int	minfps = 9999;
 	static int	maxfps = 0;
-	double		newtime;
 	char		fpsstring[64];
 	int		offset;
 
-	if( cls.state != ca_active ) return; 
-	if( !cl_showfps->integer || cl.background ) return;
+	if( cls.state != ca_active || !cl_showfps->integer || cl.background )
+		return; 
 
 	switch( cls.scrshot_action )
 	{
@@ -74,12 +74,12 @@ void SCR_DrawFPS( void )
 	{
 		framerate = framecount / (newtime - lasttime);
 		lasttime = newtime;
-		nexttime = max( nexttime + 1, lasttime - 1 );
+		nexttime = Q_max( nexttime + 1.0, lasttime - 1.0 );
 		framecount = 0;
 	}
 
-	framecount++;
 	calc = framerate;
+	framecount++;
 
 	if( calc < 1.0f )
 	{
@@ -100,7 +100,7 @@ void SCR_DrawFPS( void )
           }
 
 	Con_DrawStringLen( fpsstring, &offset, NULL );
-	Con_DrawString( scr_width->integer - offset - 3, 4, fpsstring, color );
+	Con_DrawString( scr_width->integer - offset - 4, height, fpsstring, color );
 }
 
 /*
@@ -116,42 +116,36 @@ void SCR_NetSpeeds( void )
 	int		x, y, height;
 	char		*p, *start, *end;
 	float		time = cl.mtime[0];
+	static int	min_svfps = 100;
+	static int	max_svfps = 0;
+	int		cur_svfps = 0;
+	static int	min_clfps = 100;
+	static int	max_clfps = 0;
+	int		cur_clfps = 0;
 	rgba_t		color;
 
-	if( !net_speeds->integer ) return;
-	if( cls.state != ca_active ) return; 
+	if( !net_speeds->integer || cls.demoplayback || cls.state != ca_active )
+		return;
 
-	switch( net_speeds->integer )
+	if( cl_serverframetime() != 0 )
 	{
-	case 1:
-		if( cls.netchan.compress )
-		{
-			Q_snprintf( msg, sizeof( msg ), "Game Time: %02d:%02d\nTotal received from server:\n Huffman %s\nUncompressed %s\n",
-			(int)(time / 60.0f ), (int)fmod( time, 60.0f ), Q_memprint( cls.netchan.total_received ), Q_memprint( cls.netchan.total_received_uncompressed ));
-		}
-		else
-		{
-			Q_snprintf( msg, sizeof( msg ), "Game Time: %02d:%02d\nTotal received from server:\nUncompressed %s\n",
-			(int)(time / 60.0f ), (int)fmod( time, 60.0f ), Q_memprint( cls.netchan.total_received_uncompressed ));
-		}
-		break;
-	case 2:
-		if( cls.netchan.compress )
-		{
-			Q_snprintf( msg, sizeof( msg ), "Game Time: %02d:%02d\nTotal sended to server:\nHuffman %s\nUncompressed %s\n",
-			(int)(time / 60.0f ), (int)fmod( time, 60.0f ), Q_memprint( cls.netchan.total_sended ), Q_memprint( cls.netchan.total_sended_uncompressed ));
-		}
-		else
-		{
-			Q_snprintf( msg, sizeof( msg ), "Game Time: %02d:%02d\nTotal sended to server:\nUncompressed %s\n",
-			(int)(time / 60.0f ), (int)fmod( time, 60.0f ), Q_memprint( cls.netchan.total_sended_uncompressed ));
-		}
-		break;
-	default: return;
+		cur_svfps = Q_rint( 1.0f / cl_serverframetime( ));
+		if( cur_svfps < min_svfps ) min_svfps = cur_svfps;
+		if( cur_svfps > max_svfps ) max_svfps = cur_svfps;
 	}
 
+	if( cl_clientframetime() != 0 )
+	{
+		cur_clfps = Q_rint( 1.0f / cl_clientframetime( ));
+		if( cur_clfps < min_clfps ) min_clfps = cur_clfps;
+		if( cur_clfps > max_clfps ) max_clfps = cur_clfps;
+	}
+
+	Q_snprintf( msg, sizeof( msg ), "sv fps: ^1%4i min, ^3%4i cur, ^2%4i max\ncl fps: ^1%4i min, ^3%4i cur, ^2%4i max\nGame Time: %02d:%02d\nTotal sended to server: %s\nTotal received from server: %s\n",
+	min_svfps, cur_svfps, max_svfps, min_clfps, cur_clfps, max_clfps, (int)(time / 60.0f ), (int)fmod( time, 60.0f ), Q_memprint( cls.netchan.total_sended ), Q_memprint( cls.netchan.total_received ));
+
 	x = scr_width->integer - 320;
-	y = 256;
+	y = 384;
 
 	Con_DrawStringLen( NULL, NULL, &height );
 	MakeRGBA( color, 255, 255, 255, 255 );
@@ -258,7 +252,7 @@ void SCR_MakeScreenShot( void )
 	{
 		// snapshots don't writes message about image		
 		if( cls.scrshot_action != scrshot_snapshot )
-			MsgDev( D_AICONSOLE, "Write %s\n", cls.shotname );
+			MsgDev( D_REPORT, "Write %s\n", cls.shotname );
 	}
 	else MsgDev( D_ERROR, "Unable to write %s\n", cls.shotname );
 
@@ -571,13 +565,13 @@ SCR_VidInit
 */
 void SCR_VidInit( void )
 {
-	Q_memset( &clgame.ds, 0, sizeof( clgame.ds )); // reset a draw state
-	Q_memset( &menu.ds, 0, sizeof( menu.ds )); // reset a draw state
-	Q_memset( &clgame.centerPrint, 0, sizeof( clgame.centerPrint ));
+	memset( &clgame.ds, 0, sizeof( clgame.ds )); // reset a draw state
+	memset( &gameui.ds, 0, sizeof( gameui.ds )); // reset a draw state
+	memset( &clgame.centerPrint, 0, sizeof( clgame.centerPrint ));
 
 	// update screen sizes for menu
-	menu.globals->scrWidth = scr_width->integer;
-	menu.globals->scrHeight = scr_height->integer;
+	gameui.globals->scrWidth = scr_width->integer;
+	gameui.globals->scrHeight = scr_height->integer;
 
 	SCR_RebuildGammaTable();
 	VGui_Startup ();
@@ -585,7 +579,7 @@ void SCR_VidInit( void )
 	clgame.load_sequence++; // now all hud sprites are invalid
 	
 	// vid_state has changed
-	if( menu.hInstance ) menu.dllFuncs.pfnVidInit();
+	if( gameui.hInstance ) gameui.dllFuncs.pfnVidInit();
 	if( clgame.hInstance ) clgame.dllFuncs.pfnVidInit();
 
 	// restart console size
@@ -619,9 +613,9 @@ void SCR_Init( void )
 	Cmd_AddCommand( "sizeup", SCR_SizeUp_f, "screen size up to 10 points" );
 	Cmd_AddCommand( "sizedown", SCR_SizeDown_f, "screen size down to 10 points" );
 
-	if( host.state != HOST_RESTART && !UI_LoadProgs( ))
+	if( !UI_LoadProgs( ))
 	{
-		Msg( "^1Error: ^7can't initialize menu.dll\n" ); // there is non fatal for us
+		Msg( "^1Error: ^7can't initialize gameui.dll\n" ); // there is non fatal for us
 		if( !host.developer ) host.developer = 1; // we need console, because menu is missing
 	}
 
@@ -629,14 +623,12 @@ void SCR_Init( void )
 	SCR_InstallParticlePalette ();
 	SCR_RegisterTextures ();
 	SCR_InitCinematic();
+	CL_InitNetgraph();
 	SCR_VidInit();
 
-	if( host.state != HOST_RESTART )
-          {
-		if( host.developer && Sys_CheckParm( "-toconsole" ))
-			Cbuf_AddText( "toggleconsole\n" );
-		else UI_SetActiveMenu( true );
-	}
+	if( host.developer && Sys_CheckParm( "-toconsole" ))
+		Cbuf_AddText( "toggleconsole\n" );
+	else UI_SetActiveMenu( true );
 
 	scr_init = true;
 }
@@ -650,9 +642,7 @@ void SCR_Shutdown( void )
 	Cmd_RemoveCommand( "skyname" );
 	Cmd_RemoveCommand( "viewpos" );
 	UI_SetActiveMenu( false );
-
-	if( host.state != HOST_RESTART )
-		UI_UnloadProgs();
+	UI_UnloadProgs();
 
 	scr_init = false;
 }

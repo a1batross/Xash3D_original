@@ -31,7 +31,8 @@ BRUSH MODELS
 #define XTBSP_VERSION	31	// extended lightmaps and expanded clipnodes limit
 
 #define IDEXTRAHEADER	(('H'<<24)+('S'<<16)+('A'<<8)+'X') // little-endian "XASH"
-#define EXTRA_VERSION	2 // because version 1 was occupied by old versions of XashXT
+#define EXTRA_VERSION	4	// ver. 1 was occupied by old versions of XashXT, ver. 2 was occupied by old vesrions of P2:savior
+				// ver. 3 was occupied by experimental versions of P2:savior change fmt
 
 #define DELUXEMAP_VERSION	1
 #define IDDELUXEMAPHEADER	(('T'<<24)+('I'<<16)+('L'<<8)+'Q') // little-endian "QLIT"
@@ -103,11 +104,19 @@ BRUSH MODELS
 #define LUMP_CLIPNODES3		16		// hull2 goes into LUMP_CLIPNODES2, hull3 goes into LUMP_CLIPNODES3
 #define HEADER_LUMPS_31		17
 
-#define LUMP_FACES_EXTRADATA		0		// extension of dface_t
-#define LUMP_VERTS_EXTRADATA		1		// extension of dvertex_t
-#define LUMP_CUBEMAPS		2		// cubemap description
-
-#define EXTRA_LUMPS			8		// g-cont. just for future expansions
+#define LUMP_LIGHTVECS		0	// deluxemap data
+#define LUMP_FACEINFO		1	// landscape and lightmap resolution info
+#define LUMP_CUBEMAPS		2	// cubemap description
+#define LUMP_VERTNORMALS		3	// phong shaded vertex normals
+#define LUMP_LEAF_LIGHTING		4	// contain compressed light cubes per empty leafs
+#define LUMP_WORLDLIGHTS		5	// list of all the virtual and real lights (used to relight models in-game)
+#define LUMP_COLLISION		6	// physics engine collision hull dump
+#define LUMP_AINODEGRAPH		7	// node graph that stored into the bsp
+#define LUMP_UNUSED0		8	// one lump reserved for me
+#define LUMP_UNUSED1		9	// one lump reserved for me
+#define LUMP_UNUSED2		10	// one lump reserved for me
+#define LUMP_UNUSED3		11	// one lump reserved for me
+#define EXTRA_LUMPS			12	// count of the extra lumps
 
 // texture flags
 #define TEX_SPECIAL			BIT( 0 )		// sky or slime, no lightmap or 256 subdivision
@@ -216,8 +225,17 @@ typedef struct
 {
 	float	vecs[2][4];		// texmatrix [s/t][xyz offset]
 	int	miptex;
-	int	flags;
+	short	flags;
+	short	faceinfo;			// -1 no face info otherwise dfaceinfo_t
 } dtexinfo_t;
+
+typedef struct
+{
+	char		landname[16];	// name of decsription in mapname_land.txt
+	unsigned short	texture_step;	// default is 16, pixels\luxels ratio
+	unsigned short	max_extent;	// default is 16, subdivision step ((texture_step * max_extent) - texture_step)
+	short		groupid;		// to determine equal landscapes from various groups, -1 - no group
+} dfaceinfo_t;
 
 typedef word	dmarkface_t;		// leaf marksurfaces indexes
 typedef int	dsurfedge_t;		// map surfedges

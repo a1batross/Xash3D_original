@@ -32,7 +32,7 @@ Startup VGUI backend
 */
 void VGUI_DrawInit( void )
 {
-	Q_memset( g_textures, 0, sizeof( g_textures ));
+	memset( g_textures, 0, sizeof( g_textures ));
 	g_textureId = g_iBoundTexture = 0;
 
 	vgui_colorstrings = Cvar_Get( "vgui_colorstrings", "0", CVAR_ARCHIVE, "allow colorstrings in VGUI texts" );
@@ -65,7 +65,7 @@ generate unique texture number
 int VGUI_GenerateTexture( void )
 {
 	if( ++g_textureId >= VGUI_MAX_TEXTURES )
-		Sys_Error( "VGUI_GenerateTexture: VGUI_MAX_TEXTURES limit exceeded\n" );
+		Host_Error( "VGUI_GenerateTexture: VGUI_MAX_TEXTURES limit exceeded\n" );
 	return g_textureId;
 }
 
@@ -88,7 +88,7 @@ void VGUI_UploadTexture( int id, const char *buffer, int width, int height )
 	}
 
 	Q_snprintf( texName, sizeof( texName ), "*vgui%i", id );
-	Q_memset( &r_image, 0, sizeof( r_image ));
+	memset( &r_image, 0, sizeof( r_image ));
 
 	r_image.width = width;
 	r_image.height = height;
@@ -98,7 +98,6 @@ void VGUI_UploadTexture( int id, const char *buffer, int width, int height )
 	r_image.buffer = (byte *)buffer;
 
 	g_textures[id] = GL_LoadTextureInternal( texName, &r_image, TF_IMAGE, false );
-	GL_SetTextureType( g_textures[id], TEX_VGUI );
 	g_iBoundTexture = id;
 }
 
@@ -121,7 +120,7 @@ void VGUI_CreateTexture( int id, int width, int height )
 	}
 
 	Q_snprintf( texName, sizeof( texName ), "*vgui%i", id );
-	Q_memset( &r_image, 0, sizeof( r_image ));
+	memset( &r_image, 0, sizeof( r_image ));
 
 	r_image.width = width;
 	r_image.height = height;
@@ -131,7 +130,6 @@ void VGUI_CreateTexture( int id, int width, int height )
 	r_image.buffer = NULL;
 
 	g_textures[id] = GL_LoadTextureInternal( texName, &r_image, TF_IMAGE|TF_NEAREST, false );
-	GL_SetTextureType( g_textures[id], TEX_VGUI );
 	g_iBoundTexture = id;
 }
 
@@ -233,7 +231,8 @@ generic method to fill rectangle
 */
 void VGUI_DrawQuad( const vpoint_t *ul, const vpoint_t *lr )
 {
-	ASSERT( ul != NULL && lr != NULL );
+	Assert( ul != NULL );
+	Assert( lr != NULL );
 
 	pglBegin( GL_QUADS );
 		pglTexCoord2f( ul->coord[0], ul->coord[1] );

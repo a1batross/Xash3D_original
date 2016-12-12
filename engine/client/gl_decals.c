@@ -60,7 +60,7 @@ static int	gDecalCount;
 
 void R_ClearDecals( void )
 {
-	Q_memset( gDecalPool, 0, sizeof( gDecalPool ));
+	memset( gDecalPool, 0, sizeof( gDecalPool ));
 	gDecalCount = 0;
 }
 
@@ -334,7 +334,7 @@ static int SHClip( float *vert, int vertCount, float *out, int edge )
 			if( R_ClipInside( s, edge ))
 			{
 				// Add a vertex and advance out to next vertex
-				Q_memcpy( out, p, sizeof( float ) * VERTEXSIZE );
+				memcpy( out, p, sizeof( float ) * VERTEXSIZE );
 				out += VERTEXSIZE;
 				outCount++;
 			}
@@ -344,7 +344,7 @@ static int SHClip( float *vert, int vertCount, float *out, int edge )
 				out += VERTEXSIZE;
 				outCount++;
 
-				Q_memcpy( out, p, sizeof( float ) * VERTEXSIZE );
+				memcpy( out, p, sizeof( float ) * VERTEXSIZE );
 				out += VERTEXSIZE;
 				outCount++;
 			}
@@ -404,22 +404,23 @@ static void R_DecalVertsLight( float *v, msurface_t *surf, int vertCount )
 {
 	float		s, t;
 	mtexinfo_t	*tex;
-	int		j;
+	int		j, sample_size;
 
+	sample_size = Mod_SampleSizeForFace( surf );
 	tex = surf->texinfo;
 
 	for( j = 0; j < vertCount; j++, v += VERTEXSIZE )
 	{
 		// lightmap texture coordinates
 		s = DotProduct( v, tex->vecs[0] ) + tex->vecs[0][3] - surf->texturemins[0];
-		s += surf->light_s * LM_SAMPLE_SIZE;
-		s += LM_SAMPLE_SIZE >> 1;
-		s /= BLOCK_SIZE * LM_SAMPLE_SIZE; //fa->texinfo->texture->width;
+		s += surf->light_s * sample_size;
+		s += sample_size >> 1;
+		s /= BLOCK_SIZE * sample_size; //fa->texinfo->texture->width;
 
 		t = DotProduct( v, tex->vecs[1] ) + tex->vecs[1][3] - surf->texturemins[1];
-		t += surf->light_t * LM_SAMPLE_SIZE;
-		t += LM_SAMPLE_SIZE >> 1;
-		t /= BLOCK_SIZE * LM_SAMPLE_SIZE; //fa->texinfo->texture->height;
+		t += surf->light_t * sample_size;
+		t += sample_size >> 1;
+		t /= BLOCK_SIZE * sample_size; //fa->texinfo->texture->height;
 
 		v[5] = s;
 		v[6] = t;
@@ -577,7 +578,7 @@ msurfmesh_t *R_DecalCreateMesh( decalinfo_t *decalinfo, decal_t *pdecal, msurfac
 		out->sccoord[1] = (( DotProduct( v , surf->texinfo->vecs[1] ) + surf->texinfo->vecs[1][3] ) / surf->texinfo->texture->height );
 
 		// clear colors (it can be used for vertex lighting)
-		Q_memset( out->color, 0xFF, sizeof( out->color ));
+		memset( out->color, 0xFF, sizeof( out->color ));
 	}
 
 	pdecal->mesh = mesh;
@@ -1232,7 +1233,11 @@ void R_DecalRemoveAll( int textureIndex )
 	{
 		pdecal = &gDecalPool[i];
 
-		if( !textureIndex || pdecal->texture == textureIndex )
+		// don't remove permanent decals
+		if( pdecal->flags & FDECAL_PERMANENT )
+			continue;
+
+		if( !textureIndex || ( pdecal->texture == textureIndex ))
 			R_DecalUnlink( pdecal );
 	}
 }

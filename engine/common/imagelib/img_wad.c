@@ -58,6 +58,7 @@ qboolean Image_LoadPAL( const char *name, const byte *buffer, size_t filesize )
 	image.rgba = NULL;	// only palette, not real image
 	image.size = 1024;	// expanded palette
 	image.width = image.height = 0;
+	image.depth = 1;
 	
 	return true;
 }
@@ -80,7 +81,7 @@ qboolean Image_LoadFNT( const char *name, const byte *buffer, size_t filesize )
 	if( filesize < sizeof( font ))
 		return false;
 
-	Q_memcpy( &font, buffer, sizeof( font ));
+	memcpy( &font, buffer, sizeof( font ));
 	
 	// last sixty four bytes - what the hell ????
 	size = sizeof( qfont_t ) - 4 + ( font.height * font.width * QCHAR_WIDTH ) + sizeof( short ) + 768 + 64;
@@ -119,6 +120,7 @@ qboolean Image_LoadFNT( const char *name, const byte *buffer, size_t filesize )
 	}
 
 	image.type = PF_INDEXED_32;	// 32-bit palette
+	image.depth = 1;
 
 	return Image_AddIndexedImageToPack( fin, image.width, image.height );
 }
@@ -170,6 +172,7 @@ qboolean Image_LoadMDL( const char *name, const byte *buffer, size_t filesize )
 	}
 
 	image.type = PF_INDEXED_32;	// 32-bit palete
+	image.depth = 1;
 
 	return Image_AddIndexedImageToPack( fin, image.width, image.height );
 }
@@ -214,6 +217,7 @@ qboolean Image_LoadSPR( const char *name, const byte *buffer, size_t filesize )
 	// sorry, can't validate palette rendermode
 	if( !Image_LumpValidSize( name )) return false;
 	image.type = PF_INDEXED_32;	// 32-bit palete
+	image.depth = 1;
 
 	// detect alpha-channel by palette type
 	switch( image.d_rendermode )
@@ -253,24 +257,12 @@ qboolean Image_LoadLMP( const char *name, const byte *buffer, size_t filesize )
 	if( Q_stristr( name, "palette.lmp" ))
 		return Image_LoadPAL( name, buffer, filesize );
 
-	// greatest hack from id software
-	if( image.hint != IL_HINT_HL && Q_stristr( name, "conchars" ))
-	{
-		image.width = image.height = 128;
-		image.flags |= IMAGE_HAS_ALPHA;
-		rendermode = LUMP_QFONT;
-		filesize += sizeof(lmp);
-		fin = (byte *)buffer;
-	}
-	else
-	{
-		fin = (byte *)buffer;
-		Q_memcpy( &lmp, fin, sizeof( lmp ));
-		image.width = lmp.width;
-		image.height = lmp.height;
-		rendermode = LUMP_NORMAL;
-		fin += sizeof(lmp);
-	}
+	fin = (byte *)buffer;
+	memcpy( &lmp, fin, sizeof( lmp ));
+	image.width = lmp.width;
+	image.height = lmp.height;
+	rendermode = LUMP_NORMAL;
+	fin += sizeof( lmp );
 
 	pixels = image.width * image.height;
 
@@ -305,6 +297,7 @@ qboolean Image_LoadLMP( const char *name, const byte *buffer, size_t filesize )
 	if( fin[0] == 255 ) image.flags |= IMAGE_HAS_ALPHA;
 	Image_GetPaletteLMP( pal, rendermode );
 	image.type = PF_INDEXED_32; // 32-bit palete
+	image.depth = 1;
 
 	return Image_AddIndexedImageToPack( fin, image.width, image.height );
 }
@@ -321,6 +314,7 @@ qboolean Image_LoadMIP( const char *name, const byte *buffer, size_t filesize )
 	byte	*fin, *pal;
 	int	ofs[4], rendermode;
 	int	i, pixels, numcolors;
+	int	reflectivity[3] = { 0, 0, 0 };
 
 	if( filesize < sizeof( mip ))
 	{
@@ -328,14 +322,14 @@ qboolean Image_LoadMIP( const char *name, const byte *buffer, size_t filesize )
 		return false;
 	}
 
-	Q_memcpy( &mip, buffer, sizeof( mip ));
+	memcpy( &mip, buffer, sizeof( mip ));
 	image.width = mip.width;
 	image.height = mip.height;
 
 	if( !Image_ValidSize( name ))
 		return false;
 
-	Q_memcpy( ofs, mip.offsets, sizeof( ofs ));
+	memcpy( ofs, mip.offsets, sizeof( ofs ));
 	pixels = image.width * image.height;
 
 	if( image.hint != IL_HINT_Q1 && filesize >= (int)sizeof(mip) + ((pixels * 85)>>6) + sizeof(short) + 768)
@@ -462,7 +456,20 @@ qboolean Image_LoadMIP( const char *name, const byte *buffer, size_t filesize )
 		// calc the decal reflectivity
 		image.fogParams[3] = VectorAvg( image.fogParams );         
 	}
+	else if( pal != NULL )// calc texture reflectivity
+	{
+		for( i = 0; i < 256; i++ )
+		{
+			reflectivity[0] += pal[i*3+0];
+			reflectivity[1] += pal[i*3+1];
+			reflectivity[2] += pal[i*3+2];
+		}
+ 
+		VectorDivide( reflectivity, 256, image.fogParams );
+	}
  
 	image.type = PF_INDEXED_32;	// 32-bit palete
+	image.depth = 1;
+
 	return Image_AddIndexedImageToPack( fin, image.width, image.height );
 }

@@ -26,7 +26,7 @@ CL_ResetEvent
 */
 void CL_ResetEvent( event_info_t *ei )
 {
-	Q_memset( ei, 0, sizeof( *ei ));
+	memset( ei, 0, sizeof( *ei ));
 }
 
 /*
@@ -111,7 +111,7 @@ void CL_RegisterEvent( int lastnum, const char *szEvName, pfnEventHook func )
 	// clear existing or allocate new one
 	if( !clgame.events[lastnum] )
 		clgame.events[lastnum] = Mem_Alloc( cls.mempool, sizeof( cl_user_event_t ));
-	else Q_memset( clgame.events[lastnum], 0, sizeof( cl_user_event_t ));
+	else memset( clgame.events[lastnum], 0, sizeof( cl_user_event_t ));
 
 	ev = clgame.events[lastnum];
 
@@ -142,7 +142,7 @@ qboolean CL_FireEvent( event_info_t *ei )
 
 		if( !ev )
 		{
-			idx = bound( 1, ei->index, MAX_EVENTS );
+			idx = bound( 1, ei->index, ( MAX_EVENTS - 1 ));
 			MsgDev( D_ERROR, "CL_FireEvent: %s not precached\n", cl.event_precache[idx] );
 			break;
 		}
@@ -173,10 +173,9 @@ called right before draw frame
 */
 void CL_FireEvents( void )
 {
-	int		i;
 	event_state_t	*es;
 	event_info_t	*ei;
-	qboolean		success;
+	int		i;
 
 	es = &cl.events;
 
@@ -191,7 +190,7 @@ void CL_FireEvents( void )
 		if( ei->fire_time && ( ei->fire_time > cl.time ))
 			continue;
 
-		success = CL_FireEvent( ei );
+		CL_FireEvent( ei );
 
 		// zero out the remaining fields
 		CL_ResetEvent( ei );
@@ -300,12 +299,12 @@ void CL_ParseReliableEvent( sizebuf_t *msg )
 	float		delay = 0.0f;
 	cl_entity_t	*pEnt;
 
-	Q_memset( &nullargs, 0, sizeof( nullargs ));
+	memset( &nullargs, 0, sizeof( nullargs ));
 
-	event_index = BF_ReadUBitLong( msg, MAX_EVENT_BITS );
+	event_index = MSG_ReadUBitLong( msg, MAX_EVENT_BITS );
 
-	if( BF_ReadOneBit( msg ))
-		delay = (float)BF_ReadWord( msg ) * (1.0f / 100.0f);
+	if( MSG_ReadOneBit( msg ))
+		delay = (float)MSG_ReadWord( msg ) * (1.0f / 100.0f);
 
 	// reliable events not use delta-compression just null-compression
 	MSG_ReadDeltaEvent( msg, &nullargs, &args );
@@ -341,22 +340,22 @@ void CL_ParseEvent( sizebuf_t *msg )
 	cl_entity_t	*pEnt;
 	float		delay;
 
-	Q_memset( &nullargs, 0, sizeof( nullargs ));
+	memset( &nullargs, 0, sizeof( nullargs ));
 
-	num_events = BF_ReadUBitLong( msg, 5 );
+	num_events = MSG_ReadUBitLong( msg, 5 );
 
 	// parse events queue
 	for( i = 0 ; i < num_events; i++ )
 	{
-		event_index = BF_ReadUBitLong( msg, MAX_EVENT_BITS );
-		Q_memset( &args, 0, sizeof( args ));
+		event_index = MSG_ReadUBitLong( msg, MAX_EVENT_BITS );
+		memset( &args, 0, sizeof( args ));
 		has_update = false;
 
-		if( BF_ReadOneBit( msg ))
+		if( MSG_ReadOneBit( msg ))
 		{
-			packet_ent = BF_ReadUBitLong( msg, MAX_ENTITY_BITS );
+			packet_ent = MSG_ReadUBitLong( msg, MAX_ENTITY_BITS );
 
-			if( BF_ReadOneBit( msg ))
+			if( MSG_ReadOneBit( msg ))
 			{
 				MSG_ReadDeltaEvent( msg, &nullargs, &args );
 				has_update = true;
@@ -395,8 +394,15 @@ void CL_ParseEvent( sizebuf_t *msg )
 				args.angles[PITCH] = -state->angles[PITCH] * 3;
 				args.angles[YAW] = state->angles[YAW];
 				args.angles[ROLL] = 0; // no roll
+
+				if( VectorIsNull( args.origin ))
+					VectorCopy( state->origin, args.origin );
+				if( VectorIsNull( args.velocity ))
+					VectorCopy( state->velocity, args.velocity );
 			}
-		}
+          
+ 			COM_NormalizeAngles( args.angles );
+ 		}
 		else if( state )
 		{
 			if( VectorIsNull( args.origin ))
@@ -416,8 +422,8 @@ void CL_ParseEvent( sizebuf_t *msg )
 				VectorCopy( pEnt->curstate.velocity, args.velocity );
 		}
 
-		if( BF_ReadOneBit( msg ))
-			delay = (float)BF_ReadWord( msg ) * (1.0f / 100.0f);
+		if( MSG_ReadOneBit( msg ))
+			delay = (float)MSG_ReadWord( msg ) * (1.0f / 100.0f);
 		else delay = 0.0f;
 
 		// g-cont. should we need find the event with same index?
@@ -443,6 +449,13 @@ void CL_PlaybackEvent( int flags, const edict_t *pInvoker, word eventindex, floa
 		MsgDev( D_ERROR, "CL_PlaybackEvent: invalid eventindex %i\n", eventindex );
 		return;
 	}
+
+	if( flags & FEV_SERVER )
+	{
+		MsgDev( D_WARN, "CL_PlaybackEvent: event with FEV_SERVER flag!\n" );
+		return;
+	}
+
 	// check event for precached
 	if( !CL_EventIndex( cl.event_precache[eventindex] ))
 	{
@@ -459,15 +472,27 @@ void CL_PlaybackEvent( int flags, const edict_t *pInvoker, word eventindex, floa
 	args.flags = 0;
 	args.entindex = invokerIndex;
 
-// TODO: restore checks when predicting will be done
-//	if( !angles || VectorIsNull( angles ))
+	if( !angles || VectorIsNull( angles ))
 		VectorCopy( cl.refdef.cl_viewangles, args.angles );
+	else VectorCopy( angles, args.angles );
 
-//	if( !origin || VectorIsNull( origin ))
-		VectorCopy( cl.frame.client.origin, args.origin );
+	if( !origin || VectorIsNull( origin ))
+	{
+		if( CL_IsPredicted( )) VectorCopy( cl.predicted.origin, args.origin );
+		else VectorCopy( cl.frame.client.origin, args.origin );
+	}
+	else VectorCopy( origin, args.origin );
 
-	VectorCopy( cl.frame.client.velocity, args.velocity );
-	args.ducking = cl.frame.client.bInDuck;
+	if( CL_IsPredicted( ))
+	{
+		VectorCopy( cl.predicted.velocity, args.velocity );
+		args.ducking = (cl.predicted.usehull == 1);
+	}
+	else
+	{
+		VectorCopy( cl.frame.client.velocity, args.velocity );
+		args.ducking = cl.frame.client.bInDuck;
+	}
 
 	args.fparam1 = fparam1;
 	args.fparam2 = fparam2;

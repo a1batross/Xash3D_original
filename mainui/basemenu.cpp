@@ -253,9 +253,14 @@ void UI_DrawString( int x, int y, int w, int h, const char *string, const int co
 		{
 			if( IsColorString( l ))
 			{
-				if( !forceColor )
+				int colorNum = ColorIndex( *(l+1) );
+
+				if( colorNum == 7 && color != 0 )
 				{
-					int colorNum = ColorIndex( *(l+1) );
+					modulate = color;
+				}
+				else if( !forceColor )
+				{
 					modulate = PackAlpha( g_iColorTable[colorNum], UnpackAlpha( color ));
 				}
 
@@ -1535,7 +1540,7 @@ void UI_Init( void )
 	Cmd_AddCommand( "menu_multiplayer", UI_MultiPlayer_Menu );
 	Cmd_AddCommand( "menu_options", UI_Options_Menu );
 	Cmd_AddCommand( "menu_langame", UI_LanGame_Menu );
-	Cmd_AddCommand( "menu_intenetgames", UI_InternetGames_Menu );
+	Cmd_AddCommand( "menu_internetgames", UI_InternetGames_Menu );
 	Cmd_AddCommand( "menu_playersetup", UI_PlayerSetup_Menu );
 	Cmd_AddCommand( "menu_controls", UI_Controls_Menu );
 	Cmd_AddCommand( "menu_advcontrols", UI_AdvControls_Menu );
@@ -1579,7 +1584,7 @@ void UI_Shutdown( void )
 	Cmd_RemoveCommand( "menu_saveload" );
 	Cmd_RemoveCommand( "menu_multiplayer" );
 	Cmd_RemoveCommand( "menu_options" );
-	Cmd_RemoveCommand( "menu_intenetgames" );
+	Cmd_RemoveCommand( "menu_internetgames" );
 	Cmd_RemoveCommand( "menu_langame" );
 	Cmd_RemoveCommand( "menu_playersetup" );
 	Cmd_RemoveCommand( "menu_controls" );
@@ -1596,7 +1601,6 @@ void UI_Shutdown( void )
 	Cmd_RemoveCommand( "menu_defaults" );
 	Cmd_RemoveCommand( "menu_cinematics" );
 	Cmd_RemoveCommand( "menu_customgame" );
-	Cmd_RemoveCommand( "menu_quit" );
 
 	memset( &uiStatic, 0, sizeof( uiStatic_t ));
 }

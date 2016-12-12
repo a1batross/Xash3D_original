@@ -61,9 +61,16 @@ TargetDir=\Xash3D\src_main\temp\engine\!release
 InputPath=\Xash3D\src_main\temp\engine\!release\xash.dll
 SOURCE="$(InputPath)"
 
-"D:\Xash3D\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
-	copy $(TargetDir)\xash.dll "D:\Xash3D\xash.dll"
+BuildCmds= \
+	copy $(TargetDir)\xash.dll "D:\Xash3D\xash.dll" \
+	copy $(TargetDir)\xash.dll "D:\Paranoia2\xash.dll" \
+	
 
+"D:\Xash3D\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+   $(BuildCmds)
+
+"D:\Paranoia2\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+   $(BuildCmds)
 # End Custom Build
 
 !ELSEIF  "$(CFG)" == "engine - Win32 Debug"
@@ -98,9 +105,16 @@ TargetDir=\Xash3D\src_main\temp\engine\!debug
 InputPath=\Xash3D\src_main\temp\engine\!debug\xash.dll
 SOURCE="$(InputPath)"
 
-"D:\Xash3D\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
-	copy $(TargetDir)\xash.dll "D:\Xash3D\xash.dll"
+BuildCmds= \
+	copy $(TargetDir)\xash.dll "D:\Xash3D\xash.dll" \
+	copy $(TargetDir)\xash.dll "D:\Paranoia2\xash.dll" \
+	
 
+"D:\Xash3D\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+   $(BuildCmds)
+
+"D:\Paranoia2\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+   $(BuildCmds)
 # End Custom Build
 
 !ENDIF 
@@ -142,11 +156,15 @@ SOURCE=.\client\cl_game.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\client\cl_gameui.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\client\cl_main.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\client\cl_menu.c
+SOURCE=.\client\cl_netgraph.c
 # End Source File
 # Begin Source File
 
@@ -363,10 +381,6 @@ SOURCE=.\common\net_chan.c
 # Begin Source File
 
 SOURCE=.\common\net_encode.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\common\net_huff.c
 # End Source File
 # Begin Source File
 

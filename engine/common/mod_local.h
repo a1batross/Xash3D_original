@@ -42,6 +42,14 @@ GNU General Public License for more details.
 #define SURF_INFO( surf, mod )	((mextrasurf_t *)mod->cache.data + (surf - mod->surfaces)) 
 #define INFO_SURF( surf, mod )	(mod->surfaces + (surf - (mextrasurf_t *)mod->cache.data)) 
 
+#define CHECKVISBIT( vis, b )		((b) >= 0 ? (byte)((vis)[(b) >> 3] & (1 << ((b) & 7))) : (byte)false )
+#define SETVISBIT( vis, b )( void )	((b) >= 0 ? (byte)((vis)[(b) >> 3] |= (1 << ((b) & 7))) : (byte)false )
+#define CLEARVISBIT( vis, b )( void )	((b) >= 0 ? (byte)((vis)[(b) >> 3] &= ~(1 << ((b) & 7))) : (byte)false )
+
+#define REFPVS_RADIUS		2.0f			// radius for rendering
+#define FATPVS_RADIUS		8.0f			// FatPVS use radius smaller than the FatPHS
+#define FATPHS_RADIUS		16.0f
+
 // model flags (stored in model_t->flags)
 #define MODEL_CONVEYOR		BIT( 0 )
 #define MODEL_HAS_ORIGIN		BIT( 1 )
@@ -72,18 +80,29 @@ typedef struct
 	vec3_t		hull_sizes[MAX_MAP_HULLS];	// actual hull sizes
 	msurface_t	**draw_surfaces;	// used for sorting translucent surfaces
 	int		max_surfaces;	// max surfaces per submodel (for all models)
+
+	qboolean		loading;		// true if worldmodel is loading
+	qboolean		sky_sphere;	// true when quake sky-sphere is used
+	qboolean		has_mirrors;	// one or more brush models contain reflective textures
+	qboolean		custom_skybox;	// if sky_sphere is active and custom skybox set
+	qboolean		water_alpha;	// allow translucency water
+	int		lm_sample_size;	// defaulting to 16 (BSP31 uses 8)
+	int		block_size;	// lightmap blocksize
+	color24		*deluxedata;	// deluxemap data pointer
+	char		message[2048];	// just for debug
+
+	// visibility info
+	byte		*visdata;		// uncompressed visdata
+	size_t		visbytes;		// cluster size
+	size_t		fatbytes;		// fatpvs size
+	int		visclusters;	// num visclusters
+
+	// world stats
 	size_t		visdatasize;	// actual size of the visdata
 	size_t		litdatasize;	// actual size of the lightdata
 	size_t		vecdatasize;	// actual size of the deluxdata
 	size_t		entdatasize;	// actual size of the entity string
 	size_t		texdatasize;	// actual size of the textures lump
-	qboolean		loading;		// true if worldmodel is loading
-	qboolean		sky_sphere;	// true when quake sky-sphere is used
-	qboolean		has_mirrors;	// one or more brush models contain reflective textures
-	int		lm_sample_size;	// defaulting to 16 (BSP31 uses 8)
-	int		block_size;	// lightmap blocksize
-	color24		*deluxedata;	// deluxemap data pointer
-	char		message[2048];	// just for debug
 
 	vec3_t		mins;		// real accuracy world bounds
 	vec3_t		maxs;
@@ -117,20 +136,21 @@ model_t *Mod_FindName( const char *name, qboolean create );
 model_t *Mod_LoadModel( model_t *mod, qboolean world );
 model_t *Mod_ForName( const char *name, qboolean world );
 qboolean Mod_RegisterModel( const char *name, int index );
-int Mod_PointLeafnum( const vec3_t p );
-byte *Mod_LeafPVS( mleaf_t *leaf, model_t *model );
-byte *Mod_LeafPHS( mleaf_t *leaf, model_t *model );
 mleaf_t *Mod_PointInLeaf( const vec3_t p, mnode_t *node );
+qboolean Mod_HeadnodeVisible( mnode_t *node, const byte *visbits, short *lastleaf );
 void Mod_TesselatePolygon( msurface_t *surf, model_t *mod, float tessSize );
 int Mod_BoxLeafnums( const vec3_t mins, const vec3_t maxs, short *list, int listsize, int *lastleaf );
+int Mod_FatPVS( const vec3_t org, float radius, byte *visbuffer, int visbytes, qboolean merge, qboolean fullvis );
 qboolean Mod_BoxVisible( const vec3_t mins, const vec3_t maxs, const byte *visbits );
+int Mod_CheckLump( const char *filename, const int lump, int *lumpsize );
+int Mod_ReadLump( const char *filename, const int lump, void **lumpdata, int *lumpsize );
+int Mod_SaveLump( const char *filename, const int lump, void *lumpdata, int lumpsize );
 void Mod_BuildSurfacePolygons( msurface_t *surf, mextrasurf_t *info );
 void Mod_AmbientLevels( const vec3_t p, byte *pvolumes );
-byte *Mod_CompressVis( const byte *in, size_t *size );
-byte *Mod_DecompressVis( const byte *in );
+int Mod_SampleSizeForFace( msurface_t *surf );
+byte *Mod_GetPVSForPoint( const vec3_t p );
 modtype_t Mod_GetType( int handle );
 model_t *Mod_Handle( int handle );
-struct wadlist_s *Mod_WadList( void );
 
 //
 // mod_studio.c

@@ -139,8 +139,6 @@ qboolean AVI_ACMConvertAudio( movie_state_t *Avi )
 	dword		dest_length;
 	short		bits;
 
-	ASSERT( Avi != NULL );
-
 	// WMA codecs, both versions - they simply don't work.
 	if( Avi->audio_header->wFormatTag == 0x160 || Avi->audio_header->wFormatTag == 0x161 )
 	{
@@ -249,8 +247,6 @@ qboolean AVI_ACMConvertAudio( movie_state_t *Avi )
 
 qboolean AVI_GetVideoInfo( movie_state_t *Avi, long *xres, long *yres, float *duration )
 {
-	ASSERT( Avi != NULL );
-
 	if( !Avi->active )
 		return false;
 
@@ -269,8 +265,6 @@ qboolean AVI_GetVideoInfo( movie_state_t *Avi, long *xres, long *yres, float *du
 // returns a unique frame identifier
 long AVI_GetVideoFrameNumber( movie_state_t *Avi, float time )
 {
-	ASSERT( Avi != NULL );
-
 	if( !Avi->active )
 		return 0;
 
@@ -283,8 +277,6 @@ byte *AVI_GetVideoFrame( movie_state_t *Avi, long frame )
 	LPBITMAPINFOHEADER	frame_info;
 	byte		*frame_raw, *tmp;
 	int		i;
-
-	ASSERT( Avi != NULL );
 
 	if( !Avi->active ) return NULL;
 
@@ -310,8 +302,6 @@ byte *AVI_GetVideoFrame( movie_state_t *Avi, long frame )
 
 qboolean AVI_GetAudioInfo( movie_state_t *Avi, wavdata_t *snd_info )
 {
-	ASSERT( Avi != NULL );
-
 	if( !Avi->active || Avi->audio_stream == NULL || snd_info == NULL )
 	{
 		return false;
@@ -334,8 +324,6 @@ qboolean AVI_GetAudioInfo( movie_state_t *Avi, wavdata_t *snd_info )
 qboolean AVI_SeekPosition( movie_state_t *Avi, dword offset )
 {
 	int	breaker;
-
-	ASSERT( Avi != NULL );
 
 	if( offset < Avi->cpa_blockoffset ) // well, shit. we can't seek backwards... restart
 	{
@@ -382,12 +370,10 @@ qboolean AVI_SeekPosition( movie_state_t *Avi, dword offset )
 }
 
 // get a chunk of audio from the stream (in bytes)
-fs_offset_t AVI_GetAudioChunk( movie_state_t *Avi, char *audiodata, long offset, long length )
+long AVI_GetAudioChunk( movie_state_t *Avi, char *audiodata, long offset, long length )
 {
-	int	i;
 	long	result = 0;
-
-	ASSERT( Avi != NULL );
+	int	i;
 
 	// zero data past the end of the file
 	if( offset + length > Avi->audio_length )
@@ -444,7 +430,7 @@ fs_offset_t AVI_GetAudioChunk( movie_state_t *Avi, char *audiodata, long offset,
 				blockread = length;
 
 			// copy the data
-			Q_memcpy( audiodata + result, (void *)( Avi->cpa_dstbuffer + Avi->cpa_blockpos ), blockread );
+			memcpy( audiodata + result, (void *)( Avi->cpa_dstbuffer + Avi->cpa_blockpos ), blockread );
 
 			Avi->cpa_blockpos += blockread;
 			result += blockread;
@@ -457,8 +443,6 @@ fs_offset_t AVI_GetAudioChunk( movie_state_t *Avi, char *audiodata, long offset,
 
 void AVI_CloseVideo( movie_state_t *Avi )
 {
-	ASSERT( Avi != NULL );
-
 	if( Avi->active )
 	{
 		pAVIStreamGetFrameClose( Avi->video_getframe );
@@ -484,7 +468,7 @@ void AVI_CloseVideo( movie_state_t *Avi )
 		DeleteDC( Avi->hDC );
 	}
 
-	Q_memset( Avi, 0, sizeof( movie_state_t ));
+	memset( Avi, 0, sizeof( movie_state_t ));
 }
 
 void AVI_OpenVideo( movie_state_t *Avi, const char *filename, qboolean load_audio, qboolean ignore_hwgamma, int quiet )
@@ -493,8 +477,6 @@ void AVI_OpenVideo( movie_state_t *Avi, const char *filename, qboolean load_audi
 	AVISTREAMINFO	stream_info;
 	long		opened_streams = 0;
 	LONG		hr;
-
-	ASSERT( Avi != NULL );
 
 	// default state: non-working.
 	Avi->active = false;

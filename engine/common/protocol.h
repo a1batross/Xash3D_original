@@ -65,6 +65,7 @@ GNU General Public License for more details.
 #define svc_resourcelist		43	// [short][...]
 #define svc_deltamovevars		44	// [movevars_t]
 #define svc_customization		45	// <see code>
+
 #define svc_crosshairangle		47	// [byte][byte]
 #define svc_soundfade		48	// [float*4] sound fade parms
 
@@ -88,7 +89,7 @@ GNU General Public License for more details.
 #define clc_requestcvarvalue		9
 #define clc_requestcvarvalue2		10
 
-#define MAX_VISIBLE_PACKET		512	// 512 visible entities per frame (hl1 has 256)
+#define MAX_VISIBLE_PACKET		1024	// 1024 visible entities per frame (hl1 has 256)
 
 // additional protocol data
 #define MAX_CLIENT_BITS		5

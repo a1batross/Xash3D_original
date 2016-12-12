@@ -191,14 +191,14 @@ _inline paintbuffer_t *MIX_GetPPaintFromIPaint( int ipaint )
 void MIX_FreeAllPaintbuffers( void )
 {
 	// clear paintbuffer structs
-	Q_memset( paintbuffers, 0, CPAINTBUFFERS * sizeof( paintbuffer_t ));
+	memset( paintbuffers, 0, CPAINTBUFFERS * sizeof( paintbuffer_t ));
 }
 
 // Initialize paintbuffers array, set current paint buffer to main output buffer IPAINTBUFFER
 void MIX_InitAllPaintbuffers( void )
 {
 	// clear paintbuffer structs
-	Q_memset( paintbuffers, 0, CPAINTBUFFERS * sizeof( paintbuffer_t ));
+	memset( paintbuffers, 0, CPAINTBUFFERS * sizeof( paintbuffer_t ));
 
 	paintbuffers[IPAINTBUFFER].pbuf = paintbuffer;
 	paintbuffers[IROOMBUFFER].pbuf = roombuffer;
@@ -216,8 +216,8 @@ CHANNEL MIXING
 */
 void S_PaintMonoFrom8( portable_samplepair_t *pbuf, int *volume, byte *pData, int outCount )
 {
-	int 	i, data;
 	int	*lscale, *rscale;
+	int 	i, data;
 		
 	lscale = snd_scaletable[volume[0] >> SND_SCALE_SHIFT];
 	rscale = snd_scaletable[volume[1] >> SND_SCALE_SHIFT];
@@ -252,8 +252,8 @@ void S_PaintStereoFrom8( portable_samplepair_t *pbuf, int *volume, byte *pData, 
 
 void S_PaintMonoFrom16( portable_samplepair_t *pbuf, int *volume, short *pData, int outCount )
 {
-	int	i, data;
 	int	left, right;
+	int	i, data;
 
 	for( i = 0; i < outCount; i++ )
 	{
@@ -473,20 +473,13 @@ int S_MixDataToDevice( channel_t *pChannel, int sampleCount, int outputRate, int
 
 		for( i = 0; i < CPAINTBUFFERS; i++ )
 		{
-			if( paintbuffers[i].factive )
-			{
-				// mix chan into all active paintbuffers
-				MIX_SetCurrentPaintbuffer( i );
+			if( !paintbuffers[i].factive )
+				continue;
 
-				S_MixChannel( 
-					pChannel,			// Channel.
-					pData,			// Input buffer.
-					outputOffset,		// Output position.
-					FIX_FLOAT( sampleFraction ),	// Iterators.
-					FIX_FLOAT( rate ), 
-					outputSampleCount	
-					);
-			}
+			// mix chan into all active paintbuffers
+			MIX_SetCurrentPaintbuffer( i );
+
+			S_MixChannel( pChannel, pData, outputOffset, FIX_FLOAT( sampleFraction ), FIX_FLOAT( rate ), outputSampleCount );
 		}
 
 		MIX_SetCurrentPaintbuffer( j );
@@ -692,7 +685,7 @@ void S_Interpolate2xCubic( portable_samplepair_t *pbuffer, portable_samplepair_t
 	{
 		// get source sample pointer
 		psamp0 = S_GetNextpFilter( i-1, pbuffer, pfiltermem );
-		psamp1 = S_GetNextpFilter( i,   pbuffer, pfiltermem );
+		psamp1 = S_GetNextpFilter( i+0, pbuffer, pfiltermem );
 		psamp2 = S_GetNextpFilter( i+1, pbuffer, pfiltermem );
 		psamp3 = S_GetNextpFilter( i+2, pbuffer, pfiltermem );
 
@@ -778,9 +771,9 @@ void S_Interpolate2xLinear( portable_samplepair_t *pbuffer, portable_samplepair_
 // filtertype: FILTERTYPE_NONE, _LINEAR, _CUBIC etc.  Must match prevfilter.
 void S_MixBufferUpsample2x( int count, portable_samplepair_t *pbuffer, portable_samplepair_t *pfiltermem, int cfltmem, int filtertype )
 {
-	int	i, j;
 	int	upCount = count<<1;
-	
+	int	i, j;	
+
 	// reverse through buffer, duplicating contents for 'count' samples
 	for( i = upCount - 1, j = count - 1; j >= 0; i-=2, j-- )
 	{	
@@ -814,11 +807,11 @@ void MIX_ClearAllPaintBuffers( int SampleCount, qboolean clearFilters )
 	for( i = 0; i < CPAINTBUFFERS; i++ )
 	{
 		if( paintbuffers[i].pbuf != NULL )
-			Q_memset( paintbuffers[i].pbuf, 0, (count+1) * sizeof( portable_samplepair_t ));
+			memset( paintbuffers[i].pbuf, 0, (count+1) * sizeof( portable_samplepair_t ));
 
 		if( clearFilters )
 		{
-			Q_memset( paintbuffers[i].fltmem, 0, sizeof( paintbuffers[i].fltmem ));
+			memset( paintbuffers[i].fltmem, 0, sizeof( paintbuffers[i].fltmem ));
 		}
 	}
 
@@ -893,77 +886,72 @@ void S_MixUpsample( int sampleCount, int filtertype )
 	ppaint->ifilter++;
 }
 
-// mix and upsample channels to 44khz 'ipaintbuffer'
-// mix channels matching 'flags' (SOUND_MIX_DRY or SOUND_MIX_WET) into specified paintbuffer
-// upsamples 11khz, 22khz channels to 44khz.
-
-// NOTE: only call this on channels that will be mixed into only 1 paintbuffer
-// and that will not be mixed until the next mix pass! otherwise, MIX_MixChannelsToPaintbuffer
-// will advance any internal pointers on mixed channels; subsequent calls will be at 
-// incorrect offset.
-void MIX_MixUpsampleBuffer( int ipaintbuffer, int end, int count )
-{
-	int	ipaintcur = MIX_GetCurrentPaintbufferIndex(); // save current paintbuffer
-
-	// reset paintbuffer upsampling filter index
-	MIX_ResetPaintbufferFilterCounter( ipaintbuffer );
-
-	// prevent other paintbuffers from being mixed
-	MIX_DeactivateAllPaintbuffers();
-	
-	MIX_ActivatePaintbuffer( ipaintbuffer );	// operates on MIX_MixChannelsToPaintbuffer	
-	MIX_SetCurrentPaintbuffer( ipaintbuffer );	// operates on MixUpSample
-
-	// mix 11khz channels to buffer
-	MIX_MixChannelsToPaintbuffer( end, SOUND_11k, SOUND_11k );
-
-	// upsample 11khz buffer by 2x
-	S_MixUpsample( count / (SOUND_DMA_SPEED / SOUND_11k), FILTERTYPE_LINEAR ); 
-
-	// mix 22khz channels to buffer
-	MIX_MixChannelsToPaintbuffer( end, SOUND_22k, SOUND_22k );
-
-	// upsample 22khz buffer by 2x
-#if (SOUND_DMA_SPEED > SOUND_22k)
-	S_MixUpsample( count / (SOUND_DMA_SPEED / SOUND_22k), FILTERTYPE_LINEAR );
-#endif
-	// mix 44khz channels to buffer
-	MIX_MixChannelsToPaintbuffer( end, SOUND_44k, SOUND_DMA_SPEED );
-
-	MIX_DeactivateAllPaintbuffers();
-	
-	// restore previous paintbuffer
-	MIX_SetCurrentPaintbuffer( ipaintcur );
-}
-
 void MIX_MixStreamBuffer( int end )
 {
 	portable_samplepair_t	*pbuf;
+	rawchan_t			*ch;
 
 	pbuf = MIX_GetPFrontFromIPaint( ISTREAMBUFFER );
+	ch = S_FindRawChannel( S_RAW_SOUND_BACKGROUNDTRACK, false );
 
 	// clear the paint buffer
-	if( s_listener.paused || s_rawend < paintedtime )
+	if( s_listener.paused || !ch || ch->s_rawend < paintedtime )
 	{
-		Q_memset( pbuf, 0, (end - paintedtime) * sizeof( portable_samplepair_t ));
+		memset( pbuf, 0, (end - paintedtime) * sizeof( portable_samplepair_t ));
 	}
 	else
 	{	
 		int	i, stop;
 
 		// copy from the streaming sound source
-		stop = (end < s_rawend) ? end : s_rawend;
+		stop = (end < ch->s_rawend) ? end : ch->s_rawend;
 
 		for( i = paintedtime; i < stop; i++ )
-			pbuf[i - paintedtime] = s_rawsamples[i & (MAX_RAW_SAMPLES - 1)];
-			
+		{
+			pbuf[i-paintedtime].left = ( ch->rawsamples[i & ( ch->max_samples - 1 )].left * ch->leftvol ) >> 8;
+			pbuf[i-paintedtime].right = ( ch->rawsamples[i & ( ch->max_samples - 1 )].right * ch->rightvol ) >> 8;
+		}			
+
 		for( ; i < end; i++ )
 			pbuf[i-paintedtime].left = pbuf[i-paintedtime].right = 0;
 	}
 }
 
+void MIX_MixRawSamplesBuffer( int end )
+{
+	portable_samplepair_t	*pbuf;
+	uint			i, j, stop;
+
+	pbuf = MIX_GetCurrentPaintbufferPtr()->pbuf;
+
+	if( s_listener.paused ) return;
+
+	// paint in the raw channels
+	for( i = 0; i < MAX_RAW_CHANNELS; i++ )
+	{
+		// copy from the streaming sound source
+		rawchan_t	*ch = raw_channels[i];
+
+		// background track should be mixing into another buffer
+		if( !ch || ch->entnum == S_RAW_SOUND_BACKGROUNDTRACK )
+			continue;
+
+		// not audible
+		if( !ch->leftvol && !ch->rightvol )
+			continue;
+
+		stop = (end < ch->s_rawend) ? end : ch->s_rawend;
+
+		for( j = paintedtime; j < stop; j++ )
+		{
+			pbuf[j-paintedtime].left += ( ch->rawsamples[j & ( ch->max_samples - 1 )].left * ch->leftvol ) >> 8;
+			pbuf[j-paintedtime].right += ( ch->rawsamples[j & ( ch->max_samples - 1 )].right * ch->rightvol ) >> 8;
+		}
+	}
+}
+
 // upsample and mix sounds into final 44khz versions of:
-// IROOMBUFFER, IFACINGBUFFER, IFACINGAWAY, IDRYBUFFER
+// IROOMBUFFER, IFACINGBUFFER, IFACINGAWAY
 // dsp fx are then applied to these buffers by the caller.
 // caller also remixes all into final IPAINTBUFFER output.
 void MIX_UpsampleAllPaintbuffers( int end, int count )
@@ -1000,13 +988,16 @@ void MIX_UpsampleAllPaintbuffers( int end, int count )
 	MIX_MixChannelsToPaintbuffer( end, SOUND_22k, SOUND_22k );
 	
 	// upsample all 22khz buffers by 2x
-#if (SOUND_DMA_SPEED > SOUND_22k)
 	// only upsample roombuffer if dsp fx are on KDB: perf
 	MIX_SetCurrentPaintbuffer( IROOMBUFFER );
 	S_MixUpsample( count / ( SOUND_DMA_SPEED / SOUND_22k ), FILTERTYPE_LINEAR );
-#endif
+
 	// mix all 44khz sounds to all active paintbuffers
 	MIX_MixChannelsToPaintbuffer( end, SOUND_44k, SOUND_DMA_SPEED );
+
+	// mix raw samples from the video streams
+	MIX_SetCurrentPaintbuffer( IROOMBUFFER );
+	MIX_MixRawSamplesBuffer( end );
 
 	MIX_DeactivateAllPaintbuffers();
 	MIX_SetCurrentPaintbuffer( IPAINTBUFFER );

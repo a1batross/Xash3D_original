@@ -20,7 +20,6 @@ GNU General Public License for more details.
 #include "ref_params.h"
 #include "pm_local.h"
 
-#define MAX_DUPLICATED_CHANNELS	4		// threshold for identical static channels (probably error)
 #define SND_CLIP_DISTANCE		(float)(GI->soundclip_dist)
 
 dma_t		dma;
@@ -28,6 +27,7 @@ byte		*sndpool;
 static soundfade_t	soundfade;
 channel_t   	channels[MAX_CHANNELS];
 sound_t		ambient_sfx[NUM_AMBIENTS];
+rawchan_t		*raw_channels[MAX_RAW_CHANNELS];
 qboolean		snd_ambient = false;
 listener_t	s_listener;
 int		total_channels;
@@ -35,6 +35,7 @@ int		soundtime;	// sample PAIRS
 int   		paintedtime; 	// sample PAIRS
 static int	trace_count = 0;
 static int	last_trace_chan = 0;
+static byte	s_fatphs[MAX_MAP_LEAFS/8];		// PHS array for snd module
 
 convar_t		*s_volume;
 convar_t		*s_musicvolume;
@@ -51,7 +52,6 @@ convar_t		*snd_gain_max;
 convar_t		*snd_gain_min;
 convar_t		*s_refdist;
 convar_t		*s_refdb;
-convar_t		*dsp_off;		// set to 1 to disable all dsp processing
 convar_t		*s_cull;		// cull sounds by geometry
 convar_t		*s_test;		// cvar for testing new effects
 convar_t		*s_phs;
@@ -144,7 +144,7 @@ void S_FreeChannel( channel_t *ch )
 	ch->isSentence = false;
 
 	// clear mixer
-	Q_memset( &ch->pMixer, 0, sizeof( ch->pMixer ));
+	memset( &ch->pMixer, 0, sizeof( ch->pMixer ));
 
 	SND_CloseMouth( ch );
 }
@@ -356,21 +356,8 @@ already playing.
 channel_t *SND_PickStaticChannel( int entnum, sfx_t *sfx, const vec3_t pos )
 {
 	channel_t	*ch = NULL;
-	int	i, dupe = 0;
+	int	i;
 
-#if 1	
-	// TODO: remove this code when predicting is will be done
-	// check for duplicate sounds
-	for( i = 0; i < total_channels; i++ )
-	{
-		if( channels[i].sfx == sfx && VectorCompare( channels[i].origin, pos ))
-			dupe++;
-	}
-
-	// check for duplicated static channels (same origin and same sfx)
-	if( dupe > MAX_DUPLICATED_CHANNELS )
-		return NULL;
-#endif
 	// check for replacement sound, or find the best one to replace
  	for( i = MAX_DYNAMIC_CHANNELS; i < total_channels; i++ )
  	{
@@ -703,27 +690,26 @@ float SND_GetGain( channel_t *ch, qboolean fplayersound, qboolean flooping, floa
 	return gain; 
 }
 
+/*
+=================
+SND_CheckPHS
+
+using a 'fat' radius
+=================
+*/
 qboolean SND_CheckPHS( channel_t *ch )
 {
 	mleaf_t	*leaf;
-	int	leafnum;
-	byte	*mask = NULL;
 
-	// cull sounds by PHS
-	if( !s_phs->integer )
-		return true;
+	if( !ch->dist_mult || !s_phs->integer )
+		return true; // no attenuation
 
 	leaf = Mod_PointInLeaf( ch->origin, cl.worldmodel->nodes );
-	mask = Mod_LeafPHS( leaf, cl.worldmodel );
 
-	if( mask )
-	{
-		leafnum = Mod_PointLeafnum( s_listener.origin ) - 1;
+	if( CHECKVISBIT( s_listener.pasbytes, leaf->cluster ))
+		return true;
 
-		if( leafnum != -1 && (!(mask[leafnum>>3] & (1<<( leafnum & 7 )))))
-			return false;
-	}
-	return true;
+	return false;
 }
 
 /*
@@ -897,7 +883,7 @@ void S_StartSound( const vec3_t pos, int ent, int chan, sound_t handle, float fv
 	}
 
 	// spatialize
-	Q_memset( target_chan, 0, sizeof( *target_chan ));
+	memset( target_chan, 0, sizeof( *target_chan ));
 
 	VectorCopy( pos, target_chan->origin );
 	target_chan->staticsound = ( ent == 0 ) ? true : false;
@@ -1022,7 +1008,7 @@ void S_RestoreSound( const vec3_t pos, int ent, int chan, sound_t handle, float 
 	}
 
 	// spatialize
-	Q_memset( target_chan, 0, sizeof( *target_chan ));
+	memset( target_chan, 0, sizeof( *target_chan ));
 
 	VectorCopy( pos, target_chan->origin );
 	target_chan->staticsound = ( ent == 0 ) ? true : false;
@@ -1369,7 +1355,7 @@ void S_UpdateAmbientSounds( void )
 		if( !chan->sfx ) continue;
 
 		vol = s_ambient_level->value * leaf->ambient_sound_level[ambient_channel];
-		if( vol < 8 ) vol = 0;
+		if( vol < 0 ) vol = 0;
 
 		// don't adjust volume too fast
 		if( chan->master_vol < vol )
@@ -1388,16 +1374,372 @@ void S_UpdateAmbientSounds( void )
 }
 
 /*
+=============================================================================
+
+		SOUND STREAM RAW SAMPLES
+
+=============================================================================
+*/
+/*
+===================
+S_FindRawChannel
+===================
+*/
+rawchan_t *S_FindRawChannel( int entnum, qboolean create )
+{
+	int	i, free;
+	int	best, best_time;
+	size_t	raw_samples = 0;
+	rawchan_t	*ch;
+
+	if( !entnum ) return NULL; // world is unused
+
+	// check for replacement sound, or find the best one to replace
+	best_time = 0x7fffffff;
+	best = free = -1;
+
+	for( i = 0; i < MAX_RAW_CHANNELS; i++ )
+	{
+		ch = raw_channels[i];
+
+		if( free < 0 && !ch )
+		{
+			free = i;
+		}
+		else if( ch )
+		{
+			int	time;
+
+			// exact match
+			if( ch->entnum == entnum )
+				return ch;
+
+			time = ch->s_rawend - paintedtime;
+			if( time < best_time )
+			{
+				best = i;
+				best_time = time;
+			}
+		}
+	}
+
+	if( !create ) return NULL;
+
+	if( free >= 0 ) best = free;
+	if( best < 0 ) return NULL; // no free slots
+
+	if( !raw_channels[best] )
+	{
+		raw_samples = MAX_RAW_SAMPLES;
+		raw_channels[best] = Mem_Alloc( sndpool, sizeof( *ch ) + sizeof( portable_samplepair_t ) * ( raw_samples - 1 ));
+	}
+
+	ch = raw_channels[best];
+	ch->max_samples = raw_samples;
+	ch->entnum = entnum;
+	ch->s_rawend = 0;
+
+	return ch;
+}
+
+/*
+===================
+S_RawSamplesStereo
+===================
+*/
+static uint S_RawSamplesStereo( portable_samplepair_t *rawsamples, uint rawend, uint max_samples, uint samples, uint rate, word width, word channels, const byte *data )
+{
+	uint	fracstep, samplefrac;
+	uint	src, dst;
+
+	if( rawend < paintedtime )
+		rawend = paintedtime;
+
+	fracstep = ((double) rate / (double)SOUND_DMA_SPEED) * (double)(1 << S_RAW_SAMPLES_PRECISION_BITS);
+	samplefrac = 0;
+
+	if( width == 2 )
+	{
+		const short *in = (const short *)data;
+
+		if( channels == 2 )
+		{
+			for( src = 0; src < samples; samplefrac += fracstep, src = ( samplefrac >> S_RAW_SAMPLES_PRECISION_BITS ))
+			{
+				dst = rawend++ & ( max_samples - 1 );
+				rawsamples[dst].left = in[src*2+0];
+				rawsamples[dst].right = in[src*2+1];
+			}
+		}
+		else
+		{
+			for( src = 0; src < samples; samplefrac += fracstep, src = ( samplefrac >> S_RAW_SAMPLES_PRECISION_BITS ))
+			{
+				dst = rawend++ & ( max_samples - 1 );
+				rawsamples[dst].left = in[src];
+				rawsamples[dst].right = in[src];
+			}
+		}
+	}
+	else
+	{
+		if( channels == 2 )
+		{
+			const char *in = (const char *)data;
+
+			for( src = 0; src < samples; samplefrac += fracstep, src = ( samplefrac >> S_RAW_SAMPLES_PRECISION_BITS ))
+			{
+				dst = rawend++ & ( max_samples - 1 );
+				rawsamples[dst].left = in[src*2+0] << 8;
+				rawsamples[dst].right = in[src*2+1] << 8;
+			}
+		}
+		else
+		{
+			for( src = 0; src < samples; samplefrac += fracstep, src = ( samplefrac >> S_RAW_SAMPLES_PRECISION_BITS ))
+			{
+				dst = rawend++ & ( max_samples - 1 );
+				rawsamples[dst].left = ( data[src] - 128 ) << 8;
+				rawsamples[dst].right = ( data[src] - 128 ) << 8;
+			}
+		}
+	}
+
+	return rawend;
+}
+
+/*
+===================
+S_RawEntSamples
+===================
+*/
+static void S_RawEntSamples( int entnum, uint samples, uint rate, word width, word channels, const byte *data, int snd_vol )
+{
+	rawchan_t	*ch;
+
+	if( snd_vol < 0 )
+		snd_vol = 0;
+
+	if( !( ch = S_FindRawChannel( entnum, true )))
+		return;
+
+	ch->master_vol = snd_vol;
+	ch->dist_mult = (ATTN_NONE / SND_CLIP_DISTANCE);
+	ch->s_rawend = S_RawSamplesStereo( ch->rawsamples, ch->s_rawend, ch->max_samples, samples, rate, width, channels, data );
+	ch->leftvol = ch->rightvol = snd_vol;
+}
+
+/*
+===================
+S_RawSamples
+===================
+*/
+void S_RawSamples( uint samples, uint rate, word width, word channels, const byte *data, int entnum )
+{
+	int	snd_vol;
+
+	if( entnum < 0 ) snd_vol = 128; // bg track or movie track
+	if( snd_vol < 0 ) snd_vol = 0; // fixup negative values
+
+	S_RawEntSamples( entnum, samples, rate, width, channels, data, snd_vol );
+}
+
+/*
+===================
+S_PositionedRawSamples
+===================
+*/
+static void S_PositionedRawSamples( int entnum, float fvol, float attn, uint samples, uint rate, word width, word channels, const byte *data )
+{
+	rawchan_t	*ch;
+	
+	if( entnum < 0 || entnum >= GI->max_edicts )
+		return;
+
+	if( !( ch = S_FindRawChannel( entnum, true )))
+		return;
+
+	ch->master_vol = bound( 0, fvol * 255, 255 );
+	ch->dist_mult = (attn / SND_CLIP_DISTANCE);
+	ch->s_rawend = S_RawSamplesStereo( ch->rawsamples, ch->s_rawend, ch->max_samples, samples, rate, width, channels, data );
+}
+
+/*
+===================
+S_GetRawSamplesLength
+===================
+*/
+uint S_GetRawSamplesLength( int entnum ) 
+{
+	rawchan_t	*ch;
+
+	if( !( ch = S_FindRawChannel( entnum, false )))
+		return 0;
+
+	return ch->s_rawend <= paintedtime ? 0 : (float)(ch->s_rawend - paintedtime) * DMA_MSEC_PER_SAMPLE;
+}
+
+/*
+===================
+S_ClearRawChannel
+===================
+*/
+void S_ClearRawChannel( int entnum ) 
+{
+	rawchan_t	*ch;
+
+	if( !( ch = S_FindRawChannel( entnum, false )))
+		return;
+
+	ch->s_rawend = 0;
+}
+
+/*
+===================
+S_FreeIdleRawChannels
+
+Free raw channel that have been idling for too long.
+===================
+*/
+static void S_FreeIdleRawChannels( void )
+{
+	int	i;
+
+	for( i = 0; i < MAX_RAW_CHANNELS; i++ )
+	{
+		rawchan_t	*ch = raw_channels[i];
+
+		if( !ch ) continue;
+
+		if( ch->s_rawend >= paintedtime )
+			continue;
+
+		if(( paintedtime - ch->s_rawend ) / SOUND_DMA_SPEED >= S_RAW_SOUND_IDLE_SEC )
+		{
+			raw_channels[i] = NULL;
+			Mem_Free( ch );
+		}
+	}
+}
+
+/*
+===================
+S_ClearRawChannels
+===================
+*/
+static void S_ClearRawChannels( void )
+{
+	int	i;
+
+	for( i = 0; i < MAX_RAW_CHANNELS; i++ )
+	{
+		rawchan_t	*ch = raw_channels[i];
+
+		if( !ch ) continue;
+		ch->s_rawend = 0;
+	}
+}
+
+/*
+===================
+S_SpatializeRawChannels
+===================
+*/
+static void S_SpatializeRawChannels( void )
+{
+	int	i;
+	
+	for( i = 0; i < MAX_RAW_CHANNELS; i++ )
+	{
+		rawchan_t	*ch = raw_channels[i];
+		vec3_t	source_vec;
+		float	dist, dot;
+
+		if( !ch ) continue;
+
+		if( ch->s_rawend < paintedtime )
+		{
+			ch->leftvol = ch->rightvol = 0;
+			continue;
+		}
+
+		// spatialization
+		if( !S_IsClient( ch->entnum ) && ch->dist_mult && ch->entnum >= 0 && ch->entnum < GI->max_edicts )
+		{
+			if( !CL_GetEntitySpatialization( ch->entnum, ch->origin, &ch->radius ))
+			{
+				// origin is null and entity not exist on client
+				ch->leftvol = ch->rightvol = 0;
+			}
+			else
+			{
+				VectorSubtract( ch->origin, s_listener.origin, source_vec );
+
+				// normalize source_vec and get distance from listener to source
+				dist = VectorNormalizeLength( source_vec );
+				dot = DotProduct( s_listener.right, source_vec );
+
+				// for sounds with a radius, spatialize left/right evenly within the radius
+				if( ch->radius > 0 && dist < ch->radius )
+				{
+					float	interval = ch->radius * 0.5f;
+					float	blend = dist - interval;
+
+					if( blend < 0 ) blend = 0;
+					blend /= interval;	
+
+					// blend is 0.0 - 1.0, from 50% radius -> 100% radius
+					// at radius * 0.5, dot is 0 (ie: sound centered left/right)
+					// at radius dot == dot
+					dot *= blend;
+				}
+
+				// don't pan sounds with no attenuation
+				if( ch->dist_mult <= 0.0f ) dot = 0.0f;
+
+				// fill out channel volumes for single location
+				S_SpatializeChannel( &ch->leftvol, &ch->rightvol, ch->master_vol, 1.0f, dot, dist * ch->dist_mult );
+			}
+		}
+		else
+		{
+			ch->leftvol = ch->rightvol = ch->master_vol;
+		}
+	}
+}
+
+/*
+===================
+S_FreeRawChannels
+===================
+*/
+static void S_FreeRawChannels( void )
+{
+	int	i;
+
+	// free raw samples
+	for( i = 0; i < MAX_RAW_CHANNELS; i++ )
+	{
+		if( raw_channels[i] )
+			Mem_Free( raw_channels[i] );
+	}
+
+	memset( raw_channels, 0, sizeof( raw_channels ));
+}
+
+//=============================================================================
+
+/*
 ==================
 S_ClearBuffer
 ==================
 */
 void S_ClearBuffer( void )
 {
-	s_rawend = 0;
+	S_ClearRawChannels();
 
 	SNDDMA_BeginPainting ();
-	if( dma.buffer ) Q_memset( dma.buffer, 0, dma.samples * 2 );
+	if( dma.buffer ) memset( dma.buffer, 0, dma.samples * 2 );
 	SNDDMA_Submit ();
 
 	MIX_ClearAllPaintBuffers( PAINTBUFFER_SIZE, true );
@@ -1440,7 +1782,7 @@ void S_StopAllSounds( void )
 	DSP_ClearState();
 
 	// clear all the channels
-	Q_memset( channels, 0, sizeof( channels ));
+	memset( channels, 0, sizeof( channels ));
 
 	// restart the ambient sounds
 	S_InitAmbientChannels ();
@@ -1448,7 +1790,7 @@ void S_StopAllSounds( void )
 	S_ClearBuffer ();
 
 	// clear any remaining soundfade
-	Q_memset( &soundfade, 0, sizeof( soundfade ));
+	memset( &soundfade, 0, sizeof( soundfade ));
 }
 
 //=============================================================================
@@ -1520,6 +1862,9 @@ void S_RenderFrame( ref_params_t *fd )
 	// update any client side sound fade
 	S_UpdateSoundFade();
 
+	// release raw-channels that no longer used more than 10 secs
+	S_FreeIdleRawChannels();
+
 	s_listener.entnum = fd->viewentity;	// can be camera entity too
 	s_listener.frametime = fd->frametime;
 	s_listener.waterlevel = fd->waterlevel;
@@ -1530,6 +1875,9 @@ void S_RenderFrame( ref_params_t *fd )
 	VectorCopy( fd->vieworg, s_listener.origin );
 	VectorCopy( fd->simvel, s_listener.velocity );
 	AngleVectors( fd->viewangles, s_listener.forward, s_listener.right, s_listener.up );
+
+	if( cl.worldmodel != NULL )
+		Mod_FatPVS( s_listener.origin, FATPHS_RADIUS, s_listener.pasbytes, world.visbytes, false, !s_phs->integer );
 
 	// update general area ambient sound sources
 	S_UpdateAmbientSounds();
@@ -1585,6 +1933,8 @@ void S_RenderFrame( ref_params_t *fd )
 		}
 	}
 
+	S_SpatializeRawChannels();
+
 	// debugging output
 	if( s_show->value )
 	{
@@ -1605,11 +1955,16 @@ void S_RenderFrame( ref_params_t *fd )
 		}
 
 		// to differentiate modes
-		if( s_cull->integer ) VectorSet( info.color, 0.0f, 1.0f, 0.0f );
+		if( s_cull->integer && s_phs->integer )
+			VectorSet( info.color, 0.0f, 1.0f, 0.0f );
+		else if( s_phs->integer )
+			VectorSet( info.color, 1.0f, 1.0f, 0.0f );
+		else if( s_cull->integer )
+			VectorSet( info.color, 1.0f, 0.0f, 0.0f );
 		else VectorSet( info.color, 1.0f, 1.0f, 1.0f );
 		info.index = 0;
 
-		Con_NXPrintf( &info, "----(%i)---- painted: %i\n", total - 1, paintedtime );
+		Con_NXPrintf( &info, "room_type: %i ----(%i)---- painted: %i\n", idsp_room, total - 1, paintedtime );
 	}
 
 	S_StreamBackgroundTrack ();
@@ -1773,9 +2128,8 @@ qboolean S_Init( void )
 	s_mixahead = Cvar_Get( "_snd_mixahead", "0.12", 0, "how much sound to mix ahead of time" );
 	s_show = Cvar_Get( "s_show", "0", CVAR_ARCHIVE, "show playing sounds" );
 	s_lerping = Cvar_Get( "s_lerping", "0", CVAR_ARCHIVE, "apply interpolation to sound output" );
-	dsp_off = Cvar_Get( "dsp_off", "0", CVAR_ARCHIVE, "set to 1 to disable all dsp processing" );
-	s_ambient_level = Cvar_Get( "ambient_level", "0.3", 0, "volume of environment noises (water and wind)" );
-	s_ambient_fade = Cvar_Get( "ambient_fade", "100", 0, "rate of volume fading when client is moving" );
+	s_ambient_level = Cvar_Get( "ambient_level", "0.3", CVAR_ARCHIVE, "volume of environment noises (water and wind)" );
+	s_ambient_fade = Cvar_Get( "ambient_fade", "1000", CVAR_ARCHIVE, "rate of volume fading when client is moving" );
 	s_combine_sounds = Cvar_Get( "s_combine_channels", "1", CVAR_ARCHIVE, "combine channels with same sounds" ); 
 	snd_foliage_db_loss = Cvar_Get( "snd_foliage_db_loss", "4", 0, "foliage loss factor" ); 
 	snd_gain_max = Cvar_Get( "snd_gain_max", "1", 0, "gain maximal threshold" );
@@ -1809,7 +2163,7 @@ qboolean S_Init( void )
 	paintedtime = 0;
 
 	// clear ambient sounds
-	Q_memset( ambient_sfx, 0, sizeof( ambient_sfx ));
+	memset( ambient_sfx, 0, sizeof( ambient_sfx ));
 
 	MIX_InitAllPaintbuffers ();
 
@@ -1836,10 +2190,11 @@ void S_Shutdown( void )
 	Cmd_RemoveCommand( "s_info" );
 	Cmd_RemoveCommand( "+voicerecord" );
 	Cmd_RemoveCommand( "-voicerecord" );
-	Cmd_RemoveCommand( "spk" );
 	Cmd_RemoveCommand( "speak" );
+	Cmd_RemoveCommand( "spk" );
 
 	S_StopAllSounds ();
+	S_FreeRawChannels ();
 	S_FreeSounds ();
 	VOX_Shutdown ();
 	FreeDsps ();

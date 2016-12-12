@@ -76,7 +76,7 @@ void GL_BackendEndFrame( void )
 		break;		
 	case 2:
 		Q_snprintf( r_speeds_msg, sizeof( r_speeds_msg ), "visible leafs:\n%3i leafs\ncurrent leaf %3i",
-		r_stats.c_world_leafs, r_viewleaf - cl.worldmodel->leafs );
+		r_stats.c_world_leafs, Mod_PointInLeaf( RI.pvsorigin, cl.worldmodel->nodes ) - cl.worldmodel->leafs );
 		break;
 	case 3:
 		Q_snprintf( r_speeds_msg, sizeof( r_speeds_msg ), "%3i studio models drawn\n%3i sprites drawn",
@@ -95,7 +95,7 @@ void GL_BackendEndFrame( void )
 		break;
 	}
 
-	Q_memset( &r_stats, 0, sizeof( r_stats ));
+	memset( &r_stats, 0, sizeof( r_stats ));
 }
 
 /*
@@ -182,10 +182,6 @@ void GL_SelectTexture( GLint tmu )
 		if( tmu < glConfig.max_texture_coords )
 			pglClientActiveTextureARB( tmu + GL_TEXTURE0_ARB );
 	}
-	else if( pglSelectTextureSGIS )
-	{
-		pglSelectTextureSGIS( tmu + GL_TEXTURE0_SGIS );
-	}
 }
 
 /*
@@ -228,19 +224,30 @@ void GL_CleanUpTextureUnits( int last )
 }
 
 /*
+==============
+GL_CleanupAllTextureUnits
+==============
+*/
+void GL_CleanupAllTextureUnits( void )
+{
+	// force to cleanup all the units
+	GL_SelectTexture( GL_MaxTextureUnits() - 1 );
+	GL_CleanUpTextureUnits( 0 );
+}
+
+/*
 =================
 GL_MultiTexCoord2f
 =================
 */
 void GL_MultiTexCoord2f( GLenum texture, GLfloat s, GLfloat t )
 {
+	if( !GL_Support( GL_ARB_MULTITEXTURE ))
+		return;
+
 	if( pglMultiTexCoord2f )
 	{
 		pglMultiTexCoord2f( texture + GL_TEXTURE0_ARB, s, t );
-	}
-	else if( pglMTexCoord2fSGIS )
-	{
-		pglMTexCoord2fSGIS( texture + GL_TEXTURE0_SGIS, s, t );
 	}
 }
 
@@ -470,6 +477,37 @@ void VID_ImageAdjustGamma( byte *in, uint width, uint height )
 	}
 }
 
+/*
+===============
+VID_WriteOverviewScript
+
+Create overview script file
+===============
+*/
+void VID_WriteOverviewScript( void )
+{
+	ref_overview_t	*ov = &clgame.overView;
+	string		filename;
+	file_t		*f;
+
+	Q_snprintf( filename, sizeof( filename ), "overviews/%s.txt", clgame.mapname );
+
+	f = FS_Open( filename, "w", false );
+	if( !f ) return;
+
+	FS_Printf( f, "// overview description file for %s.bsp\n\n", clgame.mapname );
+	FS_Print( f, "global\n{\n" );
+	FS_Printf( f, "\tZOOM\t%.2f\n", ov->flZoom );
+	FS_Printf( f, "\tORIGIN\t%.2f\t%.2f\t%.2f\n", ov->origin[0], ov->origin[1], ov->origin[2] );
+	FS_Printf( f, "\tROTATED\t%i\n", ov->rotated ? 1 : 0 );
+	FS_Print( f, "}\n\nlayer\n{\n" );
+	FS_Printf( f, "\tIMAGE\t\"overviews/%s.bmp\"\n", clgame.mapname );
+	FS_Printf( f, "\tHEIGHT\t%.2f\n", ov->zFar );	// ???
+	FS_Print( f, "}\n" );
+
+	FS_Close( f );
+}
+
 qboolean VID_ScreenShot( const char *filename, int shot_type )
 {
 	rgbdata_t *r_shot;
@@ -519,7 +557,7 @@ qboolean VID_ScreenShot( const char *filename, int shot_type )
 		width = 320;
 		break;
 	case VID_MAPSHOT:
-		V_WriteOverviewScript();		// store overview script too
+		VID_WriteOverviewScript();		// store overview script too
 		flags |= IMAGE_RESAMPLE|IMAGE_QUANTIZE;	// GoldSrc request overviews in 8-bit format
 		height = 768;
 		width = 1024;
@@ -596,7 +634,7 @@ qboolean VID_CubemapShot( const char *base, uint size, const float *vieworg, qbo
 		r_side->buffer = temp;
 
 		if( flags ) Image_Process( &r_side, 0, 0, 0.0f, flags, NULL );
-		Q_memcpy( buffer + (size * size * 3 * i), r_side->buffer, size * size * 3 );
+		memcpy( buffer + (size * size * 3 * i), r_side->buffer, size * size * 3 );
 	}
 
 	RI.params &= ~RP_ENVVIEW;
@@ -637,8 +675,8 @@ void R_ShowTextures( void )
 {
 	gltexture_t	*image;
 	float		x, y, w, h;
-	int		i, j, k, base_w, base_h;
 	int		total, start, end;
+	int		i, j, k, base_w, base_h;
 	rgba_t		color = { 192, 192, 192, 255 };
 	int		charHeight, numTries = 0;
 	static qboolean	showHelp = true;
@@ -649,15 +687,16 @@ void R_ShowTextures( void )
 
 	if( showHelp )
 	{
-		CL_CenterPrint( "use '<-' and '->' keys for view all the textures", 0.25f );
+		CL_CenterPrint( "use '<-' and '->' keys to change atlas page, ESC to quit", 0.25f );
 		showHelp = false;
 	}
 
+	GL_SetRenderMode( kRenderNormal );
 	pglClear( GL_COLOR_BUFFER_BIT );
 	pglFinish();
 
-	base_w = 8;
-	base_h = 6;
+	base_w = 8;	// textures view by horizontal
+	base_h = 6;	// textures view by vertical
 
 rebuild_page:
 	total = base_w * base_h;
@@ -698,27 +737,27 @@ rebuild_page:
 		pglColor4f( 1.0f, 1.0f, 1.0f, 1.0f );
 		GL_Bind( GL_TEXTURE0, i ); // NOTE: don't use image->texnum here, because skybox has a 'wrong' indexes
 
-		if(( image->flags & TF_DEPTHMAP ) && !( image->flags & TF_NOCOMPARE ))
+		if( FBitSet( image->flags, TF_DEPTHMAP ) && !FBitSet( image->flags, TF_NOCOMPARE ))
 			pglTexParameteri( image->target, GL_TEXTURE_COMPARE_MODE_ARB, GL_NONE );
 
 		pglBegin( GL_QUADS );
 		pglTexCoord2f( 0, 0 );
 		pglVertex2f( x, y );
-		if( image->flags & TF_TEXTURE_RECTANGLE )
+		if( image->target == GL_TEXTURE_RECTANGLE_EXT )
 			pglTexCoord2f( image->width, 0 );
 		else pglTexCoord2f( 1, 0 );
 		pglVertex2f( x + w, y );
-		if( image->flags & TF_TEXTURE_RECTANGLE )
+		if( image->target == GL_TEXTURE_RECTANGLE_EXT )
 			pglTexCoord2f( image->width, image->height );
 		else pglTexCoord2f( 1, 1 );
 		pglVertex2f( x + w, y + h );
-		if( image->flags & TF_TEXTURE_RECTANGLE )
+		if( image->target == GL_TEXTURE_RECTANGLE_EXT )
 			pglTexCoord2f( 0, image->height );
 		else pglTexCoord2f( 0, 1 );
 		pglVertex2f( x, y + h );
 		pglEnd();
 
-		if(( image->flags & TF_DEPTHMAP ) && !( image->flags & TF_NOCOMPARE ))
+		if( FBitSet( image->flags, TF_DEPTHMAP ) && !FBitSet( image->flags, TF_NOCOMPARE ))
 			pglTexParameteri( image->target, GL_TEXTURE_COMPARE_MODE_ARB, GL_COMPARE_R_TO_TEXTURE_ARB );
 
 		FS_FileBase( image->name, shortname );
@@ -736,5 +775,3 @@ rebuild_page:
 	CL_DrawCenterPrint ();
 	pglFinish();
 }
-
-//=======================================================

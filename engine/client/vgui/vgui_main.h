@@ -19,6 +19,8 @@ GNU General Public License for more details.
 #include "utlvector.h"
 #include "utlrbtree.h"
 
+//#define NEW_VGUI_DLL
+
 #include<VGUI.h>
 #include<VGUI_App.h>
 #include<VGUI_Font.h>
@@ -127,6 +129,9 @@ public:
 	virtual void setTitle( const char *title ) { }
 	virtual void createPopup( Panel* embeddedPanel ) { }
 	virtual bool isWithin( int x, int y ) { return true; }
+#ifdef NEW_VGUI_DLL
+	virtual void GetMousePos( int &x, int &y );
+#endif
 	virtual bool hasFocus( void );
 protected:
 	virtual int createNewTextureID( void );

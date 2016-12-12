@@ -58,9 +58,6 @@ file_n:	byte[dwadinfo_t[num]->disksize]
 infotable	dlumpinfo_t[dwadinfo_t->numlumps]
 ========================================================================
 */
-#define IDWAD2HEADER	(('2'<<24)+('D'<<16)+('A'<<8)+'W')	// little-endian "WAD2" quake1 gfx.wad
-#define IDWAD3HEADER	(('3'<<24)+('D'<<16)+('A'<<8)+'W')	// little-endian "WAD3" half-life wads
-
 #define WAD3_NAMELEN	16
 #define HINT_NAMELEN	5	// e.g. _mask, _norm
 #define MAX_FILES_IN_WAD	65535	// real limit as above <2Gb size not a lumpcount
@@ -73,9 +70,9 @@ infotable	dlumpinfo_t[dwadinfo_t->numlumps]
 
 typedef struct
 {
-	int		ident;		// should be IWAD, WAD2 or WAD3
+	int		ident;		// should be WAD3
 	int		numlumps;		// num files
-	int		infotableofs;
+	int		infotableofs;	// LUT offset
 } dwadinfo_t;
 
 typedef struct

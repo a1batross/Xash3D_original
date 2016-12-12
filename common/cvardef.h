@@ -25,6 +25,8 @@
 #define FCVAR_PRINTABLEONLY	(1<<7)	// This cvar's string cannot contain unprintable characters ( e.g., used for player name etc ).
 #define FCVAR_UNLOGGED	(1<<8)	// If this is a FCVAR_SERVER, don't log changes to the log file / console if we are creating a log
 
+#define FCVAR_GLCONFIG	(1<<18)	// write it into opengl.cfg
+
 typedef struct cvar_s
 {
 	char		*name;

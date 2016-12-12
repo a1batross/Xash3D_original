@@ -48,8 +48,15 @@ create buffer, that contain clipboard
 */
 char *Sys_GetClipboardData( void )
 {
-	char	*data = NULL;
-	char	*cliptext;
+	static char	*data = NULL;
+	char		*cliptext;
+
+	if( data )
+	{
+		// release previous cbd
+		Z_Free( data );
+		data = NULL;
+	}
 
 	if( OpenClipboard( NULL ) != 0 )
 	{
@@ -66,6 +73,7 @@ char *Sys_GetClipboardData( void )
 		}
 		CloseClipboard();
 	}
+
 	return data;
 }
 
@@ -85,7 +93,7 @@ void Sys_SetClipboardData( const byte *buffer, size_t size )
 		HGLOBAL hResult = GlobalAlloc( GMEM_MOVEABLE, size ); 
 		byte *bufferCopy = (byte *)GlobalLock( hResult ); 
 
-		Q_memcpy( bufferCopy, buffer, size ); 
+		memcpy( bufferCopy, buffer, size ); 
 		GlobalUnlock( hResult ); 
 
 		if( SetClipboardData( CF_DIB, hResult ) == NULL )
@@ -259,9 +267,9 @@ qboolean _Sys_GetParmFromCmdLine( char *parm, char *out, size_t size )
 {
 	int	argc = Sys_CheckParm( parm );
 
-	if( !argc ) return false;
-	if( !out ) return false;	
-	if( !host.argv[argc + 1] ) return false;
+	if( !argc || !out || !host.argv[argc + 1] )
+		return false;
+
 	Q_strncpy( out, host.argv[argc+1], size );
 
 	return true;
@@ -534,8 +542,8 @@ print into window console
 void Sys_Print( const char *pMsg )
 {
 	const char	*msg;
-	char		buffer[32768];
-	char		logbuf[32768];
+	char		buffer[MAX_PRINT_MSG];
+	char		logbuf[MAX_PRINT_MSG];
 	char		*b = buffer;
 	char		*c = logbuf;	
 	int		i = 0;
@@ -554,22 +562,20 @@ void Sys_Print( const char *pMsg )
 		if( msg[i] == '\n' && msg[i+1] == '\r' )
 		{
 			b[0] = '\r';
-			b[1] = '\n';
-			c[0] = '\n';
+			b[1] = c[0] = '\n';
 			b += 2, c++;
 			i++;
 		}
 		else if( msg[i] == '\r' )
 		{
-			b[0] = '\r';
+			b[0] = c[0] = '\r';
 			b[1] = '\n';
-			b += 2;
+			b += 2, c++;
 		}
 		else if( msg[i] == '\n' )
 		{
 			b[0] = '\r';
-			b[1] = '\n';
-			c[0] = '\n';
+			b[1] = c[0] = '\n';
 			b += 2, c++;
 		}
 		else if( msg[i] == '\35' || msg[i] == '\36' || msg[i] == '\37' )
@@ -588,7 +594,7 @@ void Sys_Print( const char *pMsg )
 		i++;
 	}
 
-	*b = *c = 0; // cutoff garbage
+	*b = *c = 0; // terminator
 
 	Sys_PrintLog( logbuf );
 	Con_WinPrint( buffer );
@@ -604,7 +610,7 @@ formatted message
 void Msg( const char *pMsg, ... )
 {
 	va_list	argptr;
-	char	text[8192];
+	char	text[MAX_PRINT_MSG];
 	
 	va_start( argptr, pMsg );
 	Q_vsnprintf( text, sizeof( text ), pMsg, argptr );
@@ -623,7 +629,7 @@ formatted developer message
 void MsgDev( int level, const char *pMsg, ... )
 {
 	va_list	argptr;
-	char	text[8192];
+	char	text[MAX_PRINT_MSG];
 
 	if( host.developer < level ) return;
 
@@ -641,7 +647,7 @@ void MsgDev( int level, const char *pMsg, ... )
 		break;
 	case D_INFO:
 	case D_NOTE:
-	case D_AICONSOLE:
+	case D_REPORT:
 		Sys_Print( text );
 		break;
 	}

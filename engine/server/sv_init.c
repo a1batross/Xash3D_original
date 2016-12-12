@@ -18,10 +18,17 @@ GNU General Public License for more details.
 
 int SV_UPDATE_BACKUP = SINGLEPLAYER_BACKUP;
 
+server_t		sv;	// local server
 server_static_t	svs;	// persistant server info
 svgame_static_t	svgame;	// persistant game info
-server_t		sv;	// local server
 
+/*
+================
+SV_ModelIndex
+
+register unique model for a server and client
+================
+*/
 int SV_ModelIndex( const char *filename )
 {
 	char	name[64];
@@ -52,14 +59,21 @@ int SV_ModelIndex( const char *filename )
 	if( sv.state != ss_loading )
 	{	
 		// send the update to everyone
-		BF_WriteByte( &sv.reliable_datagram, svc_modelindex );
-		BF_WriteUBitLong( &sv.reliable_datagram, i, MAX_MODEL_BITS );
-		BF_WriteString( &sv.reliable_datagram, name );
+		MSG_WriteByte( &sv.reliable_datagram, svc_modelindex );
+		MSG_WriteUBitLong( &sv.reliable_datagram, i, MAX_MODEL_BITS );
+		MSG_WriteString( &sv.reliable_datagram, name );
 	}
 
 	return i;
 }
 
+/*
+================
+SV_SoundIndex
+
+register unique sound for client
+================
+*/
 int SV_SoundIndex( const char *filename )
 {
 	char	name[64];
@@ -90,14 +104,21 @@ int SV_SoundIndex( const char *filename )
 	if( sv.state != ss_loading )
 	{	
 		// send the update to everyone
-		BF_WriteByte( &sv.reliable_datagram, svc_soundindex );
-		BF_WriteUBitLong( &sv.reliable_datagram, i, MAX_SOUND_BITS );
-		BF_WriteString( &sv.reliable_datagram, name );
+		MSG_WriteByte( &sv.reliable_datagram, svc_soundindex );
+		MSG_WriteUBitLong( &sv.reliable_datagram, i, MAX_SOUND_BITS );
+		MSG_WriteString( &sv.reliable_datagram, name );
 	}
 
 	return i;
 }
 
+/*
+================
+SV_EventIndex
+
+register network event for a server and client
+================
+*/
 int SV_EventIndex( const char *filename )
 {
 	char	name[64];
@@ -127,14 +148,21 @@ int SV_EventIndex( const char *filename )
 	if( sv.state != ss_loading )
 	{
 		// send the update to everyone
-		BF_WriteByte( &sv.reliable_datagram, svc_eventindex );
-		BF_WriteUBitLong( &sv.reliable_datagram, i, MAX_EVENT_BITS );
-		BF_WriteString( &sv.reliable_datagram, name );
+		MSG_WriteByte( &sv.reliable_datagram, svc_eventindex );
+		MSG_WriteUBitLong( &sv.reliable_datagram, i, MAX_EVENT_BITS );
+		MSG_WriteString( &sv.reliable_datagram, name );
 	}
 
 	return i;
 }
 
+/*
+================
+SV_GenericIndex
+
+register generic resourse for a server and client
+================
+*/
 int SV_GenericIndex( const char *filename )
 {
 	char	name[64];
@@ -181,8 +209,8 @@ get entity script for current map
 char *SV_EntityScript( void )
 {
 	string	entfilename;
-	char	*ents;
 	size_t	ft1, ft2;
+	char	*ents;
 
 	if( !sv.worldmodel )
 		return NULL;
@@ -224,14 +252,11 @@ baseline will be transmitted
 */
 void SV_CreateBaseline( void )
 {
-	edict_t	*pEdict;
 	int	e;	
 
 	for( e = 0; e < svgame.numEntities; e++ )
 	{
-		pEdict = EDICT_NUM( e );
-		if( !SV_IsValidEdict( pEdict )) continue;
-		SV_BaselineForEntity( pEdict );
+		SV_BaselineForEntity( EDICT_NUM( e ));
 	}
 
 	// create the instanced baselines
@@ -279,7 +304,6 @@ void SV_ActivateServer( void )
 		return;
 
 	// custom muzzleflashes
-	pfnPrecacheModel( "sprites/muzzleflash.spr" );
 	pfnPrecacheModel( "sprites/muzzleflash1.spr" );
 	pfnPrecacheModel( "sprites/muzzleflash2.spr" );
 	pfnPrecacheModel( "sprites/muzzleflash3.spr" );
@@ -292,6 +316,26 @@ void SV_ActivateServer( void )
 
 	// Activate the DLL server code
 	svgame.dllFuncs.pfnServerActivate( svgame.edicts, svgame.numEntities, svgame.globals->maxClients );
+
+	if( sv.loadgame || svgame.globals->changelevel )
+	{
+		sv.frametime = 0.001;
+		numFrames = 1;
+	}
+	else if( sv_maxclients->integer <= 1 )
+	{
+		sv.frametime = 0.1f;
+		numFrames = 2;
+	}
+	else
+	{
+		sv.frametime = 0.1f;
+		numFrames = 8;
+	}
+
+	// run some frames to allow everything to settle
+	for( i = 0; i < numFrames; i++ )
+		SV_Physics();
 
 	// create a baseline for more efficient communications
 	SV_CreateBaseline();
@@ -309,23 +353,8 @@ void SV_ActivateServer( void )
 		}
 	}
 
-	numFrames = (sv.loadgame) ? 1 : 2;
-	if( !sv.loadgame || svgame.globals->changelevel )
-		host.frametime = 0.1f;			
-
-	// GoldSrc rules
-	// NOTE: this stuff is breaking sound from func_rotating in multiplayer
-	// e.g. ambience\boomer.wav on snark_pit.bsp
-	numFrames *= sv_maxclients->integer;
-
-	// run some frames to allow everything to settle
-	for( i = 0; i < numFrames; i++ )
-	{
-		SV_Physics();
-	}
-
 	// invoke to refresh all movevars
-	Q_memset( &svgame.oldmovevars, 0, sizeof( movevars_t ));
+	memset( &svgame.oldmovevars, 0, sizeof( movevars_t ));
 	svgame.globals->changelevel = false; // changelevel ends here
 
 	// setup hostflags
@@ -344,10 +373,9 @@ void SV_ActivateServer( void )
 		MsgDev( D_INFO, "Game started\n" );
 	}
 
+	// dedicated server purge unused resources here
 	if( host.type == HOST_DEDICATED )
-	{
 		Mod_FreeUnused ();
-	}
 
 	sv.state = ss_active;
 	physinfo->modified = true;
@@ -356,10 +384,29 @@ void SV_ActivateServer( void )
 
 	Host_SetServerState( sv.state );
 
-	if( sv_maxclients->integer > 1 && public_server->integer )
+	if( sv_maxclients->integer > 1 )
 	{
-		MsgDev( D_INFO, "Add your server, to master server list\n" );
-		Master_Add( );
+		// listenserver is executed on every map change in multiplayer
+		if( host.type != HOST_DEDICATED )
+		{
+#if 0
+			// temporare disable because it's broken TFC multiplayer
+			char *plservercfgfile = Cvar_VariableString( "lservercfgfile" );
+			if( *plservercfgfile ) Cbuf_AddText( va( "exec %s\n", plservercfgfile ));
+#endif
+		}
+
+		if( public_server->integer )
+		{
+			MsgDev( D_INFO, "Adding your server to master server list\n" );
+			Master_Add( );
+		}
+	}
+
+	// mapchangecfgfile
+	{
+		char *mapchangecfgfile = Cvar_VariableString( "mapchangecfgfile" );
+		if( *mapchangecfgfile ) Cbuf_AddText( va( "exec %s\n", mapchangecfgfile ));
 	}
 }
 
@@ -379,13 +426,16 @@ void SV_DeactivateServer( void )
 
 	sv.state = ss_dead;
 
+	svgame.dllFuncs.pfnServerDeactivate();
+
 	SV_FreeEdicts ();
 
 	SV_ClearPhysEnts ();
 
 	Mem_EmptyPool( svgame.stringspool );
 
-	svgame.dllFuncs.pfnServerDeactivate();
+	if( sv_maxclients->integer > 32 )
+		Cvar_SetFloat( "maxplayers", 32.0f );
 
 	for( i = 0; i < sv_maxclients->integer; i++ )
 	{
@@ -473,7 +523,7 @@ qboolean SV_SpawnServer( const char *mapname, const char *startspot )
 	if( sv.state == ss_dead )
 		SV_InitGame(); // the game is just starting
 	else if( !sv_maxclients->modified )
-		Cmd_ExecuteString( "latch\n", src_command );
+		Cmd_ExecuteString( "latch\n" );
 	else MsgDev( D_ERROR, "SV_SpawnServer: while 'maxplayers' was modified.\n" );
 
 	sv_maxclients->modified = false;
@@ -499,7 +549,7 @@ qboolean SV_SpawnServer( const char *mapname, const char *startspot )
 
 	sv.state = ss_dead;
 	Host_SetServerState( sv.state );
-	Q_memset( &sv, 0, sizeof( sv ));	// wipe the entire per-level structure
+	memset( &sv, 0, sizeof( sv ));	// wipe the entire per-level structure
 
 	// restore state
 	sv.paused = paused;
@@ -510,11 +560,10 @@ qboolean SV_SpawnServer( const char *mapname, const char *startspot )
 	svgame.globals->time = sv.time;
 	
 	// initialize buffers
-	BF_Init( &sv.datagram, "Datagram", sv.datagram_buf, sizeof( sv.datagram_buf ));
-	BF_Init( &sv.reliable_datagram, "Datagram R", sv.reliable_datagram_buf, sizeof( sv.reliable_datagram_buf ));
-	BF_Init( &sv.multicast, "Multicast", sv.multicast_buf, sizeof( sv.multicast_buf ));
-	BF_Init( &sv.signon, "Signon", sv.signon_buf, sizeof( sv.signon_buf ));
-	BF_Init( &sv.spectator_datagram, "Spectator Datagram", sv.spectator_buf, sizeof( sv.spectator_buf ));
+	MSG_Init( &sv.reliable_datagram, "Reliable Datagram", sv.reliable_datagram_buf, sizeof( sv.reliable_datagram_buf ));
+	MSG_Init( &sv.multicast, "Multicast", sv.multicast_buf, sizeof( sv.multicast_buf ));
+	MSG_Init( &sv.signon, "Signon", sv.signon_buf, sizeof( sv.signon_buf ));
+	MSG_Init( &sv.spectator_datagram, "Spectator Datagram", sv.spectator_buf, sizeof( sv.spectator_buf ));
 
 	// leave slots at start for clients only
 	for( i = 0; i < sv_maxclients->integer; i++ )
@@ -568,9 +617,6 @@ qboolean SV_SpawnServer( const char *mapname, const char *startspot )
 	// clear physics interaction links
 	SV_ClearWorld();
 
-	// tell dlls about new level started
-	svgame.dllFuncs.pfnParmsNewLevel();
-
 	return true;
 }
 
@@ -584,7 +630,7 @@ A brand new game has been started
 void SV_InitGame( void )
 {
 	edict_t	*ent;
-	int	i;
+	int	i, load = sv.loadgame;
 	
 	if( svs.initialized )
 	{
@@ -609,7 +655,7 @@ void SV_InitGame( void )
 	}
 
 	// now apply latched commands
-	Cmd_ExecuteString( "latch\n", src_command );
+	Cmd_ExecuteString( "latch\n" );
 
 	if( Cvar_VariableValue( "coop" ) && Cvar_VariableValue ( "deathmatch" ) && Cvar_VariableValue( "teamplay" ))
 	{
@@ -649,9 +695,10 @@ void SV_InitGame( void )
 	SV_UPDATE_BACKUP = ( svgame.globals->maxClients == 1 ) ? SINGLEPLAYER_BACKUP : MULTIPLAYER_BACKUP;
 
 	svs.clients = Z_Malloc( sizeof( sv_client_t ) * sv_maxclients->integer );
-	svs.num_client_entities = sv_maxclients->integer * SV_UPDATE_BACKUP * 64;
+	svs.num_client_entities = sv_maxclients->integer * SV_UPDATE_BACKUP * NUM_PACKET_ENTITIES;
 	svs.packet_entities = Z_Malloc( sizeof( entity_state_t ) * svs.num_client_entities );
 	svs.baselines = Z_Malloc( sizeof( entity_state_t ) * GI->max_edicts );
+	if( !load ) MsgDev( D_INFO, "%s alloced by server packet entities\n", Q_memprint( sizeof( entity_state_t ) * svs.num_client_entities ));
 
 	// client frames will be allocated in SV_DirectConnect
 
@@ -661,7 +708,7 @@ void SV_InitGame( void )
 	// copy gamemode into svgame.globals
 	svgame.globals->deathmatch = Cvar_VariableInteger( "deathmatch" );
 	svgame.globals->teamplay = Cvar_VariableInteger( "teamplay" );
-	svgame.globals->coop = Cvar_VariableInteger( "coop" );
+	svgame.globals->coop = ( sv_maxclients->integer > 1 ) ? Cvar_VariableInteger( "coop" ) : 0;
 
 	// heartbeats will always be sent to the id master
 	svs.last_heartbeat = MAX_HEARTBEAT; // send immediately
@@ -671,8 +718,8 @@ void SV_InitGame( void )
 	{
 		// setup all the clients
 		ent = EDICT_NUM( i + 1 );
-		SV_InitEdict( ent );
 		svs.clients[i].edict = ent;
+		SV_InitEdict( ent );
 	}
 
 	// get actual movevars

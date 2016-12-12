@@ -102,12 +102,12 @@ void Image_Reset( void )
 	image.source_width = image.source_height = 0;
 	image.source_type = image.num_mips = 0;
 	image.num_sides = image.flags = 0;
+	image.encode = DXT_ENCODE_DEFAULT;
 	image.type = PF_UNKNOWN;
 	image.fogParams[0] = 0;
 	image.fogParams[1] = 0;
 	image.fogParams[2] = 0;
 	image.fogParams[3] = 0;
-	image.encode = 0;
 
 	// pointers will be saved with prevoius picture struct
 	// don't care about it
@@ -203,7 +203,7 @@ qboolean FS_AddSideToPack( const char *name, int adjust_flags )
 	if( resampled ) image.rgba = Image_Copy( image.size );
 
 	image.cubemap = Mem_Realloc( host.imagepool, image.cubemap, image.ptr + image.size );
-	Q_memcpy( image.cubemap + image.ptr, image.rgba, image.size ); // add new side
+	memcpy( image.cubemap + image.ptr, image.rgba, image.size ); // add new side
 
 	Mem_Free( image.rgba );	// release source buffer
 	image.ptr += image.size; 	// move to next
@@ -494,13 +494,13 @@ rgbdata_t *FS_CopyImage( rgbdata_t *in )
 	if( palSize )
 	{
 		out->palette = Mem_Alloc( host.imagepool, palSize );
-		Q_memcpy( out->palette, in->palette, palSize );
+		memcpy( out->palette, in->palette, palSize );
 	}
 
 	if( in->size )
 	{
 		out->buffer = Mem_Alloc( host.imagepool, in->size );
-		Q_memcpy( out->buffer, in->buffer, in->size );
+		memcpy( out->buffer, in->buffer, in->size );
 	}
 
 	return out;

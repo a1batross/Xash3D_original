@@ -291,7 +291,6 @@ void R_ParseDetailTextures( const char *filename )
 			{
 				gltexture_t	*glt;
 
-				GL_SetTextureType( tex->dt_texturenum, TEX_DETAIL );
 				glt = R_GetTexture( tex->gl_texturenum );
 				glt->xscale = xScale;
 				glt->yscale = yScale;
@@ -320,7 +319,7 @@ void R_ParseTexFilters( const char *filename )
 	{
 		imgfilter_t	filter;
 
-		Q_memset( &filter, 0, sizeof( filter ));
+		memset( &filter, 0, sizeof( filter ));
 		Q_strncpy( texname, token, sizeof( texname ));
 
 		// parse filter
@@ -460,7 +459,6 @@ void R_NewMap( void )
 		cl.worldmodel->leafs[i+1].efrags = NULL;
 
 	tr.skytexturenum = -1;
-	r_viewleaf = r_oldviewleaf = NULL;
 
 	// clearing texture chains
 	for( i = 0; i < cl.worldmodel->numtextures; i++ )

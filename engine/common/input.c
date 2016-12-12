@@ -105,8 +105,8 @@ static int Host_MapKey( int key )
 		case 0x0D: return K_KP_ENTER;
 		case 0x2F: return K_KP_SLASH;
 		case 0xAF: return K_KP_PLUS;
+		default: return result;
 		}
-		return result;
 	}
 }
 
@@ -290,7 +290,7 @@ void IN_DeactivateMouse( void )
 
 /*
 ================
-IN_Mouse
+IN_MouseMove
 ================
 */
 void IN_MouseMove( void )
@@ -331,12 +331,12 @@ void IN_MouseEvent( int mstate )
 	// perform button actions
 	for( i = 0; i < in_mouse_buttons; i++ )
 	{
-		if(( mstate & ( 1<<i )) && !( in_mouse_oldbuttonstate & ( 1<<i )))
+		if( FBitSet( mstate, BIT( i )) && !FBitSet( in_mouse_oldbuttonstate, BIT( i )))
 		{
 			Key_Event( K_MOUSE1 + i, true );
 		}
 
-		if(!( mstate & ( 1<<i )) && ( in_mouse_oldbuttonstate & ( 1<<i )))
+		if( !FBitSet( mstate, BIT( i )) && FBitSet( in_mouse_oldbuttonstate, BIT( i )))
 		{
 			Key_Event( K_MOUSE1 + i, false );
 		}
@@ -383,13 +383,13 @@ void Host_InputFrame( void )
 
 	Cbuf_Execute ();
 
-	if( host.state == HOST_RESTART )
-		host.state = HOST_FRAME; // restart is finished
-
 	if( host.type == HOST_DEDICATED )
 	{
-		// let the dedicated server some sleep
-		Sys_Sleep( 1 );
+		if( !FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
+		{
+			// let the dedicated server some sleep
+			Sys_Sleep( 1 );
+		}
 	}
 	else
 	{
@@ -435,7 +435,7 @@ IN_WndProc
 main window procedure
 ====================
 */
-long IN_WndProc( void *hWnd, uint uMsg, uint wParam, long lParam )
+LONG IN_WndProc( HWND hWnd, UINT uMsg, UINT wParam, LONG lParam )
 {
 	int	i, temp = 0;
 	qboolean	fActivate;
@@ -455,7 +455,8 @@ long IN_WndProc( void *hWnd, uint uMsg, uint wParam, long lParam )
 		IN_ActivateCursor();
 		break;
 	case WM_MOUSEWHEEL:
-		if( !in_mouseactive ) break;
+		if( !in_mouseactive )
+			break;
 		if(( short )HIWORD( wParam ) > 0 )
 		{
 			Key_Event( K_MWHEELUP, true );
@@ -478,17 +479,12 @@ long IN_WndProc( void *hWnd, uint uMsg, uint wParam, long lParam )
 	case WM_ACTIVATE:
 		if( host.state == HOST_SHUTDOWN )
 			break; // no need to activate
-		if( host.state != HOST_RESTART )
-		{
-			if( HIWORD( wParam ))
-				host.state = HOST_SLEEP;
-			else if( LOWORD( wParam ) == WA_INACTIVE )
-				host.state = HOST_NOFOCUS;
-			else host.state = HOST_FRAME;
-			fActivate = (host.state == HOST_FRAME) ? true : false;
-		}
-		else fActivate = true; // video sucessfully restarted
-
+		if( HIWORD( wParam ))
+			host.state = HOST_SLEEP;
+		else if( LOWORD( wParam ) == WA_INACTIVE )
+			host.state = HOST_NOFOCUS;
+		else host.state = HOST_FRAME;
+		fActivate = (host.state == HOST_FRAME) ? true : false;
 		wnd_caption = GetSystemMetrics( SM_CYCAPTION ) + WND_BORDER;
 
 		S_Activate( fActivate, host.hWnd );
@@ -500,7 +496,7 @@ long IN_WndProc( void *hWnd, uint uMsg, uint wParam, long lParam )
 			SetForegroundWindow( hWnd );
 			ShowWindow( hWnd, SW_RESTORE );
 		}
-		else if( Cvar_VariableInteger( "fullscreen" ) && host.state != HOST_RESTART )
+		else if( Cvar_VariableInteger( "fullscreen" ))
 		{
 			ShowWindow( hWnd, SW_MINIMIZE );
 		}

@@ -28,8 +28,6 @@ static byte fatpvs[MAX_MAP_LEAFS/8];
 static byte fatphs[MAX_MAP_LEAFS/8];
 static byte clientpvs[MAX_MAP_LEAFS/8];	// for find client in PVS
 static vec3_t viewPoint[MAX_CLIENTS];
-static byte *bitvector;
-static int fatbytes;
 
 // exports
 typedef void (__cdecl *LINK_ENTITY_FUNC)( entvars_t *pev );
@@ -218,35 +216,37 @@ Check visibility through client camera, portal camera, etc
 */
 qboolean SV_CheckClientVisiblity( sv_client_t *cl, const byte *mask )
 {
-	int	i, leafnum, clientnum;
-	float	*viewOrg = NULL;
+	int	i, clientnum;
+	vec3_t	vieworg;
+	mleaf_t	*leaf;
 
 	if( !mask ) return true; // full visibility
 
 	clientnum = cl - svs.clients;
-	viewOrg = viewPoint[clientnum];
+	VectorCopy( viewPoint[clientnum], vieworg );
 
 	// Invasion issues: wrong camera position received in ENGINE_SET_PVS
-	if( cl->pViewEntity && !VectorCompare( viewOrg, cl->pViewEntity->v.origin ))
-		viewOrg = cl->pViewEntity->v.origin;
+	if( cl->pViewEntity && !VectorCompare( vieworg, cl->pViewEntity->v.origin ))
+		VectorCopy( cl->pViewEntity->v.origin, vieworg );
 
-	// -1 is because pvs rows are 1 based, not 0 based like leafs
-	leafnum = Mod_PointLeafnum( viewOrg ) - 1;
-	if( leafnum == -1 || (mask[leafnum>>3] & (1<<( leafnum & 7 ))))
+	leaf = Mod_PointInLeaf( vieworg, sv.worldmodel->nodes );
+
+	if( CHECKVISBIT( mask, leaf->cluster ))
 		return true; // visible from player view or camera view
 
 	// now check all the portal cameras
-	for( i = 0; i < cl->num_cameras; i++ )
+	for( i = 0; i < cl->num_viewents; i++ )
 	{
-		edict_t *cam = cl->cameras[i];
+		edict_t	*view = cl->viewentity[i];
 
-		if( !SV_IsValidEdict( cam ))
+		if( !SV_IsValidEdict( view ))
 			continue;
 
-		leafnum = Mod_PointLeafnum( cam->v.origin ) - 1;
-		// g-cont. probably camera in bad leaf... allow to send message here?
-		if( leafnum == -1 || (mask[leafnum>>3] & (1<<( leafnum & 7 ))))
-			return true;
+		VectorAdd( view->v.origin, view->v.view_ofs, vieworg );
+		leaf = Mod_PointInLeaf( vieworg, sv.worldmodel->nodes );
+
+		if( CHECKVISBIT( mask, leaf->cluster ))
+			return true; // visible from portal camera view
 	}
 
 	// not visible from any viewpoint
@@ -263,10 +263,10 @@ then clears sv.multicast.
 MSG_ONE	send to one client (ent can't be NULL)
 MSG_ALL	same as broadcast (origin can be NULL)
 MSG_PVS	send to clients potentially visible from org
-MSG_PHS	send to clients potentially hearable from org
+MSG_PHS	send to clients potentially audible from org
 =================
 */
-qboolean SV_Send( int dest, const vec3_t origin, const edict_t *ent )
+qboolean SV_Send( int dest, const vec3_t origin, const edict_t *ent, qboolean usermessage, qboolean filter )
 {
 	byte		*mask = NULL;
 	int		j, numclients = sv_maxclients->integer;
@@ -274,7 +274,6 @@ qboolean SV_Send( int dest, const vec3_t origin, const edict_t *ent )
 	qboolean		reliable = false;
 	qboolean		specproxy = false;
 	int		numsends = 0;
-	mleaf_t		*leaf;
 
 	switch( dest )
 	{
@@ -282,8 +281,8 @@ qboolean SV_Send( int dest, const vec3_t origin, const edict_t *ent )
 		if( sv.state == ss_loading )
 		{
 			// copy to signon buffer
-			BF_WriteBits( &sv.signon, BF_GetData( &sv.multicast ), BF_GetNumBitsWritten( &sv.multicast ));
-			BF_Clear( &sv.multicast );
+			MSG_WriteBits( &sv.signon, MSG_GetData( &sv.multicast ), MSG_GetNumBitsWritten( &sv.multicast ));
+			MSG_Clear( &sv.multicast );
 			return true;
 		}
 		// intentional fallthrough (in-game MSG_INIT it's a MSG_ALL reliable)
@@ -298,16 +297,15 @@ qboolean SV_Send( int dest, const vec3_t origin, const edict_t *ent )
 		// intentional fallthrough
 	case MSG_PAS:
 		if( origin == NULL ) return false;
-		leaf = Mod_PointInLeaf( origin, sv.worldmodel->nodes );
-		mask = Mod_LeafPHS( leaf, sv.worldmodel );
+		Mod_FatPVS( origin, FATPHS_RADIUS, fatphs, world.fatbytes, false, false );
+		mask = fatphs; // using the FatPVS like a PHS
 		break;
 	case MSG_PVS_R:
 		reliable = true;
 		// intentional fallthrough
 	case MSG_PVS:
 		if( origin == NULL ) return false;
-		leaf = Mod_PointInLeaf( origin, sv.worldmodel->nodes );
-		mask = Mod_LeafPVS( leaf, sv.worldmodel );
+		mask = Mod_GetPVSForPoint( origin );
 		break;
 	case MSG_ONE:
 		reliable = true;
@@ -333,13 +331,18 @@ qboolean SV_Send( int dest, const vec3_t origin, const edict_t *ent )
 		if( cl->state == cs_free || cl->state == cs_zombie )
 			continue;
 
-		if( cl->state != cs_spawned && !reliable )
+		if( cl->state != cs_spawned && ( !reliable || usermessage ))
 			continue;
 
-		if( specproxy && !cl->hltv_proxy )
+		if( specproxy && !FBitSet( cl->flags, FCL_HLTV_PROXY ))
 			continue;
 
-		if( !cl->edict || cl->fakeclient )
+		if( !cl->edict || FBitSet( cl->flags, FCL_FAKECLIENT ))
+			continue;
+
+		// reject step sounds while predicting is enabled
+		// FIXME: make sure what this code doesn't cutoff something important!!!
+		if( filter && cl == svs.currentPlayer && FBitSet( svs.currentPlayer->flags, FCL_PREDICT_MOVEMENT ))
 			continue;
 
 		if( ent != NULL && ent->v.groupinfo && cl->edict->v.groupinfo )
@@ -351,15 +354,15 @@ qboolean SV_Send( int dest, const vec3_t origin, const edict_t *ent )
 		if( !SV_CheckClientVisiblity( cl, mask ))
 			continue;
 
-		if( specproxy ) BF_WriteBits( &sv.spectator_datagram, BF_GetData( &sv.multicast ), BF_GetNumBitsWritten( &sv.multicast ));
-		else if( reliable ) BF_WriteBits( &cl->netchan.message, BF_GetData( &sv.multicast ), BF_GetNumBitsWritten( &sv.multicast ));
-		else BF_WriteBits( &cl->datagram, BF_GetData( &sv.multicast ), BF_GetNumBitsWritten( &sv.multicast ));
+		if( specproxy ) MSG_WriteBits( &sv.spectator_datagram, MSG_GetData( &sv.multicast ), MSG_GetNumBitsWritten( &sv.multicast ));
+		else if( reliable ) MSG_WriteBits( &cl->netchan.message, MSG_GetData( &sv.multicast ), MSG_GetNumBitsWritten( &sv.multicast ));
+		else MSG_WriteBits( &cl->datagram, MSG_GetData( &sv.multicast ), MSG_GetNumBitsWritten( &sv.multicast ));
 		numsends++;
 	}
 
-	BF_Clear( &sv.multicast );
+	MSG_Clear( &sv.multicast );
 
-	return numsends;	// debug
+	return numsends; // just for debug
 }
 
 /*
@@ -400,18 +403,18 @@ void SV_CreateDecal( sizebuf_t *msg, const float *origin, int decalIndex, int en
 		return;
 
 	// this can happens if serialized map contain 4096 static decals...
-	if(( BF_GetNumBytesWritten( msg ) + 20 ) >= BF_GetMaxBytes( msg ))
+	if(( MSG_GetNumBytesWritten( msg ) + 20 ) >= MSG_GetMaxBytes( msg ))
 		return;
 
 	// static decals are posters, it's always reliable
-	BF_WriteByte( msg, svc_bspdecal );
-	BF_WriteVec3Coord( msg, origin );
-	BF_WriteWord( msg, decalIndex );
-	BF_WriteShort( msg, entityIndex );
+	MSG_WriteByte( msg, svc_bspdecal );
+	MSG_WriteVec3Coord( msg, origin );
+	MSG_WriteWord( msg, decalIndex );
+	MSG_WriteShort( msg, entityIndex );
 	if( entityIndex > 0 )
-		BF_WriteWord( msg, modelIndex );
-	BF_WriteByte( msg, flags );
-	BF_WriteWord( msg, scale * 4096 );
+		MSG_WriteWord( msg, modelIndex );
+	MSG_WriteByte( msg, flags );
+	MSG_WriteWord( msg, scale * 4096 );
 }
 
 /*
@@ -434,29 +437,29 @@ void SV_CreateStudioDecal( sizebuf_t *msg, const float *origin, const float *sta
 	ASSERT( start );
 
 	// this can happens if serialized map contain 4096 static decals...
-	if(( BF_GetNumBytesWritten( msg ) + 30 ) >= BF_GetMaxBytes( msg ))
+	if(( MSG_GetNumBytesWritten( msg ) + 30 ) >= MSG_GetMaxBytes( msg ))
 		return;
 
 	// static decals are posters, it's always reliable
-	BF_WriteByte( msg, svc_studiodecal );
-	BF_WriteVec3Coord( msg, origin );
-	BF_WriteVec3Coord( msg, start );
-	BF_WriteWord( msg, decalIndex );
-	BF_WriteWord( msg, entityIndex );
-	BF_WriteByte( msg, flags );
+	MSG_WriteByte( msg, svc_studiodecal );
+	MSG_WriteVec3Coord( msg, origin );
+	MSG_WriteVec3Coord( msg, start );
+	MSG_WriteWord( msg, decalIndex );
+	MSG_WriteWord( msg, entityIndex );
+	MSG_WriteByte( msg, flags );
 
 	// write model state
-	BF_WriteShort( msg, state->sequence );
-	BF_WriteShort( msg, state->frame );
-	BF_WriteByte( msg, state->blending[0] );
-	BF_WriteByte( msg, state->blending[1] );
-	BF_WriteByte( msg, state->controller[0] );
-	BF_WriteByte( msg, state->controller[1] );
-	BF_WriteByte( msg, state->controller[2] );
-	BF_WriteByte( msg, state->controller[3] );
-	BF_WriteWord( msg, modelIndex );
-	BF_WriteByte( msg, state->body );
-	BF_WriteByte( msg, state->skin );
+	MSG_WriteShort( msg, state->sequence );
+	MSG_WriteShort( msg, state->frame );
+	MSG_WriteByte( msg, state->blending[0] );
+	MSG_WriteByte( msg, state->blending[1] );
+	MSG_WriteByte( msg, state->controller[0] );
+	MSG_WriteByte( msg, state->controller[1] );
+	MSG_WriteByte( msg, state->controller[2] );
+	MSG_WriteByte( msg, state->controller[3] );
+	MSG_WriteWord( msg, modelIndex );
+	MSG_WriteByte( msg, state->body );
+	MSG_WriteByte( msg, state->skin );
 }
 
 /*
@@ -471,33 +474,33 @@ void SV_CreateStaticEntity( sizebuf_t *msg, sv_static_entity_t *ent )
 	int	index, i;
 
 	// this can happens if serialized map contain too many static entities...
-	if(( BF_GetNumBytesWritten( msg ) + 64 ) >= BF_GetMaxBytes( msg ))
+	if(( MSG_GetNumBytesWritten( msg ) + 64 ) >= MSG_GetMaxBytes( msg ))
 		return;
 
 	index = SV_ModelIndex( ent->model );
 
-	BF_WriteByte( msg, svc_spawnstatic );
-	BF_WriteShort(msg, index );
-	BF_WriteByte( msg, ent->sequence );
-	BF_WriteByte( msg, ent->frame );
-	BF_WriteWord( msg, ent->colormap );
-	BF_WriteByte( msg, ent->skin );
+	MSG_WriteByte( msg, svc_spawnstatic );
+	MSG_WriteShort(msg, index );
+	MSG_WriteByte( msg, ent->sequence );
+	MSG_WriteByte( msg, ent->frame );
+	MSG_WriteWord( msg, ent->colormap );
+	MSG_WriteByte( msg, ent->skin );
 
 	for( i = 0; i < 3; i++ )
 	{
-		BF_WriteCoord( msg, ent->origin[i] );
-		BF_WriteBitAngle( msg, ent->angles[i], 16 );
+		MSG_WriteCoord( msg, ent->origin[i] );
+		MSG_WriteBitAngle( msg, ent->angles[i], 16 );
 	}
 
-	BF_WriteByte( msg, ent->rendermode );
+	MSG_WriteByte( msg, ent->rendermode );
 
 	if( ent->rendermode != kRenderNormal )
 	{
-		BF_WriteByte( msg, ent->renderamt );
-		BF_WriteByte( msg, ent->rendercolor.r );
-		BF_WriteByte( msg, ent->rendercolor.g );
-		BF_WriteByte( msg, ent->rendercolor.b );
-		BF_WriteByte( msg, ent->renderfx );
+		MSG_WriteByte( msg, ent->renderamt );
+		MSG_WriteByte( msg, ent->rendercolor.r );
+		MSG_WriteByte( msg, ent->rendercolor.g );
+		MSG_WriteByte( msg, ent->rendercolor.b );
+		MSG_WriteByte( msg, ent->renderfx );
 	}
 }
 
@@ -525,67 +528,15 @@ void SV_RestartStaticEnts( void )
 }
 
 /*
-=============================================================================
-
-The PVS must include a small area around the client to allow head bobbing
-or other small motion on the client side.  Otherwise, a bob might cause an
-entity that should be visible to not show up, especially when the bob
-crosses a waterline.
-
-=============================================================================
-*/
-static void SV_AddToFatPVS( const vec3_t org, int type, mnode_t *node )
-{
-	byte	*vis;
-	float	d;
-
-	while( 1 )
-	{
-		// if this is a leaf, accumulate the pvs bits
-		if( node->contents < 0 )
-		{
-			if( node->contents != CONTENTS_SOLID )
-			{
-				mleaf_t	*leaf;
-				int	i;
-
-				leaf = (mleaf_t *)node;			
-
-				if( type == DVIS_PVS )
-					vis = Mod_LeafPVS( leaf, sv.worldmodel );
-				else if( type == DVIS_PHS )
-					vis = Mod_LeafPHS( leaf, sv.worldmodel );
-				else vis = Mod_DecompressVis( NULL ); // get full visibility
-
-				for( i = 0; i < fatbytes; i++ )
-					bitvector[i] |= vis[i];
-			}
-			return;
-		}
-	
-		d = PlaneDiff( org, node->plane );
-		if( d > 8.0f ) node = node->children[0];
-		else if( d < -8.0f ) node = node->children[1];
-		else
-		{
-			// go down both
-			SV_AddToFatPVS( org, type, node->children[0] );
-			node = node->children[1];
-		}
-	}
-}
-
-/*
 ==============
 SV_BoxInPVS
 
 check brush boxes in fat pvs
 ==============
 */
-static qboolean SV_BoxInPVS( const vec3_t org, const vec3_t absmin, const vec3_t absmax )
+qboolean SV_BoxInPVS( const vec3_t org, const vec3_t absmin, const vec3_t absmax )
 {
-	mleaf_t	*leaf = Mod_PointInLeaf( org, sv.worldmodel->nodes );
-	byte	*vis = Mod_LeafPVS( leaf, sv.worldmodel );
+	byte	*vis = Mod_GetPVSForPoint( org );
 
 	if( !Mod_BoxVisible( absmin, absmax, vis ))
 		return false;
@@ -609,7 +560,7 @@ void SV_WriteEntityPatch( const char *filename )
 	f = FS_Open( va( "maps/%s.bsp", filename ), "rb", false );
 	if( !f ) return;
 
-	Q_memset( buf, 0, MAX_SYSPATH );
+	memset( buf, 0, MAX_SYSPATH );
 	FS_Read( f, buf, MAX_SYSPATH );
 	ver = *(uint *)buf;
                               
@@ -676,7 +627,7 @@ char *SV_ReadEntityScript( const char *filename, int *flags )
 
 	*flags |= MAP_IS_EXIST;
 
-	Q_memset( buf, 0, MAX_SYSPATH );
+	memset( buf, 0, MAX_SYSPATH );
 	FS_Read( f, buf, MAX_SYSPATH );
 	ver = *(uint *)buf;
                               
@@ -820,7 +771,7 @@ void SV_InitEdict( edict_t *pEdict )
 	ASSERT( pEdict );
 
 	SV_FreePrivateData( pEdict );
-	Q_memset( &pEdict->v, 0, sizeof( entvars_t ));
+	memset( &pEdict->v, 0, sizeof( entvars_t ));
 
 	// g-cont. trying to setup controllers here...
 	pEdict->v.controller[0] = 0x7F;
@@ -834,7 +785,7 @@ void SV_InitEdict( edict_t *pEdict )
 
 void SV_FreeEdict( edict_t *pEdict )
 {
-	ASSERT( pEdict );
+	ASSERT( pEdict != NULL );
 	ASSERT( pEdict->free == false );
 
 	// unlink from world
@@ -961,20 +912,20 @@ void SV_PlaybackReliableEvent( sizebuf_t *msg, word eventindex, float delay, eve
 {
 	event_args_t nullargs;
 
-	Q_memset( &nullargs, 0, sizeof( nullargs ));
+	memset( &nullargs, 0, sizeof( nullargs ));
 
-	BF_WriteByte( msg, svc_event_reliable );
+	MSG_WriteByte( msg, svc_event_reliable );
 
 	// send event index
-	BF_WriteUBitLong( msg, eventindex, MAX_EVENT_BITS );
+	MSG_WriteUBitLong( msg, eventindex, MAX_EVENT_BITS );
 
 	if( delay )
 	{
 		// send event delay
-		BF_WriteOneBit( msg, 1 );
-		BF_WriteWord( msg, Q_rint( delay * 100.0f ));
+		MSG_WriteOneBit( msg, 1 );
+		MSG_WriteWord( msg, Q_rint( delay * 100.0f ));
 	}
-	else BF_WriteOneBit( msg, 0 );
+	else MSG_WriteOneBit( msg, 0 );
 
 	// reliable events not use delta-compression just null-compression
 	MSG_WriteDeltaEvent( msg, &nullargs, args );
@@ -1033,7 +984,10 @@ void SV_BaselineForEntity( edict_t *pEdict )
 	float		*mins, *maxs;
 	sv_client_t	*cl;
 
-	if( pEdict->v.flags & FL_CLIENT && ( cl = SV_ClientFromEdict( pEdict, false )))
+	if( !SV_IsValidEdict( pEdict ))
+		return;
+
+	if( FBitSet( pEdict->v.flags, FL_CLIENT ) && ( cl = SV_ClientFromEdict( pEdict, false )))
 	{
 		usehull = ( pEdict->v.flags & FL_DUCKING ) ? true : false;
 		modelindex = cl->modelindex ? cl->modelindex : pEdict->v.modelindex;
@@ -1056,7 +1010,7 @@ void SV_BaselineForEntity( edict_t *pEdict )
 	}
 
 	// take current state as baseline
-	Q_memset( &baseline, 0, sizeof( baseline )); 
+	memset( &baseline, 0, sizeof( baseline )); 
 	baseline.number = NUM_FOR_EDICT( pEdict );
 
 	svgame.dllFuncs.pfnCreateBaseline( player, baseline.number, &baseline, pEdict, modelindex, mins, maxs );
@@ -1422,7 +1376,7 @@ edict_t *pfnFindEntityInSphere( edict_t *pStartEdict, const float *org, float fl
 		return ent;
 	}
 
-	return NULL;
+	return svgame.edicts;
 }
 
 /*
@@ -1435,31 +1389,27 @@ build the new client PVS
 int SV_CheckClientPVS( int check, qboolean bMergePVS )
 {
 	byte		*pvs;
-	edict_t		*ent;
-	mleaf_t		*leaf;
-	vec3_t		view;
+	vec3_t		vieworg;
 	sv_client_t	*cl;
 	int		i, j, k;
-	int		pvsbytes;
+	edict_t		*ent = NULL;
 
 	// cycle to the next one
 	check = bound( 1, check, svgame.globals->maxClients );
 
 	if( check == svgame.globals->maxClients )
-		i = 1;
+		i = 1; // reset cycle
 	else i = check + 1;
 
 	for( ;; i++ )
 	{
-		if( i == svgame.globals->maxClients + 1 )
+		if( i == ( svgame.globals->maxClients + 1 ))
 			i = 1;
 
 		ent = EDICT_NUM( i );
+		if( i == check ) break; // didn't find anything else
 
-		if( i == check )
-			break; // didn't find anything else
-
-		if( ent->free || !ent->pvPrivateData || ( ent->v.flags & FL_NOTARGET ))
+		if( ent->free || !ent->pvPrivateData || FBitSet( ent->v.flags, FL_NOTARGET ))
 			continue;
 
 		// anything that is a client, or has a client as an enemy
@@ -1467,31 +1417,28 @@ int SV_CheckClientPVS( int check, qboolean bMergePVS )
 	}
 
 	cl = SV_ClientFromEdict( ent, true );
-	pvsbytes = (sv.worldmodel->numleafs + 7) >> 3;
+	memset( clientpvs, 0xFF, world.visbytes );
 
 	// get the PVS for the entity
-	VectorAdd( ent->v.origin, ent->v.view_ofs, view );
-	leaf = Mod_PointInLeaf( view, sv.worldmodel->nodes );
-	pvs = Mod_LeafPVS( leaf, sv.worldmodel );
-	Q_memcpy( clientpvs, pvs, pvsbytes );
+	VectorAdd( ent->v.origin, ent->v.view_ofs, vieworg );
+	pvs = Mod_GetPVSForPoint( vieworg );
+	if( pvs ) memcpy( clientpvs, pvs, world.visbytes );
 
 	// transition in progress
 	if( !cl ) return i;
 
-	// now merge PVS with all portal cameras
-	for( k = 0; k < cl->num_cameras && bMergePVS; k++ )
+	// now merge PVS with all the portal cameras
+	for( k = 0; k < cl->num_viewents && bMergePVS; k++ )
 	{
-		edict_t *cam = cl->cameras[k];
+		edict_t	*view = cl->viewentity[k];
 
-		if( !SV_IsValidEdict( cam ))
+		if( !SV_IsValidEdict( view ))
 			continue;
 
-		VectorAdd( cam->v.origin, cam->v.view_ofs, view );
-		leaf = Mod_PointInLeaf( view, sv.worldmodel->nodes );
-		if( leaf == NULL ) continue; // skip outside cameras
-		pvs = Mod_LeafPVS( leaf, sv.worldmodel );
+		VectorAdd( view->v.origin, view->v.view_ofs, vieworg );
+		pvs = Mod_GetPVSForPoint( vieworg );
 
-		for( j = 0; j < pvsbytes; j++ )
+		for( j = 0; j < world.visbytes && pvs; j++ )
 			clientpvs[j] |= pvs[j];
 	}
 
@@ -1511,7 +1458,7 @@ edict_t* pfnFindClientInPVS( edict_t *pEdict )
 	float	delta;
 	model_t	*mod;
 	qboolean	bMergePVS;
-	int	i;
+	mleaf_t	*leaf;
 
 	if( !SV_IsValidEdict( pEdict ))
 		return svgame.edicts;
@@ -1519,7 +1466,7 @@ edict_t* pfnFindClientInPVS( edict_t *pEdict )
 	delta = ( sv.time - sv.lastchecktime );
 
 	// don't merge visibility for portal entity, only for monsters
-	bMergePVS = (pEdict->v.flags & FL_MONSTER) ? true : false;
+	bMergePVS = FBitSet( pEdict->v.flags, FL_MONSTER ) ? true : false;
 
 	// find a new check if on a new frame
 	if( delta < 0.0f || delta >= 0.1f )
@@ -1530,6 +1477,7 @@ edict_t* pfnFindClientInPVS( edict_t *pEdict )
 
 	// return check if it might be visible	
 	pClient = EDICT_NUM( sv.lastcheck );
+
 	if( !SV_ClientFromEdict( pClient, true ))
 		return svgame.edicts;
 
@@ -1537,7 +1485,7 @@ edict_t* pfnFindClientInPVS( edict_t *pEdict )
 
 	// portals & monitors
 	// NOTE: this specific break "radiaton tick" in normal half-life. use only as feature
-	if(( host.features & ENGINE_TRANSFORM_TRACE_AABB ) && mod && mod->type == mod_brush && !( mod->flags & MODEL_HAS_ORIGIN ))
+	if( FBitSet( host.features, ENGINE_TRANSFORM_TRACE_AABB ) && mod && mod->type == mod_brush && !FBitSet( mod->flags, MODEL_HAS_ORIGIN ))
 	{
 		// handle PVS origin for bmodels
 		VectorAverage( pEdict->v.mins, pEdict->v.maxs, view );
@@ -1551,13 +1499,12 @@ edict_t* pfnFindClientInPVS( edict_t *pEdict )
 	if( pEdict->v.effects & EF_INVLIGHT )
 		view[2] -= 1.0f; // HACKHACK for barnacle
 
-	i = Mod_PointLeafnum( view ) - 1;
+	leaf = Mod_PointInLeaf( view, sv.worldmodel->nodes );
 
-	if( i < 0 || !((clientpvs[i>>3]) & (1 << (i & 7))))
-		return svgame.edicts;
+	if( CHECKVISBIT( clientpvs, leaf->cluster ))
+		return pClient; // client which currently in PVS
 
-	// client which currently in PVS
-	return pClient;
+	return svgame.edicts;
 }
 
 /*
@@ -1893,19 +1840,19 @@ int SV_BuildSoundMsg( edict_t *ent, int chan, const char *samp, int vol, float a
 	// not sending (because this is out of range)
 	flags &= ~SND_SPAWNING;
 
-	BF_WriteByte( &sv.multicast, svc_sound );
-	BF_WriteWord( &sv.multicast, flags );
+	MSG_WriteByte( &sv.multicast, svc_sound );
+	MSG_WriteWord( &sv.multicast, flags );
 	if( flags & SND_LARGE_INDEX )
-		BF_WriteWord( &sv.multicast, sound_idx );
-	else BF_WriteByte( &sv.multicast, sound_idx );
-	BF_WriteByte( &sv.multicast, chan );
+		MSG_WriteWord( &sv.multicast, sound_idx );
+	else MSG_WriteByte( &sv.multicast, sound_idx );
+	MSG_WriteByte( &sv.multicast, chan );
 
-	if( flags & SND_VOLUME ) BF_WriteByte( &sv.multicast, vol );
-	if( flags & SND_ATTENUATION ) BF_WriteByte( &sv.multicast, attn * 64 );
-	if( flags & SND_PITCH ) BF_WriteByte( &sv.multicast, pitch );
+	if( flags & SND_VOLUME ) MSG_WriteByte( &sv.multicast, vol );
+	if( flags & SND_ATTENUATION ) MSG_WriteByte( &sv.multicast, attn * 64 );
+	if( flags & SND_PITCH ) MSG_WriteByte( &sv.multicast, pitch );
 
-	BF_WriteWord( &sv.multicast, entityIndex );
-	BF_WriteVec3Coord( &sv.multicast, pos );
+	MSG_WriteWord( &sv.multicast, entityIndex );
+	MSG_WriteVec3Coord( &sv.multicast, pos );
 
 	return 1;
 }
@@ -1920,6 +1867,7 @@ void SV_StartSound( edict_t *ent, int chan, const char *sample, float vol, float
 {
 	int 	sound_idx;
 	int	entityIndex;
+	qboolean	filter = false;
 	int	msg_dest;
 	vec3_t	origin;
 
@@ -1950,7 +1898,7 @@ void SV_StartSound( edict_t *ent, int chan, const char *sample, float vol, float
 	VectorAverage( ent->v.mins, ent->v.maxs, origin );
 	VectorAdd( origin, ent->v.origin, origin );
 
-	if( flags & SND_SPAWNING )
+	if( FBitSet( flags, SND_SPAWNING ))
 		msg_dest = MSG_INIT;
 	else if( chan == CHAN_STATIC )
 		msg_dest = MSG_ALL;
@@ -1958,6 +1906,7 @@ void SV_StartSound( edict_t *ent, int chan, const char *sample, float vol, float
 
 	// always sending stop sound command
 	if( flags & SND_STOP ) msg_dest = MSG_ALL;
+	if( flags & SND_FILTER_CLIENT ) filter = true;
 
 	if( sample[0] == '!' && Q_isdigit( sample + 1 ))
 	{
@@ -1983,23 +1932,24 @@ void SV_StartSound( edict_t *ent, int chan, const char *sample, float vol, float
 	if( sound_idx > 255 ) flags |= SND_LARGE_INDEX;
 
 	// not sending (because this is out of range)
+	flags &= ~SND_FILTER_CLIENT;
 	flags &= ~SND_SPAWNING;
 
-	BF_WriteByte( &sv.multicast, svc_sound );
-	BF_WriteWord( &sv.multicast, flags );
+	MSG_WriteByte( &sv.multicast, svc_sound );
+	MSG_WriteWord( &sv.multicast, flags );
 	if( flags & SND_LARGE_INDEX )
-		BF_WriteWord( &sv.multicast, sound_idx );
-	else BF_WriteByte( &sv.multicast, sound_idx );
-	BF_WriteByte( &sv.multicast, chan );
+		MSG_WriteWord( &sv.multicast, sound_idx );
+	else MSG_WriteByte( &sv.multicast, sound_idx );
+	MSG_WriteByte( &sv.multicast, chan );
 
-	if( flags & SND_VOLUME ) BF_WriteByte( &sv.multicast, vol * 255 );
-	if( flags & SND_ATTENUATION ) BF_WriteByte( &sv.multicast, attn * 64 );
-	if( flags & SND_PITCH ) BF_WriteByte( &sv.multicast, pitch );
+	if( flags & SND_VOLUME ) MSG_WriteByte( &sv.multicast, vol * 255 );
+	if( flags & SND_ATTENUATION ) MSG_WriteByte( &sv.multicast, attn * 64 );
+	if( flags & SND_PITCH ) MSG_WriteByte( &sv.multicast, pitch );
 
-	BF_WriteWord( &sv.multicast, entityIndex );
-	BF_WriteVec3Coord( &sv.multicast, origin );
+	MSG_WriteWord( &sv.multicast, entityIndex );
+	MSG_WriteVec3Coord( &sv.multicast, origin );
 
-	SV_Send( msg_dest, origin, NULL );
+	SV_Send( msg_dest, origin, NULL, false, filter );
 }
 
 /*
@@ -2064,22 +2014,22 @@ void pfnEmitAmbientSound( edict_t *ent, float *pos, const char *sample, float vo
 	// not sending (because this is out of range)
 	flags &= ~SND_SPAWNING;
 
-	BF_WriteByte( &sv.multicast, svc_ambientsound );
-	BF_WriteWord( &sv.multicast, flags );
+	MSG_WriteByte( &sv.multicast, svc_ambientsound );
+	MSG_WriteWord( &sv.multicast, flags );
 	if( flags & SND_LARGE_INDEX )
-		BF_WriteWord( &sv.multicast, sound_idx );
-	else BF_WriteByte( &sv.multicast, sound_idx );
-	BF_WriteByte( &sv.multicast, CHAN_STATIC );
+		MSG_WriteWord( &sv.multicast, sound_idx );
+	else MSG_WriteByte( &sv.multicast, sound_idx );
+	MSG_WriteByte( &sv.multicast, CHAN_STATIC );
 
-	if( flags & SND_VOLUME ) BF_WriteByte( &sv.multicast, vol * 255 );
-	if( flags & SND_ATTENUATION ) BF_WriteByte( &sv.multicast, attn * 64 );
-	if( flags & SND_PITCH ) BF_WriteByte( &sv.multicast, pitch );
+	if( flags & SND_VOLUME ) MSG_WriteByte( &sv.multicast, vol * 255 );
+	if( flags & SND_ATTENUATION ) MSG_WriteByte( &sv.multicast, attn * 64 );
+	if( flags & SND_PITCH ) MSG_WriteByte( &sv.multicast, pitch );
 
 	// plays from fixed position
-	BF_WriteWord( &sv.multicast, number );
-	BF_WriteVec3Coord( &sv.multicast, pos );
+	MSG_WriteWord( &sv.multicast, number );
+	MSG_WriteVec3Coord( &sv.multicast, pos );
 
-	SV_Send( msg_dest, pos, NULL );
+	SV_Send( msg_dest, pos, NULL, false, false );
 }
 
 /*
@@ -2088,11 +2038,11 @@ SV_StartMusic
 
 =================
 */
-void SV_StartMusic( const char *curtrack, const char *looptrack, fs_offset_t position )
+void SV_StartMusic( const char *curtrack, const char *looptrack, long position )
 {
-	BF_WriteByte( &sv.multicast, svc_stufftext );
-	BF_WriteString( &sv.multicast, va( "music \"%s\" \"%s\" %i\n", curtrack, looptrack, position ));
-	SV_Send( MSG_ALL, NULL, NULL );
+	MSG_WriteByte( &sv.multicast, svc_stufftext );
+	MSG_WriteString( &sv.multicast, va( "music \"%s\" \"%s\" %i\n", curtrack, looptrack, position ));
+	SV_Send( MSG_ALL, NULL, NULL, false, false );
 }
 
 /*
@@ -2172,6 +2122,9 @@ static int pfnTraceMonsterHull( edict_t *pEdict, const float *v1, const float *v
 		MsgDev( D_WARN, "SV_TraceMonsterHull: invalid entity %s\n", SV_ClassName( pEdict ));
 		return 1;
 	}
+
+	if( pEdict != pentToSkip )
+		MsgDev( D_ERROR, "TRACE_MONSTER_HULL: pEdict != pentToSkip\n" ); 
 
 	trace = SV_Move( v1, pEdict->v.mins, pEdict->v.maxs, v2, fNoMonsters, pentToSkip );
 	if( ptr ) SV_ConvertTrace( ptr, &trace );
@@ -2341,7 +2294,7 @@ pfnClientCommand
 */
 void pfnClientCommand( edict_t* pEdict, char* szFmt, ... )
 {
-	sv_client_t	*client;
+	sv_client_t	*cl;
 	string		buffer;
 	va_list		args;
 
@@ -2351,13 +2304,13 @@ void pfnClientCommand( edict_t* pEdict, char* szFmt, ... )
 		return;
 	}
 
-	if(( client = SV_ClientFromEdict( pEdict, true )) == NULL )
+	if(( cl = SV_ClientFromEdict( pEdict, true )) == NULL )
 	{
 		MsgDev( D_ERROR, "SV_ClientCommand: client is not spawned!\n" );
 		return;
 	}
 
-	if( client->fakeclient )
+	if( FBitSet( cl->flags, FCL_FAKECLIENT ))
 		return;
 
 	va_start( args, szFmt );
@@ -2366,8 +2319,8 @@ void pfnClientCommand( edict_t* pEdict, char* szFmt, ... )
 
 	if( SV_IsValidCmd( buffer ))
 	{
-		BF_WriteByte( &client->netchan.message, svc_stufftext );
-		BF_WriteString( &client->netchan.message, buffer );
+		MSG_WriteByte( &cl->netchan.message, svc_stufftext );
+		MSG_WriteString( &cl->netchan.message, buffer );
 	}
 	else MsgDev( D_ERROR, "Tried to stuff bad command %s\n", buffer );
 }
@@ -2390,18 +2343,20 @@ void pfnParticleEffect( const float *org, const float *dir, float color, float c
 		return;
 	}
 
-	BF_WriteByte( &sv.datagram, svc_particle );
-	BF_WriteVec3Coord( &sv.datagram, org );
+	MSG_WriteByte( &sv.multicast, svc_particle );
+	MSG_WriteVec3Coord( &sv.multicast, org );
 
 	for( i = 0; i < 3; i++ )
 	{
 		v = bound( -128, dir[i] * 16.0f, 127 );
-		BF_WriteChar( &sv.datagram, v );
+		MSG_WriteChar( &sv.multicast, v );
 	}
 
-	BF_WriteByte( &sv.datagram, count );
-	BF_WriteByte( &sv.datagram, color );
-	BF_WriteByte( &sv.datagram, 0 );
+	MSG_WriteByte( &sv.multicast, count );
+	MSG_WriteByte( &sv.multicast, color );
+	MSG_WriteByte( &sv.multicast, 0 );
+
+	SV_Send( MSG_PVS, org, NULL, false, false );
 }
 
 /*
@@ -2503,7 +2458,7 @@ void pfnMessageBegin( int msg_dest, int msg_num, const float *pOrigin, edict_t *
 		svgame.msg_index = i;
 	}
 
-	BF_WriteByte( &sv.multicast, msg_num );
+	MSG_WriteByte( &sv.multicast, msg_num );
 
 	// save message destination
 	if( pOrigin ) VectorCopy( pOrigin, svgame.msg_org );
@@ -2512,8 +2467,8 @@ void pfnMessageBegin( int msg_dest, int msg_num, const float *pOrigin, edict_t *
 	if( iSize == -1 )
 	{
 		// variable sized messages sent size as first byte
-		svgame.msg_size_index = BF_GetNumBytesWritten( &sv.multicast );
-		BF_WriteByte( &sv.multicast, 0 ); // reserve space for now
+		svgame.msg_size_index = MSG_GetNumBytesWritten( &sv.multicast );
+		MSG_WriteByte( &sv.multicast, 0 ); // reserve space for now
 	}
 	else svgame.msg_size_index = -1; // message has constant size
 
@@ -2540,7 +2495,7 @@ void pfnMessageEnd( void )
 	// HACKHACK: clearing HudText in background mode
 	if( sv.background && svgame.msg_index >= 0 && svgame.msg[svgame.msg_index].number == svgame.gmsgHudText )
 	{
-		BF_Clear( &sv.multicast );
+		MSG_Clear( &sv.multicast );
 		return;
 	}
 
@@ -2553,13 +2508,13 @@ void pfnMessageEnd( void )
 			if( svgame.msg_realsize > 255 )
 			{
 				MsgDev( D_ERROR, "SV_Message: %s too long (more than 255 bytes)\n", name );
-				BF_Clear( &sv.multicast );
+				MSG_Clear( &sv.multicast );
 				return;
 			}
 			else if( svgame.msg_realsize < 0 )
 			{
 				MsgDev( D_ERROR, "SV_Message: %s writes NULL message\n", name );
-				BF_Clear( &sv.multicast );
+				MSG_Clear( &sv.multicast );
 				return;
 			}
 		}
@@ -2575,7 +2530,7 @@ void pfnMessageEnd( void )
 		if( expsize != realsize )
 		{
 			MsgDev( D_ERROR, "SV_Message: %s expected %i bytes, it written %i. Ignored.\n", name, expsize, realsize );
-			BF_Clear( &sv.multicast );
+			MSG_Clear( &sv.multicast );
 			return;
 		}
 	}
@@ -2585,13 +2540,13 @@ void pfnMessageEnd( void )
 		if( svgame.msg_realsize > 255 )
 		{
 			MsgDev( D_ERROR, "SV_Message: %s too long (more than 255 bytes)\n", name );
-			BF_Clear( &sv.multicast );
+			MSG_Clear( &sv.multicast );
 			return;
 		}
 		else if( svgame.msg_realsize < 0 )
 		{
 			MsgDev( D_ERROR, "SV_Message: %s writes NULL message\n", name );
-			BF_Clear( &sv.multicast );
+			MSG_Clear( &sv.multicast );
 			return;
 		}
 
@@ -2601,7 +2556,7 @@ void pfnMessageEnd( void )
 	{
 		// this should never happen
 		MsgDev( D_ERROR, "SV_Message: %s have encountered error\n", name );
-		BF_Clear( &sv.multicast );
+		MSG_Clear( &sv.multicast );
 		return;
 	}
 
@@ -2609,15 +2564,15 @@ void pfnMessageEnd( void )
 	{
 		// oldstyle message for svc_studiodecal has missed four additional bytes:
 		// modelIndex, skin and body. Write it here for backward compatibility
-		BF_WriteWord( &sv.multicast, 0 );
-		BF_WriteByte( &sv.multicast, 0 );
-		BF_WriteByte( &sv.multicast, 0 );
+		MSG_WriteWord( &sv.multicast, 0 );
+		MSG_WriteByte( &sv.multicast, 0 );
+		MSG_WriteByte( &sv.multicast, 0 );
 	}
 
 	if( !VectorIsNull( svgame.msg_org )) org = svgame.msg_org;
 	svgame.msg_dest = bound( MSG_BROADCAST, svgame.msg_dest, MSG_SPEC );
 
-	SV_Send( svgame.msg_dest, org, svgame.msg_ent );
+	SV_Send( svgame.msg_dest, org, svgame.msg_ent, true, false );
 }
 
 /*
@@ -2629,7 +2584,7 @@ pfnWriteByte
 void pfnWriteByte( int iValue )
 {
 	if( iValue == -1 ) iValue = 0xFF; // convert char to byte 
-	BF_WriteByte( &sv.multicast, (byte)iValue );
+	MSG_WriteByte( &sv.multicast, (byte)iValue );
 	svgame.msg_realsize++;
 }
 
@@ -2641,7 +2596,7 @@ pfnWriteChar
 */
 void pfnWriteChar( int iValue )
 {
-	BF_WriteChar( &sv.multicast, (char)iValue );
+	MSG_WriteChar( &sv.multicast, (char)iValue );
 	svgame.msg_realsize++;
 }
 
@@ -2653,7 +2608,7 @@ pfnWriteShort
 */
 void pfnWriteShort( int iValue )
 {
-	BF_WriteShort( &sv.multicast, (short)iValue );
+	MSG_WriteShort( &sv.multicast, (short)iValue );
 	svgame.msg_realsize += 2;
 }
 
@@ -2665,7 +2620,7 @@ pfnWriteLong
 */
 void pfnWriteLong( int iValue )
 {
-	BF_WriteLong( &sv.multicast, iValue );
+	MSG_WriteLong( &sv.multicast, iValue );
 	svgame.msg_realsize += 4;
 }
 
@@ -2680,7 +2635,7 @@ void pfnWriteAngle( float flValue )
 {
 	int	iAngle = ((int)(( flValue ) * 256 / 360) & 255);
 
-	BF_WriteChar( &sv.multicast, iAngle );
+	MSG_WriteChar( &sv.multicast, iAngle );
 	svgame.msg_realsize += 1;
 }
 
@@ -2692,8 +2647,20 @@ pfnWriteCoord
 */
 void pfnWriteCoord( float flValue )
 {
-	BF_WriteCoord( &sv.multicast, flValue );
+	MSG_WriteCoord( &sv.multicast, flValue );
 	svgame.msg_realsize += 2;
+}
+
+/*
+=============
+pfnWriteBytes
+
+=============
+*/
+void pfnWriteBytes( const byte *bytes, int count )
+{
+	MSG_WriteBytes( &sv.multicast, bytes, count );
+	svgame.msg_realsize += count;
 }
 
 /*
@@ -2711,7 +2678,7 @@ void pfnWriteString( const char *src )
 	if( len >= rem )
 	{
 		MsgDev( D_ERROR, "pfnWriteString: exceeds %i symbols\n", rem );
-		BF_WriteChar( &sv.multicast, 0 );
+		MSG_WriteChar( &sv.multicast, 0 );
 		svgame.msg_realsize += 1; 
 		return;
 	}
@@ -2745,7 +2712,7 @@ void pfnWriteString( const char *src )
 	}
 
 	*dst = '\0'; // string end (not included in count)
-	BF_WriteString( &sv.multicast, string );
+	MSG_WriteString( &sv.multicast, string );
 
 	// NOTE: some messages with constant string length can be marked as known sized
 	svgame.msg_realsize += len;
@@ -2760,8 +2727,8 @@ pfnWriteEntity
 void pfnWriteEntity( int iValue )
 {
 	if( iValue < 0 || iValue >= svgame.numEntities )
-		Host_Error( "BF_WriteEntity: invalid entnumber %i\n", iValue );
-	BF_WriteShort( &sv.multicast, (short)iValue );
+		Host_Error( "MSG_WriteEntity: invalid entnumber %i\n", iValue );
+	MSG_WriteShort( &sv.multicast, (short)iValue );
 	svgame.msg_realsize += 2;
 }
 
@@ -2786,7 +2753,7 @@ static void pfnAlertMessage( ALERT_TYPE level, char *szFmt, ... )
 			return;
 		break;
 	case at_aiconsole:
-		if( host.developer < D_AICONSOLE )
+		if( host.developer < D_REPORT )
 			return;
 		break;
 	case at_warning:
@@ -2821,7 +2788,7 @@ static void pfnAlertMessage( ALERT_TYPE level, char *szFmt, ... )
 =============
 pfnEngineFprintf
 
-legacy. probably was a part of early save\restore system
+legacy. probably was a part of early version of save\restore system
 =============
 */
 static void pfnEngineFprintf( FILE *pfile, char *szFmt, ... )
@@ -3111,11 +3078,11 @@ int pfnRegUserMsg( const char *pszName, int iSize )
 	if( sv.state == ss_active )
 	{
 		// tell the client about new user message
-		BF_WriteByte( &sv.multicast, svc_usermessage );
-		BF_WriteByte( &sv.multicast, svgame.msg[i].number );
-		BF_WriteByte( &sv.multicast, (byte)iSize );
-		BF_WriteString( &sv.multicast, svgame.msg[i].name );
-		SV_Send( MSG_ALL, NULL, NULL );
+		MSG_WriteByte( &sv.multicast, svc_usermessage );
+		MSG_WriteByte( &sv.multicast, svgame.msg[i].number );
+		MSG_WriteByte( &sv.multicast, (byte)iSize );
+		MSG_WriteString( &sv.multicast, svgame.msg[i].name );
+		SV_Send( MSG_ALL, NULL, NULL, false, false );
 	}
 
 	return svgame.msg[i].number;
@@ -3185,7 +3152,7 @@ void pfnClientPrintf( edict_t* pEdict, PRINT_TYPE ptype, const char *szMsg )
 	if( sv.state != ss_active )
 	{
 		// send message into console during loading
-		MsgDev( D_INFO, szMsg );
+		MsgDev( D_INFO, "%s\n", szMsg );
 		return;
 	}
 
@@ -3198,17 +3165,20 @@ void pfnClientPrintf( edict_t* pEdict, PRINT_TYPE ptype, const char *szMsg )
 	switch( ptype )
 	{
 	case print_console:
-		if( client->fakeclient ) MsgDev( D_INFO, szMsg );
+		if( FBitSet( client->flags, FCL_FAKECLIENT ))
+			MsgDev( D_INFO, "%s", szMsg );
 		else SV_ClientPrintf( client, PRINT_HIGH, "%s", szMsg );
 		break;
 	case print_chat:
-		if( client->fakeclient ) return;
+		if( FBitSet( client->flags, FCL_FAKECLIENT ))
+			return;
 		SV_ClientPrintf( client, PRINT_CHAT, "%s", szMsg );
 		break;
 	case print_center:
-		if( client->fakeclient ) return;
-		BF_WriteByte( &client->netchan.message, svc_centerprint );
-		BF_WriteString( &client->netchan.message, szMsg );
+		if( FBitSet( client->flags, FCL_FAKECLIENT ))
+			return;
+		MSG_WriteByte( &client->netchan.message, svc_centerprint );
+		MSG_WriteString( &client->netchan.message, szMsg );
 		break;
 	}
 }
@@ -3222,8 +3192,8 @@ pfnServerPrint
 void pfnServerPrint( const char *szMsg )
 {
 	// while loading in-progress we can sending message only for local client
-	if( sv.state != ss_active ) MsgDev( D_INFO, szMsg );	
-	else SV_BroadcastPrintf( PRINT_HIGH, "%s", szMsg );
+	if( sv.state != ss_active ) MsgDev( D_INFO, "%s", szMsg );	
+	else SV_BroadcastPrintf( NULL, PRINT_HIGH, "%s", szMsg );
 }
 
 /*
@@ -3273,16 +3243,17 @@ void pfnCrosshairAngle( const edict_t *pClient, float pitch, float yaw )
 	}
 
 	// fakeclients ignores it silently
-	if( client->fakeclient ) return;
+	if( FBitSet( client->flags, FCL_FAKECLIENT ))
+		return;
 
 	if( pitch > 180.0f ) pitch -= 360;
 	if( pitch < -180.0f ) pitch += 360;
 	if( yaw > 180.0f ) yaw -= 360;
 	if( yaw < -180.0f ) yaw += 360;
 
-	BF_WriteByte( &client->netchan.message, svc_crosshairangle );
-	BF_WriteChar( &client->netchan.message, pitch * 5 );
-	BF_WriteChar( &client->netchan.message, yaw * 5 );
+	MSG_WriteByte( &client->netchan.message, svc_crosshairangle );
+	MSG_WriteChar( &client->netchan.message, pitch * 5 );
+	MSG_WriteChar( &client->netchan.message, yaw * 5 );
 }
 
 /*
@@ -3317,10 +3288,11 @@ void pfnSetView( const edict_t *pClient, const edict_t *pViewent )
 	else client->pViewEntity = (edict_t *)pViewent;
 
 	// fakeclients ignore to send client message (but can see into the trigger_camera through the PVS)
-	if( client->fakeclient ) return;
+	if( FBitSet( client->flags, FCL_FAKECLIENT ))
+		return;
 
-	BF_WriteByte( &client->netchan.message, svc_setview );
-	BF_WriteWord( &client->netchan.message, NUM_FOR_EDICT( pViewent ));
+	MSG_WriteByte( &client->netchan.message, svc_setview );
+	MSG_WriteWord( &client->netchan.message, NUM_FOR_EDICT( pViewent ));
 }
 
 /*
@@ -3370,22 +3342,7 @@ pfnGetPlayerWONId
 */
 uint pfnGetPlayerWONId( edict_t *e )
 {
-	sv_client_t	*cl;
-	int		i;
-
-	if( sv.state != ss_active )
-		return -1;
-
-	if( !SV_ClientFromEdict( e, false ))
-		return -1;
-
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
-	{
-		if( cl->edict == e && cl->authentication_method == 0 )
-			return cl->WonID;
-	}
-
-	return -1;
+	return 0xFFFFFFFF;
 }
 
 /*
@@ -3428,13 +3385,14 @@ void pfnFadeClientVolume( const edict_t *pEdict, int fadePercent, int fadeOutSec
 		return;
 	}
 
-	if( cl->fakeclient ) return;
+	if( FBitSet( cl->flags, FCL_FAKECLIENT ))
+		return;
 
-	BF_WriteByte( &cl->netchan.message, svc_soundfade );
-	BF_WriteByte( &cl->netchan.message, fadePercent );
-	BF_WriteByte( &cl->netchan.message, holdTime );
-	BF_WriteByte( &cl->netchan.message, fadeOutSeconds );
-	BF_WriteByte( &cl->netchan.message, fadeInSeconds );
+	MSG_WriteByte( &cl->netchan.message, svc_soundfade );
+	MSG_WriteByte( &cl->netchan.message, fadePercent );
+	MSG_WriteByte( &cl->netchan.message, holdTime );
+	MSG_WriteByte( &cl->netchan.message, fadeOutSeconds );
+	MSG_WriteByte( &cl->netchan.message, fadeInSeconds );
 }
 
 /*
@@ -3478,16 +3436,16 @@ void pfnRunPlayerMove( edict_t *pClient, const float *v_angle, float fmove, floa
 		return;
 	}
 
-	if( !cl->fakeclient )
-		return;	// only fakeclients allows
+	if( !FBitSet( cl->flags, FCL_FAKECLIENT ))
+		return; // only fakeclients allows
 
 	oldcl = svs.currentPlayer;
 
 	svs.currentPlayer = SV_ClientFromEdict( pClient, true );
 	svs.currentPlayerNum = (svs.currentPlayer - svs.clients);
-	svs.currentPlayer->timebase = (sv.time + host.frametime) - (msec / 1000.0f);
+	svs.currentPlayer->timebase = (sv.time + sv.frametime) - (msec / 1000.0f);
 
-	Q_memset( &cmd, 0, sizeof( cmd ));
+	memset( &cmd, 0, sizeof( cmd ));
 	if( v_angle ) VectorCopy( v_angle, cmd.viewangles );
 	cmd.forwardmove = fmove;
 	cmd.sidemove = smove;
@@ -3559,16 +3517,20 @@ pfnSetClientKeyValue
 */
 void pfnSetClientKeyValue( int clientIndex, char *infobuffer, char *key, char *value )
 {
+	sv_client_t	*cl;
+
 	clientIndex -= 1;
 
-	if( clientIndex < 0 || clientIndex >= sv_maxclients->integer )
+	if( !svs.clients || clientIndex < 0 || clientIndex >= sv_maxclients->integer )
 		return;
 
-	if( svs.clients[clientIndex].state < cs_spawned || infobuffer == NULL )
+	cl = &svs.clients[clientIndex]; 
+
+	if( cl->state < cs_spawned || infobuffer == NULL )
 		return;
 
 	Info_SetValueForKey( infobuffer, key, value );
-	svs.clients[clientIndex].sendinfo = true;
+	SetBits( cl->flags, FCL_RESEND_USERINFO );
 }
 
 /*
@@ -3662,7 +3624,7 @@ void SV_PlaybackEventFull( int flags, const edict_t *pInvoker, word eventindex, 
 	byte		*mask = NULL;
 	vec3_t		pvspoint;
 
-	if( flags & FEV_CLIENT )
+	if( FBitSet( flags, FEV_CLIENT ))
 		return;	// someone stupid joke
 
 	// first check event for out of bounds
@@ -3679,7 +3641,7 @@ void SV_PlaybackEventFull( int flags, const edict_t *pInvoker, word eventindex, 
 		return;		
 	}
 
-	Q_memset( &args, 0, sizeof( args ));
+	memset( &args, 0, sizeof( args ));
 
 	if( origin && !VectorIsNull( origin ))
 	{
@@ -3710,14 +3672,14 @@ void SV_PlaybackEventFull( int flags, const edict_t *pInvoker, word eventindex, 
 		args.entindex = invokerIndex = NUM_FOR_EDICT( pInvoker );
 
 		// g-cont. allow 'ducking' param for all entities
-		args.ducking = (pInvoker->v.flags & FL_DUCKING) ? true : false;
+		args.ducking = FBitSet( pInvoker->v.flags, FL_DUCKING ) ? true : false;
 
 		// this will be send only for reliable event
-		if(!( args.flags & FEVENT_ORIGIN ))
+		if( !FBitSet( args.flags, FEVENT_ORIGIN ))
 			VectorCopy( pInvoker->v.origin, args.origin );
 
 		// this will be send only for reliable event
-		if(!( args.flags & FEVENT_ANGLES ))
+		if( !FBitSet( args.flags, FEVENT_ANGLES ))
 			VectorCopy( pInvoker->v.angles, args.angles );
 
 		if( sv_sendvelocity->integer )
@@ -3730,54 +3692,50 @@ void SV_PlaybackEventFull( int flags, const edict_t *pInvoker, word eventindex, 
 		invokerIndex = -1;
 	}
 
-	if(!( flags & FEV_GLOBAL ) && VectorIsNull( pvspoint ))
+	if( !FBitSet( flags, FEV_GLOBAL ) && VectorIsNull( pvspoint ))
           {
 		MsgDev( D_ERROR, "%s: not a FEV_GLOBAL event missing origin. Ignored.\n", sv.event_precache[eventindex] );
 		return;
 	}
 
 	// check event for some user errors
-	if( flags & (FEV_NOTHOST|FEV_HOSTONLY))
+	if( FBitSet( flags, FEV_NOTHOST|FEV_HOSTONLY ))
 	{
 		if( !SV_ClientFromEdict( pInvoker, true ))
 		{
 			const char *ev_name = sv.event_precache[eventindex];
-			if( flags & FEV_NOTHOST )
+
+			if( FBitSet( flags, FEV_NOTHOST ))
 			{
 				MsgDev( D_WARN, "%s: specified FEV_NOTHOST when invoker not a client\n", ev_name );
-				flags &= ~FEV_NOTHOST;
+				ClearBits( flags, FEV_NOTHOST );
 			}
 
-			if( flags & FEV_HOSTONLY )
+			if( FBitSet( flags, FEV_HOSTONLY ))
 			{
 				MsgDev( D_WARN, "%s: specified FEV_HOSTONLY when invoker not a client\n", ev_name );
-				flags &= ~FEV_HOSTONLY;
+				ClearBits( flags, FEV_HOSTONLY );
 			}
 		}
 	}
 
-	flags |= FEV_SERVER;		// it's a server event!
+	SetBits( flags, FEV_SERVER );		// it's a server event!
 	if( delay < 0.0f ) delay = 0.0f;	// fixup negative delays
 
-	if(!( flags & FEV_GLOBAL ))
-	{
-		mleaf_t	*leaf;
-
-		// setup pvs cluster for invoker
-		leaf = Mod_PointInLeaf( pvspoint, sv.worldmodel->nodes );
-		mask = Mod_LeafPVS( leaf, sv.worldmodel );
-	}
+	// setup pvs cluster for invoker
+	if( !FBitSet( flags, FEV_GLOBAL ))
+		mask = Mod_GetPVSForPoint( pvspoint );
 
 	// process all the clients
 	for( slot = 0, cl = svs.clients; slot < sv_maxclients->integer; slot++, cl++ )
 	{
-		if( cl->state != cs_spawned || !cl->edict || cl->fakeclient )
+		if( cl->state != cs_spawned || !cl->edict || FBitSet( cl->flags, FCL_FAKECLIENT ))
 			continue;
 
 		if( SV_IsValidEdict( pInvoker ) && pInvoker->v.groupinfo && cl->edict->v.groupinfo )
 		{
-			if(( svs.groupop == 0 && (cl->edict->v.groupinfo & pInvoker->v.groupinfo) == 0 )
-			|| ( svs.groupop == 1 && (cl->edict->v.groupinfo & pInvoker->v.groupinfo) == 1 ))
+			if(( svs.groupop == 0 && FBitSet( cl->edict->v.groupinfo, pInvoker->v.groupinfo ) == 0 )
+			|| ( svs.groupop == 1 && FBitSet( cl->edict->v.groupinfo, pInvoker->v.groupinfo ) == 1 ))
 				continue;
 		}
 
@@ -3787,16 +3745,16 @@ void SV_PlaybackEventFull( int flags, const edict_t *pInvoker, word eventindex, 
 				continue;
 		}
 
-		if( flags & FEV_NOTHOST && cl == svs.currentPlayer && cl->local_weapons )
+		if( FBitSet( flags, FEV_NOTHOST ) && cl == svs.currentPlayer && FBitSet( cl->flags, FCL_LOCAL_WEAPONS ))
 			continue;	// will be played on client side
 
-		if( flags & FEV_HOSTONLY && cl->edict != pInvoker )
+		if( FBitSet( flags, FEV_HOSTONLY ) && cl->edict != pInvoker )
 			continue;	// sending only to invoker
 
 		// all checks passed, send the event
 
 		// reliable event
-		if( flags & FEV_RELIABLE )
+		if( FBitSet( flags, FEV_RELIABLE ))
 		{
 			// skipping queue, write direct into reliable datagram
 			SV_PlaybackReliableEvent( &cl->netchan.message, eventindex, delay, &args );
@@ -3807,11 +3765,12 @@ void SV_PlaybackEventFull( int flags, const edict_t *pInvoker, word eventindex, 
 		es = &cl->events;
 		bestslot = -1;
 
-		if( flags & FEV_UPDATE )
+		if( FBitSet( flags, FEV_UPDATE ))
 		{
 			for( j = 0; j < MAX_EVENT_QUEUE; j++ )
 			{
 				ei = &es->ei[j];
+
 				if( ei->index == eventindex && invokerIndex != -1 && invokerIndex == ei->entity_index )
 				{
 					bestslot = j;
@@ -3864,16 +3823,15 @@ so we can't use a single PVS point
 */
 byte *pfnSetFatPVS( const float *org )
 {
+	qboolean	fullvis = false;
+
 	if( !sv.worldmodel->visdata || sv_novis->integer || !org || CL_DisableVisibility( ))
-		return Mod_DecompressVis( NULL );
+		fullvis = true;
 
 	ASSERT( svs.currentPlayerNum >= 0 && svs.currentPlayerNum < MAX_CLIENTS );
 
-	fatbytes = (sv.worldmodel->numleafs+31)>>3;
-	bitvector = fatpvs;
-
 	// portals can't change viewpoint!
-	if(!( sv.hostflags & SVF_PORTALPASS ))
+	if( !FBitSet( sv.hostflags, SVF_MERGE_VISIBILITY ))
 	{
 		vec3_t	viewPos, offset;
 
@@ -3885,7 +3843,7 @@ byte *pfnSetFatPVS( const float *org )
 		// }
 		// so we have unneeded duck calculations who have affect when player
 		// is ducked into water. Remove offset to restore right PVS position
-		if( svs.currentPlayer->edict->v.flags & FL_DUCKING )
+		if( FBitSet( svs.currentPlayer->edict->v.flags, FL_DUCKING ))
 		{
 			VectorSubtract( svgame.pmove->player_mins[0], svgame.pmove->player_mins[1], offset );
 			VectorSubtract( org, offset, viewPos );
@@ -3893,17 +3851,16 @@ byte *pfnSetFatPVS( const float *org )
 		else VectorCopy( org, viewPos );
 
 		// build a new PVS frame
-		Q_memset( bitvector, 0, fatbytes );
-
-		SV_AddToFatPVS( viewPos, DVIS_PVS, sv.worldmodel->nodes );
+		Mod_FatPVS( viewPos, FATPVS_RADIUS, fatpvs, world.fatbytes, false, fullvis );
 		VectorCopy( viewPos, viewPoint[svs.currentPlayerNum] );
 	}
 	else
 	{
-		SV_AddToFatPVS( org, DVIS_PVS, sv.worldmodel->nodes );
+		// merge PVS
+		Mod_FatPVS( org, FATPVS_RADIUS, fatpvs, world.fatbytes, true, fullvis );
 	}
 
-	return bitvector;
+	return fatpvs;
 }
 
 /*
@@ -3916,16 +3873,15 @@ so we can't use a single PHS point
 */
 byte *pfnSetFatPAS( const float *org )
 {
+	qboolean	fullvis = false;
+
 	if( !sv.worldmodel->visdata || sv_novis->integer || !org || CL_DisableVisibility( ))
-		return Mod_DecompressVis( NULL );
+		fullvis = true;
 
 	ASSERT( svs.currentPlayerNum >= 0 && svs.currentPlayerNum < MAX_CLIENTS );
 
-	fatbytes = (sv.worldmodel->numleafs+31)>>3;
-	bitvector = fatphs;
-
 	// portals can't change viewpoint!
-	if(!( sv.hostflags & SVF_PORTALPASS ))
+	if( !FBitSet( sv.hostflags, SVF_MERGE_VISIBILITY ))
 	{
 		vec3_t	viewPos, offset;
 
@@ -3937,7 +3893,7 @@ byte *pfnSetFatPAS( const float *org )
 		// }
 		// so we have unneeded duck calculations who have affect when player
 		// is ducked into water. Remove offset to restore right PVS position
-		if( svs.currentPlayer->edict->v.flags & FL_DUCKING )
+		if( FBitSet( svs.currentPlayer->edict->v.flags, FL_DUCKING ))
 		{
 			VectorSubtract( svgame.pmove->player_mins[0], svgame.pmove->player_mins[1], offset );
 			VectorSubtract( org, offset, viewPos );
@@ -3945,17 +3901,15 @@ byte *pfnSetFatPAS( const float *org )
 		else VectorCopy( org, viewPos );
 
 		// build a new PHS frame
-		Q_memset( bitvector, 0, fatbytes );
-
-		SV_AddToFatPVS( viewPos, DVIS_PHS, sv.worldmodel->nodes );
+		Mod_FatPVS( viewPos, FATPHS_RADIUS, fatphs, world.fatbytes, false, fullvis );
 	}
 	else
 	{
-		// merge PVS
-		SV_AddToFatPVS( org, DVIS_PHS, sv.worldmodel->nodes );
+		// merge PHS
+		Mod_FatPVS( org, FATPHS_RADIUS, fatphs, world.fatbytes, true, fullvis );
 	}
 
-	return bitvector;
+	return fatphs;
 }
 
 /*
@@ -3977,7 +3931,7 @@ int pfnCheckVisibility( const edict_t *ent, byte *pset )
 	// vis not set - fullvis enabled
 	if( !pset ) return 1;
 
-	if( ent->v.flags & FL_CUSTOMENTITY && ent->v.owner && ent->v.owner->v.flags & FL_CLIENT )
+	if( FBitSet( ent->v.flags, FL_CUSTOMENTITY ) && ent->v.owner && FBitSet( ent->v.owner->v.flags, FL_CLIENT ))
 		ent = ent->v.owner;	// upcast beams to my owner
 
 	if( ent->headnode < 0 )
@@ -3985,7 +3939,7 @@ int pfnCheckVisibility( const edict_t *ent, byte *pset )
 		// check individual leafs
 		for( i = 0; i < ent->num_leafs; i++ )
 		{
-			if( pset[ent->leafnums[i] >> 3] & (1 << (ent->leafnums[i] & 7 )))
+			if( CHECKVISBIT( pset, ent->leafnums[i] ))
 				return 1;	// visible passed by leaf
 		}
 
@@ -3993,18 +3947,19 @@ int pfnCheckVisibility( const edict_t *ent, byte *pset )
 	}
 	else
 	{
-		int	leafnum;
+		short	leafnum;
 
 		for( i = 0; i < MAX_ENT_LEAFS; i++ )
 		{
 			leafnum = ent->leafnums[i];
 			if( leafnum == -1 ) break;
-			if( pset[leafnum >> 3] & (1 << ( leafnum & 7 )))
+
+			if( CHECKVISBIT( pset, leafnum ))
 				return 1;	// visible passed by leaf
 		}
 
 		// too many leafs for individual check, go by headnode
-		if( !SV_HeadnodeVisible( &sv.worldmodel->nodes[ent->headnode], pset, &leafnum ))
+		if( !Mod_HeadnodeVisible( &sv.worldmodel->nodes[ent->headnode], pset, &leafnum ))
 			return 0;
 
 		((edict_t *)ent)->leafnums[ent->num_leafs] = leafnum;
@@ -4027,7 +3982,7 @@ int pfnCanSkipPlayer( const edict_t *player )
 	if(( cl = SV_ClientFromEdict( player, false )) == NULL )
 		return false;
 
-	return cl->local_weapons;
+	return FBitSet( cl->flags, FCL_LOCAL_WEAPONS );
 }
 
 /*
@@ -4038,9 +3993,7 @@ pfnGetCurrentPlayer
 */
 int pfnGetCurrentPlayer( void )
 {
-	if( svs.currentPlayer )
-		return (svs.currentPlayer - svs.clients);
-	return -1;
+	return svs.currentPlayerNum;
 }
 
 /*
@@ -4256,7 +4209,7 @@ const char *pfnGetPlayerAuthId( edict_t *e )
 	{
 		if( cl->edict == e )
 		{
-			if( cl->fakeclient )
+			if( FBitSet( cl->flags, FCL_FAKECLIENT ))
 				Q_strncat( result, "BOT", sizeof( result ));
 			else if( cl->authentication_method == 0 )
 				Q_snprintf( result, sizeof( result ), "%u", (uint)cl->WonID );
@@ -4312,8 +4265,8 @@ void pfnQueryClientCvarValue( const edict_t *player, const char *cvarName )
 
 	if(( cl = SV_ClientFromEdict( player, true )) != NULL )
 	{
-		BF_WriteByte( &cl->netchan.message, svc_querycvarvalue );
-		BF_WriteString( &cl->netchan.message, cvarName );
+		MSG_WriteByte( &cl->netchan.message, svc_querycvarvalue );
+		MSG_WriteString( &cl->netchan.message, cvarName );
 	}
 	else
 	{
@@ -4342,9 +4295,9 @@ void pfnQueryClientCvarValue2( const edict_t *player, const char *cvarName, int 
 
 	if(( cl = SV_ClientFromEdict( player, true )) != NULL )
 	{
-		BF_WriteByte( &cl->netchan.message, svc_querycvarvalue2 );
-		BF_WriteLong( &cl->netchan.message, requestID );
-		BF_WriteString( &cl->netchan.message, cvarName );
+		MSG_WriteByte( &cl->netchan.message, svc_querycvarvalue2 );
+		MSG_WriteLong( &cl->netchan.message, requestID );
+		MSG_WriteString( &cl->netchan.message, cvarName );
 	}
 	else
 	{
@@ -4362,15 +4315,16 @@ pfnCheckParm
 */
 static int pfnCheckParm( char *parm, char **ppnext )
 {
-	static char	str[64];
+	int i = Sys_CheckParm( parm );
 
-	if( Sys_GetParmFromCmdLine( parm, str ))
+	if( ppnext != NULL )
 	{
-		// get the pointer on cmdline param
-		if( ppnext ) *ppnext = str;
-		return 1;
+		if( i > 0 && i < host.argc - 1 )
+			*ppnext = (char*)host.argv[i + 1];
+		else *ppnext = NULL;
 	}
-	return 0;
+
+	return i;
 }
 					
 // engine callbacks
@@ -4516,7 +4470,7 @@ static enginefuncs_t gEngfuncs =
 	Cvar_DirectSet,
 	pfnForceUnmodified,
 	pfnGetPlayerStats,
-	Cmd_AddGameCommand,
+	Cmd_AddServerCommand,
 	pfnVoice_GetClientListening,
 	pfnVoice_SetClientListening,
 	pfnGetPlayerAuthId,
@@ -4782,14 +4736,14 @@ void SV_UnloadProgs( void )
 
 	// must unlink all game cvars,
 	// before pointers on them will be lost...
-	Cmd_ExecuteString( "@unlink\n", src_command );
-	Cmd_Unlink( CMD_EXTDLL );
+	Cvar_Unlink( CVAR_SERVERDLL );
+	Cmd_Unlink( CMD_SERVERDLL );
 
 	Mod_ResetStudioAPI ();
 
 	Com_FreeLibrary( svgame.hInstance );
 	Mem_FreePool( &svgame.mempool );
-	Q_memset( &svgame, 0, sizeof( svgame ));
+	memset( &svgame, 0, sizeof( svgame ));
 }
 
 qboolean SV_LoadProgs( const char *name )
@@ -4814,13 +4768,13 @@ qboolean SV_LoadProgs( const char *name )
 	if( !svgame.hInstance ) return false;
 
 	// make sure what new dll functions is cleared
-	Q_memset( &svgame.dllFuncs2, 0, sizeof( svgame.dllFuncs2 ));
+	memset( &svgame.dllFuncs2, 0, sizeof( svgame.dllFuncs2 ));
 
 	// make sure what physic functions is cleared
-	Q_memset( &svgame.physFuncs, 0, sizeof( svgame.physFuncs ));
+	memset( &svgame.physFuncs, 0, sizeof( svgame.physFuncs ));
 
 	// make local copy of engfuncs to prevent overwrite it with bots.dll
-	Q_memcpy( &gpEngfuncs, &gEngfuncs, sizeof( gpEngfuncs ));
+	memcpy( &gpEngfuncs, &gEngfuncs, sizeof( gpEngfuncs ));
 
 	GetEntityAPI = (APIFUNCTION)Com_GetProcAddress( svgame.hInstance, "GetEntityAPI" );
 	GetEntityAPI2 = (APIFUNCTION2)Com_GetProcAddress( svgame.hInstance, "GetEntityAPI2" );
@@ -4855,7 +4809,7 @@ qboolean SV_LoadProgs( const char *name )
 		{
 			if( version != NEW_DLL_FUNCTIONS_VERSION )
 				MsgDev( D_WARN, "SV_LoadProgs: new interface version %i should be %i\n", NEW_DLL_FUNCTIONS_VERSION, version );
-			Q_memset( &svgame.dllFuncs2, 0, sizeof( svgame.dllFuncs2 ));
+			memset( &svgame.dllFuncs2, 0, sizeof( svgame.dllFuncs2 ));
 		}
 	}
 
@@ -4876,7 +4830,7 @@ qboolean SV_LoadProgs( const char *name )
 				return false;
 			}
 		}
-		else MsgDev( D_AICONSOLE, "SV_LoadProgs: ^2initailized extended EntityAPI ^7ver. %i\n", version );
+		else MsgDev( D_REPORT, "SV_LoadProgs: ^2initailized extended EntityAPI ^7ver. %i\n", version );
 	}
 	else if( !GetEntityAPI( &svgame.dllFuncs, version ))
 	{

@@ -41,9 +41,9 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define ID_YES	 	130
 #define ID_NO	 	131
 
-#define GAME_LENGTH		18
+#define GAME_LENGTH		28
 #define MAPNAME_LENGTH	20+GAME_LENGTH
-#define TYPE_LENGTH		16+MAPNAME_LENGTH
+#define TYPE_LENGTH		10+MAPNAME_LENGTH
 #define MAXCL_LENGTH	15+TYPE_LENGTH
 
 typedef struct
@@ -118,24 +118,30 @@ UI_LanGame_GetGamesList
 static void UI_LanGame_GetGamesList( void )
 {
 	int		i;
-	const char	*info;
+	const char	*info, *host, *map;
+	int		colorOffset[2];
 
 	for( i = 0; i < uiStatic.numServers; i++ )
 	{
 		if( i >= UI_MAX_SERVERS ) break;
 		info = uiStatic.serverNames[i];
 
-		StringConcat( uiLanGame.gameDescription[i], Info_ValueForKey( info, "host" ), GAME_LENGTH );
-		StringConcat( uiLanGame.gameDescription[i], uiEmptyString, GAME_LENGTH );
-		StringConcat( uiLanGame.gameDescription[i], Info_ValueForKey( info, "map" ), MAPNAME_LENGTH );
-		StringConcat( uiLanGame.gameDescription[i], uiEmptyString, MAPNAME_LENGTH );
+		host = Info_ValueForKey( info, "host" );
+		colorOffset[0] = ColorPrexfixCount( host );
+		StringConcat( uiLanGame.gameDescription[i], host, GAME_LENGTH );
+		StringConcat( uiLanGame.gameDescription[i], uiEmptyString, GAME_LENGTH + colorOffset[0] );
+		map = Info_ValueForKey( info, "map" );
+		colorOffset[1] = ColorPrexfixCount( map );
+		StringConcat( uiLanGame.gameDescription[i], map, MAPNAME_LENGTH );
+		StringConcat( uiLanGame.gameDescription[i], uiEmptyString, MAPNAME_LENGTH + colorOffset[0] + colorOffset[1] );
 		if( !strcmp( Info_ValueForKey( info, "dm" ), "1" ))
-			StringConcat( uiLanGame.gameDescription[i], "deathmatch", TYPE_LENGTH );
+			StringConcat( uiLanGame.gameDescription[i], "dm", TYPE_LENGTH );
 		else if( !strcmp( Info_ValueForKey( info, "coop" ), "1" ))
 			StringConcat( uiLanGame.gameDescription[i], "coop", TYPE_LENGTH );
 		else if( !strcmp( Info_ValueForKey( info, "team" ), "1" ))
-			StringConcat( uiLanGame.gameDescription[i], "teamplay", TYPE_LENGTH );
-		StringConcat( uiLanGame.gameDescription[i], uiEmptyString, TYPE_LENGTH );
+			StringConcat( uiLanGame.gameDescription[i], "team", TYPE_LENGTH );
+		else StringConcat( uiLanGame.gameDescription[i], "???", TYPE_LENGTH );
+		StringConcat( uiLanGame.gameDescription[i], uiEmptyString, TYPE_LENGTH + colorOffset[0] + colorOffset[1] );
 		StringConcat( uiLanGame.gameDescription[i], Info_ValueForKey( info, "numcl" ), MAXCL_LENGTH );
 		StringConcat( uiLanGame.gameDescription[i], "\\", MAXCL_LENGTH );
 		StringConcat( uiLanGame.gameDescription[i], Info_ValueForKey( info, "maxcl" ), MAXCL_LENGTH );
@@ -274,7 +280,7 @@ static void UI_LanGame_Init( void )
 	StringConcat( uiLanGame.hintText, uiEmptyString, MAPNAME_LENGTH );
 	StringConcat( uiLanGame.hintText, "Type", TYPE_LENGTH );
 	StringConcat( uiLanGame.hintText, uiEmptyString, TYPE_LENGTH );
-	StringConcat( uiLanGame.hintText, "Num/Max Clients", MAXCL_LENGTH );
+	StringConcat( uiLanGame.hintText, "Clients", MAXCL_LENGTH );
 	StringConcat( uiLanGame.hintText, uiEmptyString, MAXCL_LENGTH );
 
 	uiLanGame.background.generic.id = ID_BACKGROUND;

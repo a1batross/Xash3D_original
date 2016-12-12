@@ -26,6 +26,28 @@ GNU General Public License for more details.
 #define SERVER_LOADING	1
 #define SERVER_ACTIVE	2
 
+// LUMP reading errors
+#define LUMP_LOAD_OK		0
+#define LUMP_LOAD_COULDNT_OPEN	1
+#define LUMP_LOAD_BAD_HEADER		2
+#define LUMP_LOAD_BAD_VERSION		3
+#define LUMP_LOAD_NO_EXTRADATA	4
+#define LUMP_LOAD_INVALID_NUM		5
+#define LUMP_LOAD_NOT_EXIST		6
+#define LUMP_LOAD_MEM_FAILED		7
+#define LUMP_LOAD_CORRUPTED		8
+
+// LUMP saving errors
+#define LUMP_SAVE_OK		0
+#define LUMP_SAVE_COULDNT_OPEN	1
+#define LUMP_SAVE_BAD_HEADER		2
+#define LUMP_SAVE_BAD_VERSION		3
+#define LUMP_SAVE_NO_EXTRADATA	4
+#define LUMP_SAVE_INVALID_NUM		5
+#define LUMP_SAVE_ALREADY_EXIST	6
+#define LUMP_SAVE_NO_DATA		7
+#define LUMP_SAVE_CORRUPTED		8
+
 typedef struct areanode_s
 {
 	int		axis;		// -1 = leaf node
@@ -64,6 +86,24 @@ typedef struct server_physics_api_s
 	// static allocations
 	void		*(*pfnMemAlloc)( size_t cb, const char *filename, const int fileline );
 	void		(*pfnMemFree)( void *mem, const char *filename, const int fileline );
+
+	// trace & contents
+	int		(*pfnMaskPointContents)( const float *pos, int groupmask );
+	trace_t		(*pfnTrace)( const float *p0, float *mins, float *maxs, const float *p1, int type, edict_t *e );
+	trace_t		(*pfnTraceNoEnts)( const float *p0, float *mins, float *maxs, const float *p1, int type, edict_t *e );
+	int		(*pfnBoxInPVS)( const float *org, const float *boxmins, const float *boxmaxs );
+
+	// message handler (missed function to write raw bytes)
+	void		(*pfnWriteBytes)( byte *bytes, int count );
+
+	// BSP lump management
+	int		(*pfnCheckLump)( const char *filename, const int lump, int *lumpsize );
+	int		(*pfnReadLump)( const char *filename, const int lump, void **lumpdata, int *lumpsize );
+	int		(*pfnSaveLump)( const char *filename, const int lump, void *lumpdata, int lumpsize );
+
+	// FS tools
+	int		(*pfnSaveFile)( const char *filename, const void *data, long len );
+	const byte	*(*pfnLoadImagePixels)( const char *filename, int *width, int *height );
 } server_physics_api_t;
 
 // physic callbacks
@@ -109,6 +149,10 @@ typedef struct physics_interface_s
 	const char*	(*pfnGetString)( string_t iString );
 	// helper for restore custom decals that have custom message (e.g. Paranoia)
 	int		(*pfnRestoreDecal)( struct decallist_s *entry, edict_t *pEdict, qboolean adjacent );
+	// handle custom trigger touching for player
+	void		(*PM_PlayerTouch)( struct playermove_s *ppmove, edict_t *client );
+	// alloc or destroy model custom data (called only for dedicated servers, otherwise using an client version)
+	void		(*Mod_ProcessUserData)( struct model_s *mod, qboolean create, const byte *buffer );
 } physics_interface_t;
 
 #endif//PHYSINT_H

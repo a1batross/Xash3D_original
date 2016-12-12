@@ -59,14 +59,17 @@ qboolean SCR_NextMovie( void )
 {
 	string	str;
 
-	S_StopAllSounds();
-	SCR_StopCinematic();
-
 	if( cls.movienum == -1 )
+	{
+		S_StopAllSounds();
+		SCR_StopCinematic();
 		return false; // don't play movies
+	}
 
 	if( !cls.movies[cls.movienum][0] || cls.movienum == MAX_MOVIES )
 	{
+		S_StopAllSounds();
+		SCR_StopCinematic();
 		cls.movienum = -1;
 		return false;
 	}
@@ -146,7 +149,10 @@ void SCR_RunCinematic( void )
 		return;
 
 	if( !AVI_IsActive( cin_state ))
+	{
+		SCR_NextMovie( );
 		return;
+	}
 
 	if( UI_IsVisible( ))
 	{

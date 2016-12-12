@@ -30,7 +30,7 @@ GNU General Public License for more details.
 #define DEMO_NORMAL		1	// this lump contains playback info of messages, etc., needed during playback.
 
 #define IDEMOHEADER		(('M'<<24)+('E'<<16)+('D'<<8)+'I') // little-endian "IDEM"
-#define DEMO_PROTOCOL	1
+#define DEMO_PROTOCOL	2
 
 const char *demo_cmd[dem_lastcmd+1] =
 {
@@ -49,6 +49,7 @@ typedef struct
 	int		dem_protocol;	// should be DEMO_PROTOCOL
 	int		net_protocol;	// should be PROTOCOL_VERSION
 	char		mapname[64];	// name of map
+	char		comment[64];	// comment for demo
 	char		gamedir[64];	// name of game directory (FS_Gamedir())
 	int		directory_offset;	// offset of Entry Directory.
 } demoheader_t;
@@ -68,6 +69,13 @@ typedef struct
 	int		numentries;	// number of tracks
 } demodirectory_t;
 
+// add angles
+typedef struct
+{
+	float		starttime;
+	vec3_t		viewangles;
+} demoangle_t;
+
 // private demo states
 struct
 {
@@ -77,7 +85,13 @@ struct
 	int		framecount;
 	float		starttime;
 	float		realstarttime;
+	float		timestamp;
+	float		lasttime;
 	int		entryIndex;
+
+	// interpolation stuff
+	demoangle_t	cmds[ANGLE_BACKUP];
+	int		angle_position;
 } demo;
 
 /*
@@ -209,10 +223,10 @@ void CL_WriteDemoUserCmd( int cmdnumber )
 	FS_Write( cls.demofile, &cmdnumber, sizeof( int ));
 
 	// write usercmd_t
-	BF_Init( &buf, "UserCmd", data, sizeof( data ));
+	MSG_Init( &buf, "UserCmd", data, sizeof( data ));
 	CL_WriteUsercmd( &buf, -1, cmdnumber );	// always no delta
 
-	bytes = BF_GetNumBytesWritten( &buf );
+	bytes = MSG_GetNumBytesWritten( &buf );
 
 	FS_Write( cls.demofile, &bytes, sizeof( word ));
 	FS_Write( cls.demofile, data, bytes );
@@ -258,14 +272,10 @@ void CL_WriteDemoMessage( qboolean startup, int start, sizebuf_t *msg )
 	if( !startup && !cls.demorecording )
 		return;
 
-	swlen = BF_GetNumBytesWritten( msg ) - start;
+	swlen = MSG_GetNumBytesWritten( msg ) - start;
 	if( swlen <= 0 ) return;
 
-	if( !startup )
-	{
-		cls.demotime += host.frametime;
-		demo.framecount++;
-	}
+	if( !startup ) demo.framecount++;
 
 	// demo playback should read this as an incoming message.
 	c = (cls.state != ca_active) ? dem_norewind : dem_read;
@@ -277,7 +287,7 @@ void CL_WriteDemoMessage( qboolean startup, int start, sizebuf_t *msg )
 	FS_Write( file, &swlen, sizeof( int ));
 
 	// output the buffer. Skip the network packet stuff.
-	FS_Write( file, BF_GetData( msg ) + start, swlen );
+	FS_Write( file, MSG_GetData( msg ) + start, swlen );
 }
 
 /*
@@ -313,9 +323,9 @@ Write demo header
 */
 void CL_WriteDemoHeader( const char *name )
 {
-	fs_offset_t	copysize;
-	fs_offset_t	savepos;
-	fs_offset_t	curpos;
+	long	copysize;
+	long	savepos;
+	long	curpos;
 	
 	MsgDev( D_INFO, "recording to %s.\n", name );
 	cls.demofile = FS_Open( name, "wb", false );
@@ -330,12 +340,13 @@ void CL_WriteDemoHeader( const char *name )
 	cls.demorecording = true;
 	cls.demowaiting = true;	// don't start saving messages until a non-delta compressed message is received
 
-	Q_memset( &demo.header, 0, sizeof( demo.header ));
+	memset( &demo.header, 0, sizeof( demo.header ));
 
 	demo.header.id = IDEMOHEADER;
 	demo.header.dem_protocol = DEMO_PROTOCOL;
 	demo.header.net_protocol = PROTOCOL_VERSION;
 	Q_strncpy( demo.header.mapname, clgame.mapname, sizeof( demo.header.mapname ));
+	Q_strncpy( demo.header.comment, clgame.maptitle, sizeof( demo.header.comment ));
 	Q_strncpy( demo.header.gamedir, FS_Gamedir(), sizeof( demo.header.gamedir ));
 
 	// write header
@@ -420,9 +431,7 @@ void CL_StopRecord( void )
 	FS_Write( cls.demofile, &demo.directory.numentries, sizeof( int ));
 
 	for( i = 0; i < demo.directory.numentries; i++ )
-	{
 		FS_Write( cls.demofile, &demo.directory.entries[i], sizeof( demoentry_t ));
-	}
 
 	Mem_Free( demo.directory.entries );
 	demo.directory.numentries = 0;
@@ -435,10 +444,10 @@ void CL_StopRecord( void )
 	cls.demofile = NULL;
 	cls.demorecording = false;
 	cls.demoname[0] = '\0';
-	menu.globals->demoname[0] = '\0';
+	gameui.globals->demoname[0] = '\0';
 
 	Msg( "Completed demo\n" );
-	MsgDev( D_INFO, "Recording time %.2f\n", cls.demotime );
+	MsgDev( D_INFO, "Recording time: %02d:%02d", (int)(cls.demotime / 60.0f ), (int)fmod( cls.demotime, 60.0f ));
 	cls.demotime = 0.0;
 }
 
@@ -449,16 +458,17 @@ CL_DrawDemoRecording
 */
 void CL_DrawDemoRecording( void )
 {
-	char		string[64];
-	rgba_t		color = { 255, 255, 255, 255 };
-	fs_offset_t	pos;
-	int		len;
+	char	string[64];
+	rgba_t	color = { 255, 255, 255, 255 };
+	long	pos;
+	int	len;
 
 	if(!( host.developer && cls.demorecording ))
 		return;
 
 	pos = FS_Tell( cls.demofile );
-	Q_snprintf( string, sizeof( string ), "RECORDING %s: %ik", cls.demoname, pos / 1024 );
+	Q_snprintf( string, sizeof( string ), "^1RECORDING:^7 %s: %s time: %02d:%02d", cls.demoname,
+	Q_memprint( pos ), (int)(cls.demotime / 60.0f ), (int)fmod( cls.demotime, 60.0f ));
 
 	Con_DrawStringLen( string, &len, NULL );
 	Con_DrawString(( scr_width->integer - len) >> 1, scr_height->integer >> 2, string, color );
@@ -511,11 +521,12 @@ void CL_ReadDemoUserCmd( qboolean discard )
 
 	if( !discard )
 	{
-		usercmd_t	nullcmd;
-		sizebuf_t	buf;
+		usercmd_t		nullcmd;
+		sizebuf_t		buf;
+		demoangle_t	*a;
 
-		Q_memset( &nullcmd, 0, sizeof( nullcmd ));
-		BF_Init( &buf, "UserCmd", data, sizeof( data ));
+		memset( &nullcmd, 0, sizeof( nullcmd ));
+		MSG_Init( &buf, "UserCmd", data, sizeof( data ));
 
 		pcmd = &cl.commands[cmdnumber & CL_UPDATE_MASK];
 		pcmd->processedfuncs = false;
@@ -529,6 +540,20 @@ void CL_ReadDemoUserCmd( qboolean discard )
 		cl.refdef.cmd = &pcmd->cmd;
 
 		MSG_ReadDeltaUsercmd( &buf, &nullcmd, cl.refdef.cmd );
+
+		// make sure what interp info contain angles from different frames
+		// or lerping will stop working
+		if( demo.lasttime != demo.timestamp )
+		{
+			// select entry into circular buffer
+			demo.angle_position = (demo.angle_position + 1) & ANGLE_MASK;
+			a = &demo.cmds[demo.angle_position];
+
+			// record update
+			a->starttime = demo.timestamp;
+			VectorCopy( cl.refdef.cmd->viewangles, a->viewangles );
+			demo.lasttime = demo.timestamp;
+		}
 
 		// NOTE: we need to have the current outgoing sequence correct
 		// so we can do prediction correctly during playback
@@ -674,7 +699,6 @@ reads demo data and write it to client
 */
 qboolean CL_DemoReadMessage( byte *buffer, size_t *length )
 {
-	float	f = 0.0f;
 	long	curpos = 0;
 	float	fElapsedTime = 0.0f;
 	qboolean	swallowmessages = true;
@@ -690,8 +714,7 @@ qboolean CL_DemoReadMessage( byte *buffer, size_t *length )
 	}
 
 	// HACKHACK: changedemo issues
-	if( !cls.netchan.remote_address.type )
-		cls.netchan.remote_address.type = NA_LOOPBACK;
+	if( !cls.netchan.remote_address.type ) cls.netchan.remote_address.type = NA_LOOPBACK;
 
 	if(( !cl.background && ( cl.refdef.paused || cls.key_dest != key_game )) || cls.key_dest == key_console )
 	{
@@ -706,16 +729,14 @@ qboolean CL_DemoReadMessage( byte *buffer, size_t *length )
 		if( !cls.demofile ) break;
 		curpos = FS_Tell( cls.demofile );
 
-		CL_ReadDemoCmdHeader( &cmd, &f );
+		CL_ReadDemoCmdHeader( &cmd, &demo.timestamp );
 
 		fElapsedTime = CL_GetDemoPlaybackClock() - demo.starttime;
-		bSkipMessage = (f >= fElapsedTime) ? true : false;
+		bSkipMessage = ((demo.timestamp - cl_serverframetime()) >= fElapsedTime) ? true : false;
+		if( cls.changelevel ) demo.framecount = 1;
 
-		if( cls.changelevel )
-			demo.framecount = 1;
-
-		// HACKHACK: changelevel issues
-		if( demo.framecount <= 10 && ( fElapsedTime - f ) > host.frametime )
+		// changelevel issues
+		if( demo.framecount <= 2 && ( fElapsedTime - demo.timestamp ) > host.frametime )
 			demo.starttime = CL_GetDemoPlaybackClock();
 
 		// not ready for a message yet, put it back on the file.
@@ -778,6 +799,79 @@ qboolean CL_DemoReadMessage( byte *buffer, size_t *length )
 	return CL_ReadRawNetworkData( buffer, length );
 }
 
+void CL_DemoFindInterpolatedViewAngles( float t, float *frac, demoangle_t **prev, demoangle_t **next )
+{
+	int	i, i0, i1, imod;
+	float	at;
+
+	imod = demo.angle_position - 1;
+	i0 = (imod + 1) & ANGLE_MASK;
+	i1 = (imod + 0) & ANGLE_MASK;
+
+	if( demo.cmds[i0].starttime >= t )
+	{
+		for( i = 0; i < ANGLE_BACKUP - 2; i++ )
+		{
+			at = demo.cmds[imod & ANGLE_MASK].starttime;
+			if( at == 0.0f ) break;
+
+			if( at < t )
+			{
+				i0 = (imod + 1) & ANGLE_MASK;
+				i1 = (imod + 0) & ANGLE_MASK;
+				break;
+			}
+			imod--;
+		}
+	}
+
+	*next = &demo.cmds[i0];
+	*prev = &demo.cmds[i1];
+
+	// avoid division by zero (probably this should never happens)
+	if((*prev)->starttime == (*next)->starttime )
+	{
+		*prev = *next;
+		*frac = 0.0f;
+		return;
+	}
+
+	// time spans the two entries
+	*frac = ( t - (*prev)->starttime ) / ((*next)->starttime - (*prev)->starttime );
+	*frac = bound( 0.0f, *frac, 1.0f );
+}
+
+/*
+==============
+CL_DemoInterpolateAngles
+
+We can predict or inpolate player movement with standed client code
+but viewangles interpolate here
+==============
+*/
+void CL_DemoInterpolateAngles( void )
+{
+	float		curtime = (CL_GetDemoPlaybackClock() - demo.starttime) - host.frametime;
+	demoangle_t	*prev = NULL, *next = NULL;
+	float		frac = 0.0f;
+
+	if( curtime > demo.timestamp )
+		curtime = demo.timestamp; // don't run too far
+
+	CL_DemoFindInterpolatedViewAngles( curtime, &frac, &prev, &next );
+
+	if( prev && next )
+	{
+		vec4_t	q, q1, q2;
+
+		AngleQuaternion( next->viewangles, q1, false );
+		AngleQuaternion( prev->viewangles, q2, false );
+		QuaternionSlerp( q2, q1, frac, q );
+		QuaternionAngle( q, cl.refdef.cl_viewangles );
+	}
+	else VectorCopy( cl.refdef.cmd->viewangles, cl.refdef.cl_viewangles );
+}
+
 /*
 ==============
 CL_StopPlayback
@@ -802,18 +896,23 @@ void CL_StopPlayback( void )
 	demo.entry = NULL;
 
 	cls.demoname[0] = '\0';	// clear demoname too
-	menu.globals->demoname[0] = '\0';
+	gameui.globals->demoname[0] = '\0';
 
-	S_StopAllSounds();
-	S_StopBackgroundTrack();
-
-	if( !cls.changedemo )
+	if( cls.changedemo )
+	{
+		S_StopAllSounds();
+		S_StopBackgroundTrack();
+	}
+	else
 	{
 		// let game known about demo state	
 		Cvar_FullSet( "cl_background", "0", CVAR_READ_ONLY );
 		cls.state = ca_disconnected;
-		cl.background = 0;
+		cls.connect_time = 0;
 		cls.demonum = -1;
+
+		// and finally clear the state
+		CL_ClearState ();
 	}
 }
 
@@ -876,7 +975,7 @@ qboolean CL_GetComment( const char *demoname, char *comment )
 
 	// split comment to sections
 	Q_strncpy( comment, demohdr.mapname, CS_SIZE );
-	Q_strncpy( comment + CS_SIZE, "<No Title>", CS_SIZE );	// TODO: write titles or somewhat
+	Q_strncpy( comment + CS_SIZE, demohdr.comment, CS_SIZE );
 	Q_strncpy( comment + CS_SIZE * 2, va( "%g sec", playtime ), CS_TIME );
 
 	// all done
@@ -889,8 +988,7 @@ qboolean CL_GetComment( const char *demoname, char *comment )
 ==================
 CL_NextDemo
 
-Called when a demo or cinematic finishes
-If the "nextdemo" cvar is set, that command will be issued
+Called when a demo finishes
 ==================
 */
 qboolean CL_NextDemo( void )
@@ -1023,7 +1121,7 @@ void CL_Record_f( void )
 	// write demoshot for preview
 	Cbuf_AddText( va( "demoshot \"%s\"\n", demoname ));
 	Q_strncpy( cls.demoname, demoname, sizeof( cls.demoname ));
-	Q_strncpy( menu.globals->demoname, demoname, sizeof( menu.globals->demoname ));
+	Q_strncpy( gameui.globals->demoname, demoname, sizeof( gameui.globals->demoname ));
 	
 	CL_WriteDemoHeader( demopath );
 }
@@ -1070,7 +1168,7 @@ void CL_PlayDemo_f( void )
 
 	cls.demofile = FS_Open( filename, "rb", true );
 	Q_strncpy( cls.demoname, demoname, sizeof( cls.demoname ));
-	Q_strncpy( menu.globals->demoname, demoname, sizeof( menu.globals->demoname ));
+	Q_strncpy( gameui.globals->demoname, demoname, sizeof( gameui.globals->demoname ));
 
 	// read in the m_DemoHeader
 	FS_Read( cls.demofile, &demo.header, sizeof( demoheader_t ));
@@ -1086,14 +1184,11 @@ void CL_PlayDemo_f( void )
 
 	if( demo.header.net_protocol != PROTOCOL_VERSION || demo.header.dem_protocol != DEMO_PROTOCOL )
 	{
-		MsgDev( D_ERROR, "demo protocol outdated\n"
-			"Demo file protocols Network(%i), Demo(%i)\n"
-			"Server protocol is at Network(%i), Demo(%i)\n",
-			demo.header.net_protocol, 
-			demo.header.dem_protocol,
-			PROTOCOL_VERSION,
-			DEMO_PROTOCOL
-		);
+		if( demo.header.dem_protocol != DEMO_PROTOCOL )
+			MsgDev( D_ERROR, "playdemo: demo protocol outdated (%i should be %i)\n", demo.header.dem_protocol, DEMO_PROTOCOL );
+
+		if( demo.header.net_protocol != PROTOCOL_VERSION )
+			MsgDev( D_ERROR, "playdemo: net protocol outdated (%i should be %i)\n", demo.header.net_protocol, PROTOCOL_VERSION );
 
 		FS_Close( cls.demofile );
 		cls.demofile = NULL;
@@ -1129,7 +1224,7 @@ void CL_PlayDemo_f( void )
 		CL_Disconnect();
 		Host_ShutdownServer();
 
-		Con_Close();
+		Con_FastClose();
 		UI_SetActiveMenu( false );
 	}
 
@@ -1154,9 +1249,12 @@ void CL_PlayDemo_f( void )
 
 	Netchan_Setup( NS_CLIENT, &cls.netchan, net_from, Cvar_VariableValue( "net_qport" ));
 
+	memset( demo.cmds, 0, sizeof( demo.cmds ));
+	demo.angle_position = 1;
 	demo.framecount = 0;
 	cls.lastoutgoingcommand = -1;
  	cls.nextcmdtime = host.realtime;
+	cl.last_command_ack = -1;
 
 	// g-cont. is this need?
 	Q_strncpy( cls.servername, demoname, sizeof( cls.servername ));

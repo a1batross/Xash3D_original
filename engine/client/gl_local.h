@@ -48,7 +48,7 @@ extern byte	*r_temppool;
 #define RP_FLIPFRONTFACE	BIT( 4 )	// e.g. for mirrors drawing
 
 #define RP_NONVIEWERREF	(RP_MIRRORVIEW|RP_ENVVIEW)
-#define R_StudioOpaque( e )	( e->curstate.rendermode == kRenderNormal || e->curstate.rendermode == kRenderTransAlpha )
+#define R_StudioOpaque( rm )	( rm == kRenderNormal || rm == kRenderTransAlpha )
 #define RP_LOCALCLIENT( e )	(CL_GetLocalPlayer() && ((e)->index == CL_GetLocalPlayer()->index && e->curstate.entityType == ET_PLAYER ))
 #define RP_NORMALPASS()	((RI.params & RP_NONVIEWERREF) == 0 )
 
@@ -64,6 +64,8 @@ typedef struct gltexture_s
 	word		srcHeight;
 	word		width;		// upload width\height
 	word		height;
+	word		depth;		// texture depth or count of layers for 2D_ARRAY
+	byte		numMips;		// mipmap count
 
 	uint		cacheframe;	// worldmodel->load_sequence
 
@@ -78,7 +80,6 @@ typedef struct gltexture_s
 	rgbdata_t		*original;	// keep original image
 
 	// debug info
-	byte		texType;		// used for gl_showtextures
 	size_t		size;		// upload size for debug targets
 
 	// detail textures stuff
@@ -113,6 +114,8 @@ typedef struct
 	int		viewport[4];
 	mplane_t		frustum[6];
 
+	mleaf_t		*viewleaf;
+	mleaf_t		*oldviewleaf;
 	vec3_t		pvsorigin;
 	vec3_t		vieworg;		// locked vieworigin
 	vec3_t		vforward;
@@ -135,9 +138,6 @@ typedef struct
 	float		fogEnd;
 	int		cached_contents;	// in water
 
-	float		waveHeight;	// global waveHeight
-	float		currentWaveHeight;	// current entity waveHeight
-
 	float		skyMins[2][6];
 	float		skyMaxs[2][6];
 
@@ -147,8 +147,7 @@ typedef struct
 
 	matrix4x4		projectionMatrix;
 	matrix4x4		worldviewProjectionMatrix;	// worldviewMatrix * projectionMatrix
-	int		lightstylevalue[MAX_LIGHTSTYLES];	// value 0 - 65536
-	float		lightcache[MAX_LIGHTSTYLES];
+	byte		visbytes[(MAX_MAP_LEAFS+7)/8];// actual PVS for current frame
 
 	float		viewplanedist;
 	mplane_t		clipPlane;
@@ -161,7 +160,6 @@ typedef struct
 	int		whiteTexture;
 	int		grayTexture;
 	int		blackTexture;
-	int		acontTexture;
 	int		defaultTexture;   	// use for bad textures
 	int		particleTexture;	// particle texture
 	int		particleTexture2;	// unsmoothed particle texture
@@ -210,6 +208,9 @@ typedef struct
 	int		dlightframecount;	// dynamic light frame
 	int		realframecount;	// not including passes
 	int		framecount;
+
+	int		lightstylevalue[MAX_LIGHTSTYLES];	// value 0 - 65536
+	float		lightcache[MAX_LIGHTSTYLES];
 
 	// cull info
 	vec3_t		modelorg;		// relative to viewpoint
@@ -265,6 +266,7 @@ void GL_LoadTexMatrixExt( const float *glmatrix );
 void GL_LoadMatrix( const matrix4x4 source );
 void GL_TexGen( GLenum coord, GLenum mode );
 void GL_SelectTexture( GLint texture );
+void GL_CleanupAllTextureUnits( void );
 void GL_LoadIdentityTexMatrix( void );
 void GL_DisableAllTexGens( void );
 void GL_SetRenderMode( int mode );
@@ -302,13 +304,14 @@ void R_UploadStretchRaw( int texture, int cols, int rows, int width, int height,
 //
 void R_SetTextureParameters( void );
 gltexture_t *R_GetTexture( GLenum texnum );
-void GL_SetTextureType( GLenum texnum, GLenum type );
 int GL_LoadTexture( const char *name, const byte *buf, size_t size, int flags, imgfilter_t *filter );
+int GL_LoadTextureArray( const char **names, int flags, imgfilter_t *filter );
 int GL_LoadTextureInternal( const char *name, rgbdata_t *pic, texFlags_t flags, qboolean update );
 byte *GL_ResampleTexture( const byte *source, int in_w, int in_h, int out_w, int out_h, qboolean isNormalMap );
 int GL_CreateTexture( const char *name, int width, int height, const void *buffer, texFlags_t flags );
+int GL_CreateTextureArray( const char *name, int width, int height, int depth, const void *buffer, texFlags_t flags );
 void GL_ProcessTexture( int texnum, float gamma, int topColor, int bottomColor );
-void GL_TexFilter( gltexture_t *tex, qboolean update );
+void GL_ApplyTextureParams( gltexture_t *tex );
 void R_FreeImage( gltexture_t *image );
 int GL_FindTexture( const char *name );
 void GL_FreeTexture( GLenum texnum );
@@ -422,16 +425,15 @@ void R_InitSky( struct mip_s *mt, struct texture_s *tx );
 void R_AddSkyBoxSurface( msurface_t *fa );
 void R_ClearSkyBox( void );
 void R_DrawSkyBox( void );
-void EmitSkyLayers( msurface_t *fa );
-void EmitSkyPolys( msurface_t *fa );
-void EmitWaterPolys( glpoly_t *polys, qboolean noCull );
-void R_DrawSkyChain( msurface_t *s );
+void R_DrawClouds( void );
+void EmitWaterPolys( glpoly_t *polys, qboolean noCull, qboolean direction );
 
 //
 // gl_vidnt.c
 //
 #define GL_CheckForErrors() GL_CheckForErrors_( __FILE__, __LINE__ )
 void GL_CheckForErrors_( const char *filename, const int fileline );
+void *GL_GetProcAddress( const char *name );
 void GL_UpdateSwapInterval( void );
 void GL_UpdateGammaRamp( void );
 qboolean GL_DeleteContext( void );
@@ -492,40 +494,36 @@ void R_NewMap( void );
 enum
 {
 	GL_OPENGL_110 = 0,		// base
+	GL_WGL_EXTENSIONS,
 	GL_WGL_SWAPCONTROL,		
 	GL_WGL_PROCADDRESS,
-	GL_HARDWARE_GAMMA_CONTROL,
 	GL_ARB_VERTEX_BUFFER_OBJECT_EXT,
-	GL_ENV_COMBINE_EXT,
+	GL_ARB_VERTEX_ARRAY_OBJECT_EXT,
 	GL_ARB_MULTITEXTURE,
-	GL_TEXTURECUBEMAP_EXT,
-	GL_DOT3_ARB_EXT,
+	GL_TEXTURE_CUBEMAP_EXT,
 	GL_ANISOTROPY_EXT,
-	GL_TEXTURE_LODBIAS,
+	GL_TEXTURE_LOD_BIAS,
 	GL_OCCLUSION_QUERIES_EXT,
 	GL_TEXTURE_COMPRESSION_EXT,
 	GL_SHADER_GLSL100_EXT,
-	GL_SGIS_MIPMAPS_EXT,
 	GL_DRAW_RANGEELEMENTS_EXT,
-	GL_LOCKARRAYS_EXT,
+	GL_TEXTURE_2D_RECT_EXT,
+	GL_TEXTURE_ARRAY_EXT,
 	GL_TEXTURE_3D_EXT,
 	GL_CLAMPTOEDGE_EXT,
-	GL_BLEND_MINMAX_EXT,
-	GL_STENCILTWOSIDE_EXT,
-	GL_BLEND_SUBTRACT_EXT,
 	GL_SHADER_OBJECTS_EXT,
-	GL_VERTEX_SHADER_EXT,	// glsl vertex program
-	GL_FRAGMENT_SHADER_EXT,	// glsl fragment program	
-	GL_EXT_POINTPARAMETERS,
-	GL_SEPARATESTENCIL_EXT,
 	GL_ARB_TEXTURE_NPOT_EXT,
-	GL_CUSTOM_VERTEX_ARRAY_EXT,
-	GL_TEXTURE_ENV_ADD_EXT,
 	GL_CLAMP_TEXBORDER_EXT,
 	GL_ARB_TEXTURE_FLOAT_EXT,
+	GL_ARB_HALF_FLOAT_EXT,
 	GL_ARB_DEPTH_FLOAT_EXT,
 	GL_ARB_SEAMLESS_CUBEMAP,
+	GL_FRAMEBUFFER_OBJECT,
+	GL_DRAW_BUFFERS_EXT,
+	GL_EXT_GPU_SHADER4,		// shaders only
+	GL_ARB_TEXTURE_RG,
 	GL_DEPTH_TEXTURE,
+	GL_DEBUG_OUTPUT,
 	GL_SHADOW_EXT,
 	GL_EXTCOUNT,		// must be last
 };
@@ -540,14 +538,24 @@ enum
 	MAX_TEXTURE_UNITS = 32	// can't acess to all over units without GLSL or cg
 };
 
+typedef enum
+{
+	GLHW_GENERIC,		// where everthing works the way it should
+	GLHW_RADEON,		// where you don't have proper GLSL support
+	GLHW_NVIDIA		// Geforce 8/9 class DX10 hardware
+} glHWType_t;
+
 typedef struct
 {
 	const char	*renderer_string;		// ptrs to OpenGL32.dll, use with caution
 	const char	*vendor_string;
 	const char	*version_string;
 
+	glHWType_t	hardware_type;
+
 	// list of supported extensions
 	const char	*extensions_string;
+	const char	*wgl_extensions_string;
 	byte		extension[GL_EXTCOUNT];
 
 	int		max_texture_units;
@@ -555,12 +563,13 @@ typedef struct
 	int		max_teximage_units;
 	GLint		max_2d_texture_size;
 	GLint		max_2d_rectangle_size;
+	GLint		max_2d_texture_layers;
 	GLint		max_3d_texture_size;
 	GLint		max_cubemap_size;
-	GLint		texRectangle;
+	GLint		max_draw_buffers;
 
 	GLfloat		max_texture_anisotropy;
-	GLfloat		max_texture_lodbias;
+	GLfloat		max_texture_lod_bias;
 
 	GLint		max_vertex_uniforms;
 	GLint		max_vertex_attribs;
@@ -569,6 +578,9 @@ typedef struct
 	int		alpha_bits;
 	int		depth_bits;
 	int		stencil_bits;
+
+	gl_context_type_t	context;
+	gles_wrapper_t	wrapper;
 
 	qboolean		softwareGammaUpdate;
 	qboolean		deviceSupportsGamma;
@@ -608,8 +620,8 @@ typedef struct
 	int		desktopWidth;
 	int		desktopHeight;
 
-	qboolean		software;		// OpenGL software emulation
 	qboolean		initialized;	// OpenGL subsystem started
+	qboolean		extended;		// extended context allows to GL_Debug
 } glwstate_t;
 
 extern glconfig_t		glConfig;
@@ -619,7 +631,6 @@ extern glwstate_t		glw_state;
 //
 // renderer cvars
 //
-extern convar_t	*gl_allow_software;
 extern convar_t	*gl_texture_anisotropy;
 extern convar_t	*gl_extensions;
 extern convar_t	*gl_stencilbits;
@@ -627,11 +638,9 @@ extern convar_t	*gl_ignorehwgamma;
 extern convar_t	*gl_swapInterval;
 extern convar_t	*gl_check_errors;
 extern convar_t	*gl_round_down;
-extern convar_t	*gl_texturemode;
 extern convar_t	*gl_texture_lodbias;
-extern convar_t	*gl_showtextures;
+extern convar_t	*gl_texture_nearest;
 extern convar_t	*gl_compress_textures;
-extern convar_t	*gl_luminance_textures;
 extern convar_t	*gl_compensate_gamma_screenshots;
 extern convar_t	*gl_keeptjunctions;
 extern convar_t	*gl_detailscale;
@@ -672,7 +681,6 @@ extern convar_t	*r_fastsky;
 extern convar_t	*vid_displayfrequency;
 extern convar_t	*vid_fullscreen;
 extern convar_t	*vid_gamma;
-extern convar_t	*vid_texgamma;
 extern convar_t	*vid_mode;
 
 #endif//GL_LOCAL_H

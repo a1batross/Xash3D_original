@@ -71,6 +71,29 @@ int Q_strlen( const char *string )
 	return len;
 }
 
+int Q_colorstr( const char *string )
+{
+	int		len;
+	const char	*p;
+
+	if( !string ) return 0;
+
+	len = 0;
+	p = string;
+	while( *p )
+	{
+		if( IsColorString( p ))
+		{
+			len += 2;
+			p += 2;
+			continue;
+		}
+		p++;
+	}
+
+	return len;
+}
+
 char Q_toupper( const char in )
 {
 	char	out;
@@ -290,7 +313,7 @@ void Q_atov( float *vec, const char *str, size_t siz )
 	int	j;
 
 	Q_strncpy( buffer, str, sizeof( buffer ));
-	Q_memset( vec, 0, sizeof( vec_t ) * siz );
+	memset( vec, 0, sizeof( vec_t ) * siz );
 	pstr = pfront = buffer;
 
 	for( j = 0; j < siz; j++ )
@@ -572,6 +595,26 @@ int Q_sprintf( char *buffer, const char *format, ... )
 	return result;
 }
 
+uint Q_hashkey( const char *string, uint hashSize, qboolean caseinsensitive )
+{
+	uint	i, hashKey = 0;
+
+	if( caseinsensitive )
+	{
+		for( i = 0; string[i]; i++)
+			hashKey += (i * 119) * Q_tolower( string[i] );
+	}
+	else
+	{
+		for( i = 0; string[i]; i++ )
+			hashKey += (i + 119) * (int)string[i];
+	}
+
+	hashKey = ((hashKey ^ (hashKey >> 10)) ^ (hashKey >> 20)) & (hashSize - 1);
+
+	return hashKey;
+}
+
 char *Q_pretifymem( float value, int digitsafterdecimal )
 {
 	static char	output[8][32];
@@ -666,36 +709,4 @@ char *va( const char *format, ... )
 	va_end( argptr );
 
 	return s;
-}
-
-void _Q_memcpy( void *dest, const void *src, size_t count, const char *filename, int fileline )
-{
-	if( src == NULL || count <= 0 ) return; // nothing to copy
-	if( dest == NULL ) Sys_Error( "memcpy: dest == NULL (called at %s:%i)\n", filename, fileline );
-	memcpy( dest, src, count );
-}
-
-void _Q_memset( void *dest, int set, size_t count, const char *filename, int fileline )
-{
-	if( dest == NULL ) Sys_Error( "memset: dest == NULL (called at %s:%i)\n", filename, fileline );
-	memset( dest, set, count );
-}
-
-int _Q_memcmp( const void *src0, const void *src1, size_t count, const char *filename, int fileline )
-{
-	if( src0 == NULL ) Sys_Error( "memcmp: src1 == NULL (called at %s:%i)\n", filename, fileline );
-	if( src1 == NULL ) Sys_Error( "memcmp: src2 == NULL (called at %s:%i)\n", filename, fileline );
-	return memcmp( src0, src1, count );
-}
-
-void _Q_memmove( void *dest, const void *src, size_t count, const char *filename, int fileline )
-{
-	if( src == NULL || count <= 0 ) return; // nothing to move
-	if( dest == NULL ) Sys_Error( "memmove: dest == NULL (called at %s:%i)\n", filename, fileline );
-	memmove( dest, src, count );
-}
-
-void CRT_Init( void )
-{
-	Memory_Init();
 }
