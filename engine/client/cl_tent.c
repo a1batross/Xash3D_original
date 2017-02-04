@@ -760,7 +760,7 @@ void CL_MuzzleFlash( const vec3_t pos, int type )
 	float		scale;
 
 	index = ( type % 10 ) % MAX_MUZZLEFLASH;
-	scale = ( type / 10 ) * 0.1f;
+	scale = ( type / 5 ) * 0.1f; //magic nipples - this was / 10, but 5 in the previous version. Fixing it...
 	if( scale == 0.0f ) scale = 0.5f;
 
 	modelIndex = cl_muzzleflash[index];
@@ -1295,6 +1295,66 @@ void CL_Sprite_Trail( int type, const vec3_t vecStart, const vec3_t vecEnd, int 
 		pTemp->entity.curstate.frame = Com_RandomLong( 0, flFrameCount - 1 );
 		pTemp->frameMax = flFrameCount - 1;
 		pTemp->die = cl.time + flLife + Com_RandomFloat( 0.0f, 4.0f );
+	}
+}
+
+/*
+===============
+CL_98Sparks
+
+Magic Nipples - 98 sparks
+===============
+*/
+void CL_SparkShower( const vec3_t org )
+{
+	TEMPENTITY	*pTemp;
+	vec3_t		vecDelta, vecDir;
+	int		i;
+	int modelIndex;
+	model_t *pmodel;
+	model_t *zmodel;
+	int nCount = 5;
+	float flSize = 0.1;
+	float flAmplitude = 50;
+	float flSpeed = 90;
+
+	zmodel = Mod_Handle( CL_FindModelIndex( "sprites/richo1.spr" ));
+	CL_RicochetSprite( org, zmodel, 0.0f, Com_RandomFloat( 0.4f, 0.6f ));
+
+	modelIndex = CL_FindModelIndex( "sprites/spark.spr" );
+	pmodel = Mod_Handle( modelIndex );
+
+	VectorSubtract( org, org, vecDelta );
+	VectorNormalize2( vecDelta, vecDir );
+
+	flAmplitude /= 256.0f;
+
+	for( i = 0; i < nCount; i++ )
+	{
+		vec3_t	vecPos, vecVel;
+
+		// Be careful of divide by 0 when using 'count' here...
+		if( i == 0 ) VectorCopy( org, vecPos );
+		else VectorMA( org, ( i / ( nCount - 1.0f )), vecDelta, vecPos );
+
+		pTemp = CL_TempEntAlloc( vecPos, pmodel );
+		if( !pTemp ) return;
+
+		pTemp->flags = (FTENT_COLLIDEWORLD|FTENT_SPRCYCLE|FTENT_SLOWGRAVITY);
+
+		VectorScale( vecDir, flSpeed, vecVel );
+		vecVel[0] += Com_RandomFloat( -127.0f, 128.0f ) * flAmplitude;
+		vecVel[1] += Com_RandomFloat( -127.0f, 128.0f ) * flAmplitude;
+		vecVel[2] += Com_RandomFloat( -127.0f, 128.0f ) * flAmplitude;
+		VectorCopy( vecVel, pTemp->entity.baseline.origin );
+		VectorCopy( vecPos, pTemp->entity.origin );
+
+		pTemp->entity.curstate.scale = flSize;
+		pTemp->entity.curstate.rendermode = kRenderTransAdd;
+		pTemp->entity.curstate.renderfx = kRenderFxFadeFast;
+		pTemp->entity.curstate.renderamt = pTemp->entity.baseline.renderamt = 255;
+
+		pTemp->die = cl.time + 1;
 	}
 }
 

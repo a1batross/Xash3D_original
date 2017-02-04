@@ -84,7 +84,10 @@ convar_t			*r_studio_sort_textures;
 convar_t			*r_drawviewmodel;
 convar_t			*r_customdraw_playermodel;
 convar_t			*cl_himodels;
-cvar_t			r_shadows = { "r_shadows", "0", 0, 0 };	// dead cvar. especially disabled
+convar_t			*r_viewmodelfov; //magic nipples - weapon fov
+convar_t			*r_viewmodelchrome; //magic nipples - weapon chrome
+convar_t			*r_shadows; //magic nipples - shadows
+//cvar_t			r_shadows = { "r_shadows", "0", 0, 0 };	// dead cvar. especially disabled
 cvar_t			r_shadowalpha = { "r_shadowalpha", "0.5", 0, 0.8f };
 static r_studio_interface_t	*pStudioDraw;
 static float		aliasXscale, aliasYscale;	// software renderer scale
@@ -144,8 +147,13 @@ void R_StudioInit( void )
 	r_studio_lerping = Cvar_Get( "r_studio_lerping", "1", CVAR_ARCHIVE, "enables studio animation lerping" );
 	r_drawviewmodel = Cvar_Get( "r_drawviewmodel", "1", 0, "draw firstperson weapon model" );
 	cl_himodels = Cvar_Get( "cl_himodels", "1", CVAR_ARCHIVE, "draw high-resolution player models in multiplayer" );
-	r_studio_lighting = Cvar_Get( "r_studio_lighting", "1", CVAR_ARCHIVE, "studio lighting models ( 0 - normal, 1 - extended, 2 - experimental )" );
-	r_studio_sort_textures = Cvar_Get( "r_studio_sort_textures", "0", CVAR_ARCHIVE, "sort additive and normal textures for right drawing" );
+	r_studio_lighting = Cvar_Get( "r_studio_lighting", "2", CVAR_ARCHIVE, "studio lighting models ( 0 - normal, 1 - extended, 2 - experimental )" );
+	r_studio_sort_textures = Cvar_Get( "r_studio_sort_textures", "1", CVAR_ARCHIVE, "sort additive and normal textures for right drawing" );
+
+	r_viewmodelfov = Cvar_Get( "cl_viewmodel_fov", "90", CVAR_ARCHIVE, "change fov of the viewmodels" ); //magic nipples - weapon fov
+	r_viewmodelchrome = Cvar_Get( "cl_viewmodel_chrome", "0", CVAR_ARCHIVE, "viewmodel chrome affected by player rotation" ); //magic nipples - weapon chrome
+
+	r_shadows = Cvar_Get( "r_shadows", "0", CVAR_ARCHIVE, "old drop shadows" ); //magic nipples - shadows
 
 	// NOTE: some mods with custom studiomodel renderer may cause error when menu trying draw player model out of the loaded game
 	r_customdraw_playermodel = Cvar_Get( "r_customdraw_playermodel", "0", CVAR_ARCHIVE, "allow to drawing playermodel in menu with client renderer" );
@@ -1340,6 +1348,43 @@ void R_StudioSetupChrome( float *pchrome, int bone, vec3_t normal )
 
 /*
 ====================
+StudioSetupChromeView
+magic nipples - weapon chrome
+====================
+*/
+void R_StudioSetupChromeView( float *pchrome, int bone, vec3_t normal )
+{
+	float n;
+
+	if( g_chromeage[bone] != g_nStudioCount )
+	{
+		// calculate vectors from the viewer to the bone. This roughly adjusts for position
+		vec3_t chromeupvec;		// g_chrome t vector in world reference frame
+		vec3_t chromerightvec;	// g_chrome s vector in world reference frame
+		vec3_t tmp;				// vector pointing at bone in world reference frame
+
+		VectorCopy( g_chrome_origin, tmp );
+		tmp[0] += g_bonestransform[bone][0][3];
+		tmp[1] += g_bonestransform[bone][1][3];
+		tmp[2] += g_bonestransform[bone][2][3];
+
+		VectorNormalize( tmp );
+
+		Matrix3x4_VectorIRotate( g_bonestransform[bone], chromeupvec, g_chromeup[bone] );
+		Matrix3x4_VectorIRotate( g_bonestransform[bone], chromerightvec, g_chromeright[bone] );
+		g_chromeage[bone] = g_nStudioCount;
+	}
+	// calc s coord
+	n = DotProduct( normal, g_chromeright[bone] );
+	pchrome[0] = (n + 1.0) * 45; // FIX: make this a float
+
+	// calc t coord
+	n = DotProduct( normal, g_chromeup[bone] );
+	pchrome[1] = (n + 1.0) * 45; // FIX: make this a float
+}
+
+/*
+====================
 StudioCalcAttachments
 
 ====================
@@ -1429,12 +1474,13 @@ void R_StudioGetShadowImpactAndDir( void )
 
 	// convert skyvec into angles then back into vector to avoid 0 0 0 direction
 	VectorAngles( (float *)&cl.refdef.movevars->skyvec_x, skyAngles );
-	angle = skyAngles[YAW] / 180 * M_PI;
+	//angle = skyAngles[YAW] / 180 * M_PI;
+	angle = skyAngles[YAW] * M_PI;
 
 	Matrix3x4_OriginFromMatrix( g_bonestransform[0], origin );
 	SinCos( angle, &g_mvShadowVec[1], &g_mvShadowVec[0] );
 
-	R_LightDir( origin, g_mvShadowVec, 256.0f );
+	//R_LightDir( origin, g_mvShadowVec, 256.0f ); //magic nipples - shadows wont change for dyn lights.
 
 	VectorSet( g_mvShadowVec, -g_mvShadowVec[0], -g_mvShadowVec[1], -1.0f );
 	VectorNormalize( g_mvShadowVec );
@@ -1993,7 +2039,11 @@ static void R_StudioDrawPoints( void )
 			R_StudioLighting( lv, *pnormbone, g_nFaceFlags, (float *)pstudionorms );
 
 			if(( g_nFaceFlags & STUDIO_NF_CHROME ) || ( g_nForceFaceFlags & STUDIO_NF_CHROME ))
-				R_StudioSetupChrome( g_chrome[(float (*)[3])lv - g_lightvalues], *pnormbone, (float *)pstudionorms );
+			{
+				if( ( RI.currententity == &clgame.viewent ) && ( r_viewmodelchrome->integer ) )//magic nipples - weapon chrome
+					R_StudioSetupChromeView( g_chrome[(float (*)[3])lv - g_lightvalues], *pnormbone, (float *)pstudionorms );
+				else R_StudioSetupChrome( g_chrome[(float (*)[3])lv - g_lightvalues], *pnormbone, (float *)pstudionorms );
+			}
 		}
 	}
 
@@ -2055,7 +2105,21 @@ static void R_StudioDrawPoints( void )
 
 			if( g_iRenderMode == kRenderNormal )
 			{
-				pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
+				//pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
+				//magic nipples - overbright
+				if( r_overbright->value > 0 )
+				{
+					pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_COMBINE_ARB );
+					pglTexEnvi( GL_TEXTURE_ENV, GL_COMBINE_RGB_ARB, GL_MODULATE );
+					pglTexEnvi( GL_TEXTURE_ENV, GL_SOURCE0_RGB_ARB, GL_PREVIOUS_ARB );
+					pglTexEnvi( GL_TEXTURE_ENV, GL_SOURCE1_RGB_ARB, GL_TEXTURE );
+					pglTexEnvi( GL_TEXTURE_ENV, GL_RGB_SCALE_ARB, 2 );
+				}
+				else
+				{
+					pglTexEnvi( GL_TEXTURE_ENV, GL_RGB_SCALE_ARB, 1 );
+					pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
+				}
 				alpha = 1.0f;
 			}
 			else alpha = RI.currententity->curstate.renderamt * (1.0f / 255.0f);
@@ -2704,10 +2768,12 @@ static void GL_StudioDrawShadow( void )
 
 	pglDepthMask( GL_TRUE );
 
-	if( r_shadows.value != 0.0f )
+	if( r_shadows->integer )
 	{
-		if( RI.currententity->baseline.movetype != MOVETYPE_FLY )
+		if( RI.currententity->baseline.movetype != MOVETYPE_NONE )
 		{
+			if( RI.currententity->baseline.movetype != MOVETYPE_FLY )
+			{
 			rendermode = RI.currententity->baseline.rendermode;
 
 			if( rendermode == kRenderNormal && RI.currententity != &clgame.viewent )
@@ -2734,6 +2800,7 @@ static void GL_StudioDrawShadow( void )
 
 				pglColor4f( 1.0f, 1.0f, 1.0f, 1.0f );
 				pglShadeModel( GL_SMOOTH );
+			}
 			}
 		}
 	}
@@ -3329,12 +3396,58 @@ void R_RunViewmodelEvents( void )
 }
 
 /*
+=============
+R_GetFarClip //magic nipples - weapon fov
+=============
+*/
+float R_GetFarClip( void )
+{
+	if( cl.worldmodel && RI.drawWorld )
+		return cl.refdef.movevars->zmax * 1.5f;
+	return 2048.0f;
+}
+
+/*
+=============
+R_SetupProjectionMatrix2 //magic nipples - weapon fov
+=============
+*/
+void R_SetupProjectionMatrix2( float fov_x, float fov_y, matrix4x4 m )
+{
+	GLdouble	xMin, xMax, yMin, yMax, zNear, zFar;
+
+	if( RI.drawOrtho )
+	{
+		ref_overview_t *ov = &clgame.overView;
+		Matrix4x4_CreateOrtho( m, ov->xLeft, ov->xRight, ov->xTop, ov->xBottom, ov->zNear, ov->zFar );
+		RI.clipFlags = 0;
+		return;
+	}
+
+	RI.farClip = R_GetFarClip();
+
+	zNear = 4.0f;
+	zFar = max( 256.0f, RI.farClip );
+
+	yMax = zNear * tan( fov_y * M_PI / 360.0 );
+	yMin = -yMax;
+
+	xMax = zNear * tan( fov_x * M_PI / 360.0 );
+	xMin = -xMax;
+
+	Matrix4x4_CreateProjection( m, xMax, xMin, yMax, yMin, zNear, zFar );
+}
+
+
+/*
 =================
 R_DrawViewModel
 =================
 */
 void R_DrawViewModel( void )
 {
+	float	m_flViewmodelFov, flFOVOffset,x ,fov_x, fov_y;
+
 	if( RI.refdef.onlyClientDraw || r_drawviewmodel->integer == 0 )
 		return;
 
@@ -3365,7 +3478,44 @@ void R_DrawViewModel( void )
 	RI.currententity->curstate.animtime = cl.weaponstarttime;
 	RI.currententity->curstate.sequence = cl.weaponsequence;
 
-	pStudioDraw->StudioDrawModel( STUDIO_RENDER );
+	//pStudioDraw->StudioDrawModel( STUDIO_RENDER ); //magic nipples - weapon fov. comment this out, and everything in the ==== is new.
+
+	//===============================================================================
+
+	// Find the offset our current FOV is from the default value
+	flFOVOffset = cl.data.fov - RI.refdef.fov_x;
+
+	// Adjust the viewmodel's FOV to move with any FOV offsets on the viewer's end
+	m_flViewmodelFov = r_viewmodelfov->value - flFOVOffset;
+
+	// calc local FOV
+	x = scr_width->integer / tan( m_flViewmodelFov / 360 * M_PI );
+
+	fov_x = m_flViewmodelFov;
+	fov_y = atan( scr_height->integer / x ) * 360 / M_PI;
+
+	if( fov_x != RI.refdef.fov_x )
+	{
+		//matrix4x4	oldProjectionMatrix = RI.projectionMatrix;
+		R_SetupProjectionMatrix2( fov_x, fov_y, RI.projectionMatrix );
+
+		pglMatrixMode( GL_PROJECTION );
+		GL_LoadMatrix( RI.projectionMatrix );
+
+		pStudioDraw->StudioDrawModel( STUDIO_RENDER );
+
+		// restore original matrix
+		//RI.projectionMatrix = oldProjectionMatrix;
+
+		pglMatrixMode( GL_PROJECTION );
+		GL_LoadMatrix( RI.projectionMatrix );
+	}
+	else
+	{
+		pStudioDraw->StudioDrawModel( STUDIO_RENDER );
+	}
+	
+	//================================================================================
 
 	// restore depth range
 	pglDepthRange( gldepthmin, gldepthmax );

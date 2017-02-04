@@ -53,6 +53,7 @@ extern byte	*r_temppool;
 #define RP_NORMALPASS()	((RI.params & RP_NONVIEWERREF) == 0 )
 
 #define TF_SKY		(TF_SKYSIDE|TF_UNCOMPRESSED|TF_NOMIPMAP|TF_NOPICMIP)
+#define TF_SKY_NEAREST		(TF_NEAREST)
 #define TF_FONT		(TF_UNCOMPRESSED|TF_NOPICMIP|TF_NOMIPMAP|TF_CLAMP)
 #define TF_IMAGE		(TF_UNCOMPRESSED|TF_NOPICMIP|TF_NOMIPMAP|TF_CLAMP)
 #define TF_DECAL		(TF_CLAMP|TF_UNCOMPRESSED)
@@ -682,5 +683,9 @@ extern convar_t	*vid_displayfrequency;
 extern convar_t	*vid_fullscreen;
 extern convar_t	*vid_gamma;
 extern convar_t	*vid_mode;
+
+extern convar_t	*windowless;
+
+extern convar_t	*r_overbright; //magic nipples - overbright
 
 #endif//GL_LOCAL_H

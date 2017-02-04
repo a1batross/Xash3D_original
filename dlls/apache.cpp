@@ -350,6 +350,7 @@ void CApache :: DyingThink( void )
 			WRITE_BYTE( 0 );		// speed
 		MESSAGE_END();
 
+		STOP_SOUND( ENT(pev), CHAN_STATIC, "apache/ap_whine1.wav" );
 		EMIT_SOUND(ENT(pev), CHAN_STATIC, "weapons/mortarhit.wav", 1.0, 0.3);
 
 		RadiusDamage( pev->origin, pev, pev, 300, CLASS_NONE, DMG_BLAST );
@@ -705,8 +706,8 @@ void CApache :: Flight( void )
 	// make rotor, engine sounds
 	if (m_iSoundState == 0)
 	{
-		EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "apache/ap_rotor2.wav", 1.0, 0.3, 0, 110 );
-		// EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "apache/ap_whine1.wav", 0.5, 0.2, 0, 110 );
+		EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "apache/ap_rotor2.wav", 1.0, 0.45, 0, 110 );
+		EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "apache/ap_whine1.wav", 0.5, 0.45, 0, 110 );
 
 		m_iSoundState = SND_CHANGE_PITCH; // hack for going through level transitions
 	}
@@ -734,9 +735,9 @@ void CApache :: Flight( void )
 			if (flVol > 1.0) 
 				flVol = 1.0;
 
-			EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "apache/ap_rotor2.wav", 1.0, 0.3, SND_CHANGE_PITCH | SND_CHANGE_VOL, pitch);
+			EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "apache/ap_rotor2.wav", 1.0, 0.45, SND_CHANGE_PITCH | SND_CHANGE_VOL, pitch);
+			EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "apache/ap_whine1.wav", 0.5, 0.45, SND_CHANGE_PITCH | SND_CHANGE_VOL, pitch);
 		}
-		// EMIT_SOUND_DYN(ENT(pev), CHAN_STATIC, "apache/ap_whine1.wav", flVol, 0.2, SND_CHANGE_PITCH | SND_CHANGE_VOL, pitch);
 	
 		// ALERT( at_console, "%.0f %.2f\n", pitch, flVol );
 	}

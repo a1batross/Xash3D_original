@@ -31,7 +31,9 @@
 #include "demo_api.h"
 #include "vgui_scorepanel.h"
 
-
+// magic nipples - view roll
+cvar_t * cl_rollspeed;
+cvar_t * cl_rollangle;
 
 class CHLVoiceStatusHelper : public IVoiceStatusHelper
 {
@@ -268,6 +270,10 @@ int __MsgFunc_AllowSpec(const char *pszName, int iSize, void *pbuf)
 // This is called every time the DLL is loaded
 void CHud :: Init( void )
 {
+	//magic nipples - view roll
+	cl_rollangle = gEngfuncs.pfnRegisterVariable ("cl_rollangle", "0.6", FCVAR_CLIENTDLL | FCVAR_ARCHIVE);
+	cl_rollspeed = gEngfuncs.pfnRegisterVariable ("cl_rollspeed", "325", FCVAR_CLIENTDLL | FCVAR_ARCHIVE);
+
 	HOOK_MESSAGE( Logo );
 	HOOK_MESSAGE( ResetHUD );
 	HOOK_MESSAGE( GameMode );

@@ -918,6 +918,8 @@ void UI_PushMenu( menuFramework_s *menu )
 	int		i;
 	menuCommon_s	*item;
 
+	UI_StartSound( uiSoundIn ); //magic nipples - put upmenu sound here to match downmenu
+
 	// if this menu is already present, drop back to that level to avoid stacking menus by hotkeys
 	for( i = 0; i < uiStatic.menuDepth; i++ )
 	{
@@ -1062,11 +1064,14 @@ void UI_UpdateMenu( float flTime )
 
 	// delay playing the enter sound until after the menu has been
 	// drawn, to avoid delay while caching images
+	// magic nipples - old upsound call
+	/*
 	if( uiStatic.enterSound > 0.0f && uiStatic.enterSound <= gpGlobals->time )
 	{
 		UI_StartSound( uiSoundIn );
 		uiStatic.enterSound = -1;
 	}
+	*/
 }
 
 /*

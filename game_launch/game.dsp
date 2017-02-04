@@ -55,8 +55,8 @@ LINK32=link.exe
 InputPath=.\hl.exe
 SOURCE="$(InputPath)"
 
-"D:\Xash3D\hl.exe" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
-	copy hl.exe "D:\Xash3D\hl.exe"
+"D:\BUILD\hl.exe" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+	copy hl.exe "D:\BUILD\hl.exe"
 
 # End Custom Build
 # Begin Target

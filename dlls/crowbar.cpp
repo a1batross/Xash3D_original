@@ -202,6 +202,19 @@ int CCrowbar::Swing( int fFirst )
 	{
 		if (fFirst)
 		{
+			//magic nipples - moved this miss stuff to server to prevent any glitches from client prediction
+			switch( ((m_iSwing++) % 2) + 1 )
+			{
+			case 0:
+				SendWeaponAnim( CROWBAR_ATTACK1MISS ); break;
+			case 1:
+				SendWeaponAnim( CROWBAR_ATTACK2MISS ); break;
+			case 2:
+				SendWeaponAnim( CROWBAR_ATTACK3MISS ); break;
+			}
+
+			EMIT_SOUND(ENT(m_pPlayer->pev), CHAN_ITEM, "weapons/cbar_miss1.wav", 1, ATTN_NORM);
+
 			// miss
 			m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.5;
 			
@@ -304,6 +317,7 @@ int CCrowbar::Swing( int fFirst )
 
 		m_pPlayer->m_iWeaponVolume = flVol * CROWBAR_WALLHIT_VOLUME;
 #endif
+
 		m_flNextPrimaryAttack = UTIL_WeaponTimeBase() + 0.25;
 		
 		SetThink( Smack );

@@ -31,9 +31,11 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define ID_APPLY		2
 #define ID_DONE		3
 #define ID_VIDMODELIST	4
-#define ID_FULLSCREEN	5
+#define ID_WINDOWLESS	5
 #define ID_VERTICALSYNC	6
 #define ID_TABLEHINT	7
+
+static char	ModeText[8];
 
 #define MAX_VIDMODES	(sizeof( uiVideoModes ) / sizeof( uiVideoModes[0] )) + 1
 
@@ -75,8 +77,10 @@ typedef struct
 	menuBitmap_s	banner;
 	menuPicButton_s	ok;
 	menuPicButton_s	cancel;
-	menuCheckBox_s	windowed;
+	//menuCheckBox_s	windowed;
 	menuCheckBox_s	vsync;
+
+	menuSpinControl_s	windowless;
 
 	menuScrollList_s	vidList;
 	menuAction_s	listCaption;
@@ -98,11 +102,31 @@ static void UI_VidModes_GetConfig( void )
 	uiVidModes.vidList.itemNames = uiVidModes.videoModesPtr;
 	uiVidModes.vidList.curItem = CVAR_GET_FLOAT( "vid_mode" );
 
-	if( !CVAR_GET_FLOAT( "fullscreen" ))
-		uiVidModes.windowed.enabled = 1;
+	//if( !CVAR_GET_FLOAT( "fullscreen" ))
+	//	uiVidModes.windowed.enabled = 1;
 
 	if( CVAR_GET_FLOAT( "gl_swapInterval" ))
 		uiVidModes.vsync.enabled = 1;
+
+	//==========================================//
+	if( CVAR_GET_FLOAT( "fullscreen" ))
+	{
+		uiVidModes.windowless.curValue = 1;
+		sprintf( ModeText, "Fullscreen" );
+	}
+	else if( CVAR_GET_FLOAT( "windowless" ))
+	{
+		uiVidModes.windowless.curValue = 3;
+		sprintf( ModeText, "Borderless" );
+	}
+	else
+	{
+		uiVidModes.windowless.curValue = 2;
+		sprintf( ModeText, "Windowed" );
+	}
+
+	uiVidModes.windowless.generic.name = ModeText;
+	//==========================================//
 }
 
 /*
@@ -113,8 +137,26 @@ UI_VidModes_SetConfig
 static void UI_VidOptions_SetConfig( void )
 {
 	CVAR_SET_FLOAT( "vid_mode", uiVidModes.vidList.curItem );
-	CVAR_SET_FLOAT( "fullscreen", !uiVidModes.windowed.enabled );
+	//CVAR_SET_FLOAT( "fullscreen", !uiVidModes.windowed.enabled );
 	CVAR_SET_FLOAT( "gl_swapInterval", uiVidModes.vsync.enabled );
+
+	//==========================================//
+	if( uiVidModes.windowless.curValue == 1 )
+	{
+		CVAR_SET_FLOAT( "fullscreen", 1 );
+		CVAR_SET_FLOAT( "windowless", 0 );
+	}
+	else if( uiVidModes.windowless.curValue == 2 )
+	{
+		CVAR_SET_FLOAT( "fullscreen", 0 );
+		CVAR_SET_FLOAT( "windowless", 0 );
+	}
+	else if( uiVidModes.windowless.curValue == 3 )
+	{
+		CVAR_SET_FLOAT( "fullscreen", 0 );
+		CVAR_SET_FLOAT( "windowless", 1 );
+	}
+	//==========================================//
 }
 
 /*
@@ -125,6 +167,23 @@ UI_VidModes_UpdateConfig
 static void UI_VidOptions_UpdateConfig( void )
 {
 	CVAR_SET_FLOAT( "gl_swapInterval", uiVidModes.vsync.enabled );
+
+	//==========================================//
+	if( uiVidModes.windowless.curValue == 1 )
+	{
+		sprintf( ModeText, "Fullscreen" );
+	}
+	else if( uiVidModes.windowless.curValue == 2 )
+	{
+		sprintf( ModeText, "Windowed" );
+	}
+	else if( uiVidModes.windowless.curValue == 3 )
+	{
+		sprintf( ModeText, "Borderless" );
+	}
+
+	uiVidModes.windowless.generic.name = ModeText;
+	//==========================================//
 }
 
 /*
@@ -138,7 +197,7 @@ static void UI_VidModes_Callback( void *self, int event )
 
 	switch( item->id )
 	{
-	case ID_FULLSCREEN:
+	//case ID_WINDOWLESS:
 	case ID_VERTICALSYNC:
 		if( event == QM_PRESSED )
 			((menuCheckBox_s *)self)->focusPic = UI_CHECKBOX_PRESSED;
@@ -224,17 +283,17 @@ static void UI_VidModes_Init( void )
 	uiVidModes.listCaption.generic.color = uiColorHelp;
 	uiVidModes.listCaption.generic.name = MenuStrings[HINT_DISPLAYMODE];
 	uiVidModes.listCaption.generic.x = 400;
-	uiVidModes.listCaption.generic.y = 270;
+	uiVidModes.listCaption.generic.y = 220;
 
 	uiVidModes.vidList.generic.id = ID_VIDMODELIST;
 	uiVidModes.vidList.generic.type = QMTYPE_SCROLLLIST;
 	uiVidModes.vidList.generic.flags = QMF_HIGHLIGHTIFFOCUS|QMF_SMALLFONT;
 	uiVidModes.vidList.generic.x = 400;
-	uiVidModes.vidList.generic.y = 300;
+	uiVidModes.vidList.generic.y = 250;
 	uiVidModes.vidList.generic.width = 560;
-	uiVidModes.vidList.generic.height = 300;
+	uiVidModes.vidList.generic.height = 350;
 	uiVidModes.vidList.generic.callback = UI_VidModes_Callback;
-
+/*
 	uiVidModes.windowed.generic.id = ID_FULLSCREEN;
 	uiVidModes.windowed.generic.type = QMTYPE_CHECKBOX;
 	uiVidModes.windowed.generic.flags = QMF_HIGHLIGHTIFFOCUS|QMF_ACT_ONRELEASE|QMF_MOUSEONLY|QMF_DROPSHADOW;
@@ -243,13 +302,27 @@ static void UI_VidModes_Init( void )
 	uiVidModes.windowed.generic.y = 620;
 	uiVidModes.windowed.generic.callback = UI_VidModes_Callback;
 	uiVidModes.windowed.generic.statusText = "Run game in window mode";
+	*/
+
+	uiVidModes.windowless.generic.id = ID_WINDOWLESS;
+	uiVidModes.windowless.generic.type = QMTYPE_SPINCONTROL;
+	uiVidModes.windowless.generic.flags = QMF_CENTER_JUSTIFY|QMF_HIGHLIGHTIFFOCUS|QMF_DROPSHADOW;
+	uiVidModes.windowless.generic.x = 435;
+	uiVidModes.windowless.generic.y = 610;
+	uiVidModes.windowless.generic.width = 350;
+	uiVidModes.windowless.generic.height = 28;
+	uiVidModes.windowless.generic.callback = UI_VidModes_Callback;
+	uiVidModes.windowless.generic.statusText = "Set Display Mode";
+	uiVidModes.windowless.minValue = 1;
+	uiVidModes.windowless.maxValue = 3;
+	uiVidModes.windowless.range = 1;
 
 	uiVidModes.vsync.generic.id = ID_VERTICALSYNC;
 	uiVidModes.vsync.generic.type = QMTYPE_CHECKBOX;
 	uiVidModes.vsync.generic.flags = QMF_HIGHLIGHTIFFOCUS|QMF_ACT_ONRELEASE|QMF_MOUSEONLY|QMF_DROPSHADOW;
 	uiVidModes.vsync.generic.name = "Vertical sync";
-	uiVidModes.vsync.generic.x = 400;
-	uiVidModes.vsync.generic.y = 670;
+	uiVidModes.vsync.generic.x = 398;
+	uiVidModes.vsync.generic.y = 655;
 	uiVidModes.vsync.generic.callback = UI_VidModes_Callback;
 	uiVidModes.vsync.generic.statusText = "enable vertical synchronization";
 
@@ -259,7 +332,8 @@ static void UI_VidModes_Init( void )
 	UI_AddItem( &uiVidModes.menu, (void *)&uiVidModes.banner );
 	UI_AddItem( &uiVidModes.menu, (void *)&uiVidModes.ok );
 	UI_AddItem( &uiVidModes.menu, (void *)&uiVidModes.cancel );
-	UI_AddItem( &uiVidModes.menu, (void *)&uiVidModes.windowed );
+	//UI_AddItem( &uiVidModes.menu, (void *)&uiVidModes.windowed );
+	UI_AddItem( &uiVidModes.menu, (void *)&uiVidModes.windowless );
 	UI_AddItem( &uiVidModes.menu, (void *)&uiVidModes.vsync );
 	UI_AddItem( &uiVidModes.menu, (void *)&uiVidModes.listCaption );
 	UI_AddItem( &uiVidModes.menu, (void *)&uiVidModes.vidList );

@@ -57,20 +57,13 @@ LINK32=link.exe
 # ADD LINK32 msvcrt.lib user32.lib gdi32.lib shell32.lib advapi32.lib winmm.lib mpeg.lib ../utils/vgui/lib/win32_vc6/vgui.lib /nologo /subsystem:windows /dll /pdb:none /machine:I386 /nodefaultlib:"libc" /out:"..\temp\engine\!release/xash.dll" /libpath:"./common/soundlib" /opt:nowin98
 # SUBTRACT LINK32 /debug /nodefaultlib
 # Begin Custom Build
-TargetDir=\Xash3D\src_main\temp\engine\!release
-InputPath=\Xash3D\src_main\temp\engine\!release\xash.dll
+TargetDir=\Xash\temp\engine\!release
+InputPath=\Xash\temp\engine\!release\xash.dll
 SOURCE="$(InputPath)"
 
-BuildCmds= \
-	copy $(TargetDir)\xash.dll "D:\Xash3D\xash.dll" \
-	copy $(TargetDir)\xash.dll "D:\Paranoia2\xash.dll" \
-	
+"D:\BUILD\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+	copy $(TargetDir)\xash.dll "D:\BUILD\xash.dll"
 
-"D:\Xash3D\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
-   $(BuildCmds)
-
-"D:\Paranoia2\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
-   $(BuildCmds)
 # End Custom Build
 
 !ELSEIF  "$(CFG)" == "engine - Win32 Debug"
@@ -101,20 +94,13 @@ LINK32=link.exe
 # ADD LINK32 msvcrtd.lib user32.lib gdi32.lib shell32.lib advapi32.lib winmm.lib mpeg_dbg.lib ../utils/vgui/lib/win32_vc6/vgui.lib /nologo /subsystem:windows /dll /debug /machine:I386 /nodefaultlib:"libcd.lib" /out:"..\temp\engine\!debug/xash.dll" /pdbtype:sept /libpath:"./common/soundlib"
 # SUBTRACT LINK32 /incremental:no /map /nodefaultlib
 # Begin Custom Build
-TargetDir=\Xash3D\src_main\temp\engine\!debug
-InputPath=\Xash3D\src_main\temp\engine\!debug\xash.dll
+TargetDir=\Xash\temp\engine\!debug
+InputPath=\Xash\temp\engine\!debug\xash.dll
 SOURCE="$(InputPath)"
 
-BuildCmds= \
-	copy $(TargetDir)\xash.dll "D:\Xash3D\xash.dll" \
-	copy $(TargetDir)\xash.dll "D:\Paranoia2\xash.dll" \
-	
+"D:\BUILD\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+	copy $(TargetDir)\xash.dll "D:\BUILD\xash.dll"
 
-"D:\Xash3D\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
-   $(BuildCmds)
-
-"D:\Paranoia2\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
-   $(BuildCmds)
 # End Custom Build
 
 !ENDIF 

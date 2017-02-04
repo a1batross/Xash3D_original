@@ -1121,6 +1121,20 @@ void CFuncTrackTrain :: StopSound( void )
 
 void CFuncTrackTrain :: UpdateSound( void )
 {
+	/*===================================================================================
+	magic nipples: Xash 3598 broke trains in some way so that during a change level,
+	the trains moving sound will be played constantly. This code snippet below will
+	patch this, along with the Half-Life bug where the train stop sound is played
+	on level load.
+	===================================================================================*/
+	if ( !pev->speed )
+	{
+		ALERT( at_aiconsole, "TRAIN(%s): Speed is 0\n", STRING(pev->targetname) );
+		StopSound();
+		return;
+	}
+	//simple fix :^)
+
 	float flpitch;
 	
 	if (!pev->noise)

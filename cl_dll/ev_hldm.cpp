@@ -484,7 +484,7 @@ void EV_FireGlock1( event_args_t *args )
 	
 	VectorCopy( forward, vecAiming );
 
-	EV_HLDM_FireBullets( idx, forward, right, up, 1, vecSrc, vecAiming, 8192, BULLET_PLAYER_9MM, 0, 0, args->fparam1, args->fparam2 );
+	EV_HLDM_FireBullets( idx, forward, right, up, 1, vecSrc, vecAiming, 8192, BULLET_PLAYER_9MM, 1, &tracerCount[idx-1], args->fparam1, args->fparam2 );
 }
 
 void EV_FireGlock2( event_args_t *args )
@@ -529,7 +529,7 @@ void EV_FireGlock2( event_args_t *args )
 	
 	VectorCopy( forward, vecAiming );
 
-	EV_HLDM_FireBullets( idx, forward, right, up, 1, vecSrc, vecAiming, 8192, BULLET_PLAYER_9MM, 0, &tracerCount[idx-1], args->fparam1, args->fparam2 );
+	EV_HLDM_FireBullets( idx, forward, right, up, 1, vecSrc, vecAiming, 8192, BULLET_PLAYER_9MM, 1, &tracerCount[idx-1], args->fparam1, args->fparam2 );
 	
 }
 //======================
@@ -586,11 +586,11 @@ void EV_FireShotGunDouble( event_args_t *args )
 
 	if ( gEngfuncs.GetMaxClients() > 1 )
 	{
-		EV_HLDM_FireBullets( idx, forward, right, up, 8, vecSrc, vecAiming, 2048, BULLET_PLAYER_BUCKSHOT, 0, &tracerCount[idx-1], 0.17365, 0.04362 );
+		EV_HLDM_FireBullets( idx, forward, right, up, 8, vecSrc, vecAiming, 2048, BULLET_PLAYER_BUCKSHOT, 1, &tracerCount[idx-1], 0.17365, 0.04362 );
 	}
 	else
 	{
-		EV_HLDM_FireBullets( idx, forward, right, up, 12, vecSrc, vecAiming, 2048, BULLET_PLAYER_BUCKSHOT, 0, &tracerCount[idx-1], 0.08716, 0.08716 );
+		EV_HLDM_FireBullets( idx, forward, right, up, 12, vecSrc, vecAiming, 2048, BULLET_PLAYER_BUCKSHOT, 1, &tracerCount[idx-1], 0.08716, 0.08716 );
 	}
 }
 
@@ -638,11 +638,11 @@ void EV_FireShotGunSingle( event_args_t *args )
 
 	if ( gEngfuncs.GetMaxClients() > 1 )
 	{
-		EV_HLDM_FireBullets( idx, forward, right, up, 4, vecSrc, vecAiming, 2048, BULLET_PLAYER_BUCKSHOT, 0, &tracerCount[idx-1], 0.08716, 0.04362 );
+		EV_HLDM_FireBullets( idx, forward, right, up, 4, vecSrc, vecAiming, 2048, BULLET_PLAYER_BUCKSHOT, 1, &tracerCount[idx-1], 0.08716, 0.04362 );
 	}
 	else
 	{
-		EV_HLDM_FireBullets( idx, forward, right, up, 6, vecSrc, vecAiming, 2048, BULLET_PLAYER_BUCKSHOT, 0, &tracerCount[idx-1], 0.08716, 0.08716 );
+		EV_HLDM_FireBullets( idx, forward, right, up, 6, vecSrc, vecAiming, 2048, BULLET_PLAYER_BUCKSHOT, 1, &tracerCount[idx-1], 0.08716, 0.08716 );
 	}
 }
 //======================
@@ -703,11 +703,11 @@ void EV_FireMP5( event_args_t *args )
 
 	if ( gEngfuncs.GetMaxClients() > 1 )
 	{
-		EV_HLDM_FireBullets( idx, forward, right, up, 1, vecSrc, vecAiming, 8192, BULLET_PLAYER_MP5, 2, &tracerCount[idx-1], args->fparam1, args->fparam2 );
+		EV_HLDM_FireBullets( idx, forward, right, up, 1, vecSrc, vecAiming, 8192, BULLET_PLAYER_MP5, 1, &tracerCount[idx-1], args->fparam1, args->fparam2 );
 	}
 	else
 	{
-		EV_HLDM_FireBullets( idx, forward, right, up, 1, vecSrc, vecAiming, 8192, BULLET_PLAYER_MP5, 2, &tracerCount[idx-1], args->fparam1, args->fparam2 );
+		EV_HLDM_FireBullets( idx, forward, right, up, 1, vecSrc, vecAiming, 8192, BULLET_PLAYER_MP5, 1, &tracerCount[idx-1], args->fparam1, args->fparam2 );
 	}
 }
 
@@ -789,7 +789,7 @@ void EV_FirePython( event_args_t *args )
 	
 	VectorCopy( forward, vecAiming );
 
-	EV_HLDM_FireBullets( idx, forward, right, up, 1, vecSrc, vecAiming, 8192, BULLET_PLAYER_357, 0, 0, args->fparam1, args->fparam2 );
+	EV_HLDM_FireBullets( idx, forward, right, up, 1, vecSrc, vecAiming, 8192, BULLET_PLAYER_357, 1, &tracerCount[idx-1], args->fparam1, args->fparam2 );
 }
 //======================
 //	    PHYTON END 
@@ -1135,7 +1135,7 @@ int g_iSwing;
 //Only predict the miss sounds, hit sounds are still played 
 //server side, so players don't get the wrong idea.
 void EV_Crowbar( event_args_t *args )
-{
+{/*
 	int idx;
 	vec3_t origin;
 	vec3_t angles;
@@ -1160,7 +1160,7 @@ void EV_Crowbar( event_args_t *args )
 			case 2:
 				gEngfuncs.pEventAPI->EV_WeaponAnimation ( CROWBAR_ATTACK3MISS, 1 ); break;
 		}
-	}
+	}*/
 }
 //======================
 //	   CROWBAR END 

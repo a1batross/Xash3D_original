@@ -311,6 +311,9 @@ void SV_ActivateServer( void )
 	// rocket flare
 	pfnPrecacheModel( "sprites/animglow01.spr" );
 
+	//magic nipples - 98 sparks
+	pfnPrecacheModel( "sprites/spark.spr" );
+
 	// ricochet sprite
 	pfnPrecacheModel( "sprites/richo1.spr" );
 

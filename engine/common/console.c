@@ -1893,7 +1893,7 @@ void Con_DrawSolidConsole( int lines )
 
 		memcpy( color, g_color_table[7], sizeof( color ));
 
-		Q_snprintf( curbuild, MAX_STRING, "Xash3D %i/%g (hw build %i)", PROTOCOL_VERSION, XASH_VERSION, Q_buildnum( ));
+		Q_snprintf( curbuild, MAX_STRING, "Xash3D %i/%g (custom build %i)", PROTOCOL_VERSION, XASH_VERSION, Q_buildnum( ));
 		Con_DrawStringLen( curbuild, &stringLen, &charH );
 		start = scr_width->integer - stringLen;
 		stringLen = Con_StringLength( curbuild );
@@ -2055,9 +2055,10 @@ void Con_DrawVersion( void )
 			return;
 	}
 
-	if( host.force_draw_version || draw_version )
-		Q_snprintf( curbuild, MAX_STRING, "Xash3D v%i/%g (build %i)", PROTOCOL_VERSION, XASH_VERSION, Q_buildnum( ));
-	else Q_snprintf( curbuild, MAX_STRING, "v%i/%g (build %i)", PROTOCOL_VERSION, XASH_VERSION, Q_buildnum( )); 
+//	if( host.force_draw_version || draw_version )
+//		Q_snprintf( curbuild, MAX_STRING, "Xash3D v%i/%g (wont really use this build %i)", PROTOCOL_VERSION, XASH_VERSION, Q_buildnum( ));
+//	else Q_snprintf( curbuild, MAX_STRING, "v%i/%g (build %i)", PROTOCOL_VERSION, XASH_VERSION, Q_buildnum( )); 
+	Q_snprintf( curbuild, MAX_STRING, "v%i/%g (%i)", PROTOCOL_VERSION, XASH_VERSION, Q_buildnum( )); //magic nipples - changed this to be more like won
 	Con_DrawStringLen( curbuild, &stringLen, &charH );
 	start = scr_width->integer - stringLen * 1.05f;
 	stringLen = Con_StringLength( curbuild );

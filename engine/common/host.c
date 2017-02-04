@@ -969,7 +969,7 @@ int EXPORT Host_Main( const char *progname, int bChangeGame, pfnChangeGame func 
 	host_limitlocal = Cvar_Get( "host_limitlocal", "0", 0, "apply cl_cmdrate and rate to loopback connection" );
 	con_gamemaps = Cvar_Get( "con_mapfilter", "1", CVAR_ARCHIVE, "when true show only maps in game folder" );
 	build = Cvar_Get( "build", va( "%i", Q_buildnum()), CVAR_INIT, "returns a current build number" );
-	ver = Cvar_Get( "ver", va( "%i/%g (hw build %i)", PROTOCOL_VERSION, XASH_VERSION, Q_buildnum( )), CVAR_INIT, "shows an engine version" );
+	ver = Cvar_Get( "ver", va( "%i/%g (custom build %i)", PROTOCOL_VERSION, XASH_VERSION, Q_buildnum( )), CVAR_INIT, "shows an engine version" );
 
 	// content control
 	Cvar_Get( "violence_hgibs", "1", CVAR_ARCHIVE, "show human gib entities" );
@@ -992,11 +992,11 @@ int EXPORT Host_Main( const char *progname, int bChangeGame, pfnChangeGame func 
 	if( pChangeGame != NULL )
 	{
 		Cmd_AddCommand( "game", Host_ChangeGame_f, "change game" );
-		Cvar_Get( "host_allow_changegame", "1", CVAR_READ_ONLY, "allows to change games" );
+		Cvar_Get( "host_allow_changegame", "0", CVAR_ARCHIVE, "allows to change games" ); //magic nipples - changed to cvar_archive so you can change it :/
 	}
 	else
 	{
-		Cvar_Get( "host_allow_changegame", "0", CVAR_READ_ONLY, "allows to change games" );
+		Cvar_Get( "host_allow_changegame", "0", CVAR_ARCHIVE, "allows to change games" );
 	}
 
 	SV_Init();

@@ -44,7 +44,6 @@ RSC=rc.exe
 # PROP Target_Dir ""
 # ADD BASE CPP /nologo /MT /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /YX /c
 # ADD CPP /nologo /MT /W3 /GX /O2 /I "..\utils\vgui\include" /I "..\engine" /I "..\common" /I "..\pm_shared" /I "..\dlls" /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /D "CLIENT_DLL" /D "CLIENT_WEAPONS" /YX /FD /c
-# SUBTRACT CPP /Z<none>
 # ADD BASE MTL /nologo /D "NDEBUG" /win32
 # ADD MTL /nologo /D "NDEBUG" /mktyplib203 /win32
 # ADD BASE RSC /l 0x409 /d "NDEBUG"
@@ -57,12 +56,12 @@ LINK32=link.exe
 # ADD LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib winmm.lib ../utils/vgui/lib/win32_vc6/vgui.lib wsock32.lib /nologo /subsystem:windows /dll /machine:I386 /out:"..\temp\cl_dll\!release/client.dll"
 # SUBTRACT LINK32 /map
 # Begin Custom Build
-TargetDir=\Xash3D\src_main\temp\cl_dll\!release
-InputPath=\Xash3D\src_main\temp\cl_dll\!release\client.dll
+TargetDir=\Xash\temp\cl_dll\!release
+InputPath=\Xash\temp\cl_dll\!release\client.dll
 SOURCE="$(InputPath)"
 
-"D:\Xash3D\valve\cl_dlls\client.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
-	copy $(TargetDir)\client.dll "D:\Xash3D\valve\cl_dlls\client.dll"
+"D:\BUILD\client.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+	copy $(TargetDir)\client.dll "D:\BUILD\client.dll"
 
 # End Custom Build
 
@@ -92,12 +91,12 @@ LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /subsystem:windows /dll /debug /machine:I386
 # ADD LINK32 oleaut32.lib uuid.lib odbc32.lib odbccp32.lib kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib winmm.lib ../utils/vgui/lib/win32_vc6/vgui.lib wsock32.lib /nologo /subsystem:windows /dll /debug /machine:I386 /out:"..\temp\cl_dll\!debug/client.dll"
 # Begin Custom Build
-TargetDir=\Xash3D\src_main\temp\cl_dll\!debug
-InputPath=\Xash3D\src_main\temp\cl_dll\!debug\client.dll
+TargetDir=\Xash\temp\cl_dll\!debug
+InputPath=\Xash\temp\cl_dll\!debug\client.dll
 SOURCE="$(InputPath)"
 
-"D:\Xash3D\valve\cl_dlls\client.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
-	copy $(TargetDir)\client.dll "D:\Xash3D\valve\cl_dlls\client.dll"
+"D:\BUILD\client.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+	copy $(TargetDir)\client.dll "D:\BUILD\client.dll"
 
 # End Custom Build
 
@@ -135,6 +134,10 @@ SOURCE=..\dlls\gauss.cpp
 # End Source File
 # Begin Source File
 
+SOURCE=..\dlls\glock.cpp
+# End Source File
+# Begin Source File
+
 SOURCE=..\dlls\handgrenade.cpp
 # End Source File
 # Begin Source File
@@ -152,10 +155,6 @@ SOURCE=.\hl\hl_objects.cpp
 # Begin Source File
 
 SOURCE=.\hl\hl_weapons.cpp
-# End Source File
-# Begin Source File
-
-SOURCE=..\dlls\glock.cpp
 # End Source File
 # Begin Source File
 

@@ -400,7 +400,7 @@ void CL_UpdateParticle( particle_t *p, float ft )
 	float	time1 = 5.0 * ft;
 	float	dvel = 4 * ft;
 	float	grav = ft * clgame.movevars.gravity * 0.05f;
-	float	size = 1.5f;
+	float	size = 1.1f; //magic nipples - changes impact particle size | default 1.5;
 	int	i, iRamp, alpha = 255;
 	vec3_t	right, up;
 	rgb_t	color;
@@ -474,7 +474,7 @@ void CL_UpdateParticle( particle_t *p, float ft )
 		p->vel[2] -= grav * 20;
 		break;
 	case pt_slowgrav:
-		p->vel[2] -= grav;
+		p->vel[2] += grav / 2; //magic nipples - +grav raises impact particles
 		break;
 	case pt_vox_grav:
 		p->vel[2] -= grav * 8;
@@ -649,7 +649,7 @@ void CL_ParticleExplosion( const vec3_t org )
 	if( !org ) return;
 
 	hSound = S_RegisterSound( "weapons/explode3.wav" );
-	S_StartSound( org, 0, CHAN_AUTO, hSound, VOL_NORM, ATTN_NORM, PITCH_NORM, 0 );
+	S_StartSound( org, 0, CHAN_AUTO, hSound, 1.0, 0.3, PITCH_NORM, 0 );
 	
 	for( i = 0; i < 1024; i++ )
 	{
@@ -697,7 +697,7 @@ void CL_ParticleExplosion2( const vec3_t org, int colorStart, int colorLength )
 	if( !org ) return;
 
 	hSound = S_RegisterSound( "weapons/explode3.wav" );
-	S_StartSound( org, 0, CHAN_AUTO, hSound, VOL_NORM, ATTN_NORM, PITCH_NORM, 0 );
+	S_StartSound( org, 0, CHAN_AUTO, hSound, 1.0, 0.3, PITCH_NORM, 0 ); //magic nipples - explosion attn is better cause explosion are loud
 
 	for( i = 0; i < 512; i++ )
 	{
@@ -810,24 +810,66 @@ CL_Blood
 particle spray
 ===============
 */
-void CL_Blood( const vec3_t org, const vec3_t dir, int pcolor, int speed )
+void CL_Blood( const vec3_t org, const vec3_t dir, int pcolor, int speed ) //magic nipples - replaced with less intense blood stream
 {
 	particle_t	*p;
 	int		i, j;
+	float		arc;
 
-	for( i = 0; i < speed * 20; i++ )
+	for( arc = 0.05f, i = 0; i < 55; i++, arc -= 0.025f )
 	{
+		p = CL_AllocParticle( NULL );
+
+		if( !p ) return;
+
+		p->die += 2.0f;
+		p->type = pt_vox_grav;
+		p->color = pcolor + Com_RandomLong( 0, 5 );
+
+		VectorCopy( org, p->org );
+		VectorCopy( dir, p->vel );
+
+		p->vel[2] -= arc;
+		arc -= 0.005f;
+	}
+
+	for( arc = 0.075f, i = 0; i < speed; i++, arc -= 0.005f )
+	{
+		float	num;
+
 		p = CL_AllocParticle( NULL );
 		if( !p ) return;
 
-		p->die += Com_RandomFloat( 0.1f, 0.5f );
-		p->type = pt_slowgrav;
-		p->color = pcolor;
+		p->die += 3.0f;
+		p->color = pcolor + Com_RandomLong( 0, 5 );
+		p->type = pt_vox_slowgrav;
 
-		for( j = 0; j < 3; j++ )
+		VectorCopy( org, p->org );
+		VectorCopy( dir, p->vel );
+
+		p->vel[2] -= arc;
+
+		num = Com_RandomFloat( 0.0f, 1.0f );
+		num = 1.7f * num * (int)(num * speed);
+		VectorScale( p->vel, num, p->vel );
+
+		for( j = 0; j < 2; j++ )
 		{
-			p->org[j] = org[j] + Com_RandomFloat( -8.0f, 8.0f );
-			p->vel[j] = dir[j] * speed;
+			p = CL_AllocParticle( NULL );
+			if( !p ) return;
+
+			p->die += 3.0f;
+			p->color = pcolor + Com_RandomLong( 0, 9 );
+			p->type = pt_vox_slowgrav;
+
+			p->org[0] = org[0] + Com_RandomFloat( -1.0f, 1.0f );
+			p->org[1] = org[1] + Com_RandomFloat( -1.0f, 1.0f );
+			p->org[2] = org[2] + Com_RandomFloat( -1.0f, 1.0f );
+
+			VectorCopy( dir, p->vel );
+			p->vel[2] -= arc;
+
+			VectorScale( p->vel, num, p->vel );
 		}
 	}
 }
@@ -845,7 +887,7 @@ void CL_BloodStream( const vec3_t org, const vec3_t dir, int pcolor, int speed )
 	int		i, j;
 	float		arc;
 
-	for( arc = 0.05f, i = 0; i < 100; i++, arc -= 0.005f )
+	for( arc = 0.05f, i = 0; i < 75; i++, arc -= 0.055f )
 	{
 		p = CL_AllocParticle( NULL );
 
@@ -853,18 +895,17 @@ void CL_BloodStream( const vec3_t org, const vec3_t dir, int pcolor, int speed )
 
 		p->die += 2.0f;
 		p->type = pt_vox_grav;
-		p->color = pcolor + Com_RandomLong( 0, 9 );
+		//p->color = pcolor + Com_RandomLong( 0, 9 );
+		p->color = pcolor;
 
 		VectorCopy( org, p->org );
 		VectorCopy( dir, p->vel );
 
 		p->vel[2] -= arc;
 		arc -= 0.005f;
-
-		VectorScale( p->vel, speed, p->vel );
 	}
 
-	for( arc = 0.075f, i = 0; i < speed / 2; i++, arc -= 0.005f )
+	for( arc = 0.075f, i = 0; i < speed; i++, arc -= 0.005f )
 	{
 		float	num;
 
@@ -1233,6 +1274,8 @@ CL_BulletImpactParticles
 */
 void CL_BulletImpactParticles( const vec3_t org )
 {
+	CL_RunParticleEffect( org, vec3_origin, 0, 20 ); //magic nipples - normal impact particles become beta.
+	/*
 	particle_t	*p;
 	vec3_t		pos, dir;
 	float		vel;
@@ -1270,6 +1313,7 @@ void CL_BulletImpactParticles( const vec3_t org )
 			p->vel[j] = Com_RandomFloat( -70.0f, 70.0f );
 		}
 	}
+	*/
 }
 
 /*
@@ -1601,6 +1645,7 @@ CL_SparkShower
 Creates 8 random tracers
 ===============
 */
+/*
 void CL_SparkShower( const vec3_t org )
 {
 	vec3_t	pos, dir;
@@ -1627,6 +1672,7 @@ void CL_SparkShower( const vec3_t org )
 		CL_SparkleTracer( pos, dir, vel );
 	}
 }
+*/
 
 /*
 ===============

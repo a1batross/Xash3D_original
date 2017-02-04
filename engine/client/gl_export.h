@@ -64,6 +64,10 @@ typedef float GLmatrix[16];
 #define GL_FLAT				0x1D00
 #define GL_SMOOTH				0x1D01
 
+//magic nipples - overbright
+#define R_OVERBRIGHT()		(r_overbright->value && !r_fullbright->value)
+#define R_OVERBRIGHT_SFACTOR()	(R_OVERBRIGHT() ? GL_DST_COLOR : GL_ZERO)
+
 #define GL_ZERO				0x0
 #define GL_ONE				0x1
 #define GL_SRC_COLOR			0x0300

@@ -635,7 +635,7 @@ void CBreakable::Die( void )
 		case 1:	EMIT_SOUND_DYN(ENT(pev), CHAN_VOICE, "debris/bustmetal2.wav", fvol, ATTN_NORM, 0, pitch);	
 			break;
 		}
-		cFlag = BREAK_METAL;
+		cFlag = BREAK_SMOKE; //magic nipples - for those gib particles
 		break;
 
 	case matFlesh:

@@ -80,10 +80,14 @@ convar_t	*r_dynamic;
 convar_t	*r_lightmap;
 convar_t	*r_fastsky;
 
+convar_t	*r_overbright; //magic nipples - overbright
+
 convar_t	*vid_displayfrequency;
 convar_t	*vid_fullscreen;
 convar_t	*vid_gamma;
 convar_t	*vid_mode;
+
+convar_t	*windowless;
 
 byte		*r_temppool;
 
@@ -1243,6 +1247,11 @@ qboolean VID_CreateWindow( int width, int height, qboolean fullscreen )
 		stylebits = WS_POPUP|WS_VISIBLE;
 		exstyle = WS_EX_TOPMOST;
 	}
+	else
+	{
+		if( Cvar_VariableInteger( "windowless" ) == 1 )
+			stylebits = WS_POPUP|WS_VISIBLE;
+	}
 
 	rect.left = 0;
 	rect.top = 0;
@@ -1274,6 +1283,11 @@ qboolean VID_CreateWindow( int width, int height, qboolean fullscreen )
 		}
 	}
 
+	if( Cvar_VariableInteger( "windowless" ) == 1 && ( !fullscreen ) )
+	{
+		x = ( glw_state.desktopWidth - w ) / 2;
+		y = ( glw_state.desktopHeight - h ) / 2;
+	}
 	window = CreateWindowEx( exstyle, WINDOW_NAME, wndname, stylebits, x, y, w, h, NULL, NULL, host.hInst, NULL );
 
 	if( host.hWnd != window )
@@ -1748,12 +1762,14 @@ void GL_InitCommands( void )
 	r_decals = Cvar_Get( "r_decals", "4096", CVAR_ARCHIVE, "sets the maximum number of decals" );
 	r_xpos = Cvar_Get( "r_xpos", "130", CVAR_GLCONFIG, "window position by horizontal" );
 	r_ypos = Cvar_Get( "r_ypos", "48", CVAR_GLCONFIG, "window position by vertical" );
+
+	r_overbright = Cvar_Get( "gl_overbright", "1", CVAR_ARCHIVE, "overbrighting world ( 1 -normal 2 -extra" ); //magic nipples - overbright
 			
 	gl_picmip = Cvar_Get( "gl_picmip", "0", CVAR_GLCONFIG, "reduces resolution of textures by powers of 2" );
 	gl_skymip = Cvar_Get( "gl_skymip", "0", CVAR_GLCONFIG, "reduces resolution of skybox textures by powers of 2" );
 	gl_ignorehwgamma = Cvar_Get( "gl_ignorehwgamma", "0", CVAR_GLCONFIG, "ignore hardware gamma" );
 	gl_alphabits = Cvar_Get( "gl_alphabits", "8", CVAR_GLCONFIG, "pixelformat alpha bits (0 - auto)" );
-	gl_texture_nearest = Cvar_Get( "gl_texture_nearest", "0", CVAR_ARCHIVE, "disable texture filter" );
+	gl_texture_nearest = Cvar_Get( "gl_software", "0", CVAR_LATCH|CVAR_ARCHIVE, "software emulation; disables texture filtering" ); //magic nipples - server restart required for sky.
 	gl_round_down = Cvar_Get( "gl_round_down", "0", CVAR_GLCONFIG, "down size non-power of two textures" );
 	gl_max_size = Cvar_Get( "gl_max_size", "512", CVAR_ARCHIVE, "no effect in Xash3D just a legacy" );
 	gl_stencilbits = Cvar_Get( "gl_stencilbits", "8", CVAR_GLCONFIG, "pixelformat stencil bits (0 - auto)" );
@@ -1782,10 +1798,11 @@ void GL_InitCommands( void )
 	// make sure r_swapinterval is checked after vid_restart
 	gl_swapInterval->modified = true;
 
-	vid_gamma = Cvar_Get( "gamma", "1.0", CVAR_ARCHIVE, "gamma amount" );
-	vid_mode = Cvar_Get( "vid_mode", VID_AUTOMODE, CVAR_RENDERINFO, "display resolution mode" );
+	vid_gamma = Cvar_Get( "gamma", "1.31", CVAR_ARCHIVE, "gamma amount" );
+	vid_mode = Cvar_Get( "vid_mode", 0, CVAR_RENDERINFO, "display resolution mode" );
 	vid_fullscreen = Cvar_Get( "fullscreen", "0", CVAR_RENDERINFO, "set in 1 to enable fullscreen mode" );
 	vid_displayfrequency = Cvar_Get ( "vid_displayfrequency", "0", CVAR_RENDERINFO, "fullscreen refresh rate" );
+	windowless = Cvar_Get( "windowless", "0", CVAR_RENDERINFO, "set in 1 to enable no border windowed mode" ); //magic nipples - because jack wanted this.
 
 	Cmd_AddCommand( "r_info", R_RenderInfo_f, "display renderer info" );
 }

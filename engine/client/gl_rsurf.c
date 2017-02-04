@@ -855,7 +855,9 @@ void R_BlendLightmaps( void )
 		}
 
 		pglDisable( GL_ALPHA_TEST );
-		pglBlendFunc( GL_ZERO, GL_SRC_COLOR );
+		//pglBlendFunc( GL_ZERO, GL_SRC_COLOR );
+		pglBlendFunc( R_OVERBRIGHT_SFACTOR(), GL_SRC_COLOR ); //magic nipples - overbright - only this line
+
 		pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
 	}
 
@@ -1125,7 +1127,7 @@ void R_RenderBrushPoly( msurface_t *fa )
 	if( fa->flags & SURF_DRAWTURB )
 	{	
 		// warp texture, no lightmaps
-		EmitWaterPolys( fa->polys, ( fa->flags & SURF_NOCULL ), false );
+		EmitWaterPolys( fa->polys, ( fa->flags & SURF_NOCULL ), false ); //magic nipples - water draw
 		if( is_mirror ) R_EndDrawMirror();
 		// END WATER STUFF
 		return;

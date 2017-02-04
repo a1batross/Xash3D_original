@@ -462,7 +462,12 @@ void R_SetupSky( const char *skyboxname )
 	for( i = 0; i < 6; i++ )
 	{
 		Q_snprintf( sidename, sizeof( sidename ), "%s%s", loadname, r_skyBoxSuffix[i] );
-		tr.skyboxTextures[i] = GL_LoadTexture( sidename, NULL, 0, TF_CLAMP|TF_SKY, NULL );
+
+		if( gl_texture_nearest->integer )
+			tr.skyboxTextures[i] = GL_LoadTexture( sidename, NULL, 0, TF_CLAMP|TF_SKY_NEAREST, NULL );
+		else
+			tr.skyboxTextures[i] = GL_LoadTexture( sidename, NULL, 0, TF_CLAMP|TF_SKY, NULL );
+
 		if( !tr.skyboxTextures[i] ) break;
 	}
 

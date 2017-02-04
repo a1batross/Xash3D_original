@@ -1885,7 +1885,7 @@ void CL_InitLocal( void )
 	bottomcolor = Cvar_Get( "bottomcolor", "0", CVAR_USERINFO|CVAR_ARCHIVE, "player bottom color" );
 	rate = Cvar_Get( "rate", "25000", CVAR_USERINFO|CVAR_ARCHIVE, "player network rate" );
 	hltv = Cvar_Get( "hltv", "0", CVAR_USERINFO|CVAR_LATCH, "HLTV mode" );
-	cl_showfps = Cvar_Get( "cl_showfps", "1", CVAR_ARCHIVE, "show client fps" );
+	cl_showfps = Cvar_Get( "cl_showfps", "0", CVAR_ARCHIVE, "show client fps" );
 	cl_nosmooth = Cvar_Get( "cl_nosmooth", "0", CVAR_ARCHIVE, "disable smooth up stair climbing and interpolate position in multiplayer" );
 	cl_smoothtime = Cvar_Get( "cl_smoothtime", "0.1", CVAR_ARCHIVE, "time to smooth up" );
 	cl_cmdbackup = Cvar_Get( "cl_cmdbackup", "10", CVAR_ARCHIVE, "how many additional history commands are sent" );
@@ -2049,7 +2049,7 @@ void Host_ClientFrame( void )
 	// if in the debugger last frame, don't timeout
 	if( host.frametime > 5.0f ) cls.netchan.last_received = Sys_DoubleTime();
 
-	VGui_RunFrame ();
+//	VGui_RunFrame ();
 
 	clgame.dllFuncs.pfnFrame( host.frametime );
 

@@ -449,7 +449,7 @@ qboolean CL_AddVisibleEntity( cl_entity_t *ent, int entityType )
 		if( ent == &clgame.viewent )
 			ent->curstate.effects &= ~EF_MUZZLEFLASH;
 
-		dl = CL_AllocElight( 0 );
+		dl = CL_AllocDlight( 0 ); //magic nipples - changed to Dlight so it casts on walls too.
 
 		VectorCopy( ent->attachment[0], dl->origin );
 		dl->die = cl.time + 0.05f;

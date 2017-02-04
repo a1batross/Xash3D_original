@@ -57,12 +57,12 @@ LINK32=link.exe
 # ADD LINK32 msvcrt.lib user32.lib /nologo /dll /pdb:none /machine:I386 /nodefaultlib:"libc.lib" /def:".\mainui.def" /out:"..\temp\mainui\!release/menu.dll" /opt:nowin98
 # SUBTRACT LINK32 /profile /nodefaultlib
 # Begin Custom Build
-TargetDir=\Xash3D\src_main\temp\mainui\!release
-InputPath=\Xash3D\src_main\temp\mainui\!release\menu.dll
+TargetDir=\Xash\temp\mainui\!release
+InputPath=\Xash\temp\mainui\!release\menu.dll
 SOURCE="$(InputPath)"
 
-"D:\Xash3D\menu.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
-	copy $(TargetDir)\menu.dll "D:\Xash3D\menu.dll"
+"D:\BUILD\menu.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+	copy $(TargetDir)\menu.dll "D:\BUILD\menu.dll"
 
 # End Custom Build
 
@@ -94,12 +94,12 @@ LINK32=link.exe
 # ADD LINK32 msvcrtd.lib user32.lib /nologo /dll /debug /machine:I386 /nodefaultlib:"msvcrt.lib" /def:".\mainui.def" /out:"..\temp\mainui\!debug/menu.dll" /pdbtype:sept
 # SUBTRACT LINK32 /incremental:no /nodefaultlib
 # Begin Custom Build
-TargetDir=\Xash3D\src_main\temp\mainui\!debug
-InputPath=\Xash3D\src_main\temp\mainui\!debug\menu.dll
+TargetDir=\Xash\temp\mainui\!debug
+InputPath=\Xash\temp\mainui\!debug\menu.dll
 SOURCE="$(InputPath)"
 
-"D:\Xash3D\menu.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
-	copy $(TargetDir)\menu.dll "D:\Xash3D\menu.dll"
+"D:\BUILD\menu.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+	copy $(TargetDir)\menu.dll "D:\BUILD\menu.dll"
 
 # End Custom Build
 
