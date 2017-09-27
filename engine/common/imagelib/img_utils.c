@@ -18,8 +18,6 @@ GNU General Public License for more details.
 #include "mod_local.h"
 #include "gl_export.h"
 
-convar_t *gl_round_down;
-
 #define LERPBYTE( i )	r = resamplerow1[i]; out[i] = (byte)(((( resamplerow2[i] - r ) * lerp)>>16 ) + r )
 #define FILTER_SIZE		5
 
@@ -136,7 +134,7 @@ static const loadpixformat_t load_game[] =
 { "%s%s.%s", "mip", Image_LoadMIP, IL_HINT_NO },	// hl textures from wad or buffer
 { "%s%s.%s", "mdl", Image_LoadMDL, IL_HINT_HL },	// hl studio model skins
 { "%s%s.%s", "spr", Image_LoadSPR, IL_HINT_HL },	// hl sprite frames
-{ "%s%s.%s", "lmp", Image_LoadLMP, IL_HINT_HL },	// hl menu images (cached.wad etc)
+{ "%s%s.%s", "lmp", Image_LoadLMP, IL_HINT_NO },	// hl menu images (cached.wad etc)
 { "%s%s.%s", "fnt", Image_LoadFNT, IL_HINT_HL },	// hl console font (fonts.wad etc)
 { "%s%s.%s", "pal", Image_LoadPAL, IL_HINT_NO },	// install studio\sprite palette
 { NULL, NULL, NULL, IL_HINT_NO }
@@ -167,7 +165,6 @@ void Image_Init( void )
 {
 	// init pools
 	host.imagepool = Mem_AllocPool( "ImageLib Pool" );
-	gl_round_down = Cvar_Get( "gl_round_down", "0", CVAR_GLCONFIG, "down size non-power of two textures" );
 
 	// install image formats (can be re-install later by Image_Setup)
 	switch( host.type )
@@ -250,9 +247,9 @@ Image_RoundDimensions
 */
 void Image_RoundDimensions( int *width, int *height )
 {
-	// find nearest power of two, rounding down if desired
-	*width = NearestPOW( *width, gl_round_down->integer );
-	*height = NearestPOW( *height, gl_round_down->integer );
+	// find nearest power of two, rounding down
+	*width = NearestPOW( *width, true );
+	*height = NearestPOW( *height, true );
 }
 
 qboolean Image_ValidSize( const char *name )
@@ -284,9 +281,9 @@ int Image_ComparePalette( const byte *pal )
 {
 	if( pal == NULL )
 		return PAL_INVALID;
-	else if( !memcmp( palette_q1, pal, 768 ))
+	else if( !memcmp( palette_q1, pal, 765 )) // last color was changed
 		return PAL_QUAKE1;
-	else if( !memcmp( palette_hl, pal, 768 ))
+	else if( !memcmp( palette_hl, pal, 765 ))
 		return PAL_HALFLIFE;
 	return PAL_CUSTOM;		
 }
@@ -299,36 +296,6 @@ void Image_SetPalette( const byte *pal, uint *d_table )
 	// setup palette
 	switch( image.d_rendermode )
 	{
-	case LUMP_DECAL:
-		for( i = 0; i < 256; i++ )
-		{
-			rgba[0] = pal[765];
-			rgba[1] = pal[766];
-			rgba[2] = pal[767];
-			rgba[3] = i;
-			d_table[i] = *(uint *)rgba;
-		}
-		break;
-	case LUMP_TRANSPARENT:
-		for( i = 0; i < 256; i++ )
-		{
-			rgba[0] = pal[i*3+0];
-			rgba[1] = pal[i*3+1];
-			rgba[2] = pal[i*3+2];
-			rgba[3] = pal[i] == 255 ? pal[i] : 0xFF;
-			d_table[i] = *(uint *)rgba;
-		}
-		break;
-	case LUMP_QFONT:
-		for( i = 0; i < 256; i++ )
-		{
-			rgba[0] = pal[i*3+0];
-			rgba[1] = pal[i*3+1];
-			rgba[2] = pal[i*3+2];
-			rgba[3] = 0xFF;
-			d_table[i] = *(uint *)rgba;
-		}
-		break;
 	case LUMP_NORMAL:
 		for( i = 0; i < 256; i++ )
 		{
@@ -338,6 +305,27 @@ void Image_SetPalette( const byte *pal, uint *d_table )
 			rgba[3] = 0xFF;
 			d_table[i] = *(uint *)rgba;
 		}
+		break;
+	case LUMP_GRADIENT:
+		for( i = 0; i < 256; i++ )
+		{
+			rgba[0] = pal[765];
+			rgba[1] = pal[766];
+			rgba[2] = pal[767];
+			rgba[3] = i;
+			d_table[i] = *(uint *)rgba;
+		}
+		break;
+	case LUMP_MASKED:
+		for( i = 0; i < 255; i++ )
+		{
+			rgba[0] = pal[i*3+0];
+			rgba[1] = pal[i*3+1];
+			rgba[2] = pal[i*3+2];
+			rgba[3] = 0xFF;
+			d_table[i] = *(uint *)rgba;
+		}
+		d_table[255] = 0;
 		break;
 	case LUMP_EXTENDED:
 		for( i = 0; i < 256; i++ )
@@ -354,27 +342,28 @@ void Image_SetPalette( const byte *pal, uint *d_table )
 
 void Image_GetPaletteQ1( void )
 {
-	image.d_rendermode = LUMP_NORMAL;
-
 	if( !q1palette_init )
 	{
+		image.d_rendermode = LUMP_NORMAL;
 		Image_SetPalette( palette_q1, d_8toQ1table );
 		d_8toQ1table[255] = 0; // 255 is transparent
 		q1palette_init = true;
 	}
+
+	image.d_rendermode = LUMP_QUAKE1;
 	image.d_currentpal = d_8toQ1table;
 }
 
 void Image_GetPaletteHL( void )
 {
-	image.d_rendermode = LUMP_NORMAL;
-
 	if( !hlpalette_init )
 	{
+		image.d_rendermode = LUMP_NORMAL;
 		Image_SetPalette( palette_hl, d_8toHLtable );
-		d_8toHLtable[255] = 0; // 255 is transparent
 		hlpalette_init = true;
 	}
+
+	image.d_rendermode = LUMP_HALFLIFE;
 	image.d_currentpal = d_8toHLtable;
 }
 
@@ -396,18 +385,24 @@ void Image_GetPaletteLMP( const byte *pal, int rendermode )
 	if( pal )
 	{
 		Image_SetPalette( pal, d_8to24table );
-		if( rendermode != LUMP_DECAL )
-			d_8to24table[255] &= 0xFFFFFF;
 		image.d_currentpal = d_8to24table;
 	}
-	else if( rendermode == LUMP_QFONT )
+	else
 	{
-		// quake1 base palette and font palette have some diferences
-		Image_SetPalette( palette_q1, d_8to24table );
-		d_8to24table[0] = 0;
-		image.d_currentpal = d_8to24table;
+		switch( rendermode )
+		{
+		case LUMP_QUAKE1:
+			Image_GetPaletteQ1();
+			break;
+		case LUMP_HALFLIFE:
+			Image_GetPaletteHL(); // default half-life palette
+			break;
+		default:
+			MsgDev( D_ERROR, "Image_GetPaletteLMP: invalid palette specified\n" );
+			Image_GetPaletteHL(); // defaulting to half-life palette
+			break;
+		}
 	}
-	else Image_GetPaletteHL(); // default half-life palette          
 }
 
 void Image_ConvertPalTo24bit( rgbdata_t *pic )
@@ -524,6 +519,45 @@ void Image_PaletteHueReplace( byte *palSrc, int newHue, int start, int end )
 	}
 }
 
+void Image_PaletteTranslate( byte *palSrc, int top, int bottom )
+{
+	byte	dst[256], src[256];
+	int	i;
+
+	for( i = 0; i < 256; i++ )
+		src[i] = i;
+	memcpy( dst, src, 256 );
+
+	if( top < 128 )
+	{
+		// the artists made some backwards ranges. sigh.
+		memcpy( dst + SHIRT_HUE_START, src + top, 16 );
+	}
+	else
+	{
+		for( i = 0; i < 16; i++ )
+			dst[SHIRT_HUE_START+i] = src[top + 15 - i];
+	}
+
+	if( bottom < 128 )
+	{
+		memcpy( dst + PANTS_HUE_START, src + bottom, 16 );
+	}
+	else
+	{
+		for( i = 0; i < 16; i++ )
+			dst[PANTS_HUE_START + i] = src[bottom + 15 - i];
+	}
+
+	// last color isn't changed
+	for( i = 0; i < 255; i++ )
+	{
+		palSrc[i*3+0] = palette_q1[dst[i]*3+0];
+		palSrc[i*3+1] = palette_q1[dst[i]*3+1];
+		palSrc[i*3+2] = palette_q1[dst[i]*3+2];
+	}
+}
+
 void Image_CopyParms( rgbdata_t *src )
 {
 	Image_Reset();
@@ -549,7 +583,7 @@ qboolean Image_Copy8bitRGBA( const byte *in, byte *out, int pixels )
 {
 	int	*iout = (int *)out;
 	byte	*fin = (byte *)in;
-	rgba_t	*col;
+	byte	*col;
 	int	i;
 
 	if( !image.d_currentpal )
@@ -574,14 +608,26 @@ qboolean Image_Copy8bitRGBA( const byte *in, byte *out, int pixels )
 	// check for color
 	for( i = 0; i < 256; i++ )
 	{
-		col = (rgba_t *)&image.d_currentpal[i];
+		col = (byte *)&image.d_currentpal[i];
 		if( col[0] != col[1] || col[1] != col[2] )
 		{
 			image.flags |= IMAGE_HAS_COLOR;
 			break;
 		}
 	}
+#if 0
+	for( i = 0; i < image.width * image.height; i++ )
+	{
+		col = (byte *)&image.d_currentpal[fin[i]];
+		*out++ = col[0];
+		*out++ = col[1];
+		*out++ = col[2];
 
+		if( image.d_rendermode == LUMP_GRADIENT )
+			*out++ = fin[i];
+		else *out++ = col[3];
+	}
+#else
 	while( pixels >= 8 )
 	{
 		iout[0] = image.d_currentpal[in[0]];
@@ -618,7 +664,7 @@ qboolean Image_Copy8bitRGBA( const byte *in, byte *out, int pixels )
 
 	if( pixels & 1 ) // last byte
 		iout[0] = image.d_currentpal[in[0]];
-
+#endif
 	image.type = PF_RGBA_32;	// update image type;
 
 	return true;
@@ -1299,8 +1345,8 @@ qboolean Image_Decompress( const byte *data )
 		if( image.flags & IMAGE_HAS_ALPHA )
 		{
 			if( image.flags & IMAGE_COLORINDEX )
-				Image_GetPaletteLMP( image.palette, LUMP_DECAL ); 
-			else Image_GetPaletteLMP( image.palette, LUMP_TRANSPARENT ); 
+				Image_GetPaletteLMP( image.palette, LUMP_GRADIENT ); 
+			else Image_GetPaletteLMP( image.palette, LUMP_MASKED ); 
 		}
 		else Image_GetPaletteLMP( image.palette, LUMP_NORMAL );
 		// intentional falltrough
@@ -1372,31 +1418,19 @@ rgbdata_t *Image_DecompressInternal( rgbdata_t *pic )
 	return pic;
 }
 
-rgbdata_t *Image_LightGamma( rgbdata_t *pic, float texGamma )
+rgbdata_t *Image_LightGamma( rgbdata_t *pic )
 {
 	byte	*in = (byte *)pic->buffer;
-	byte	gammatable[256];
-	int	i, inf;
-	double	f;
+	int	i;
 
 	if( pic->type != PF_RGBA_32 )
 		return pic;
 
-	texGamma = bound( 1.8f, texGamma, 3.0f );
-
-	// build the gamma table
-	for( i = 0; i < 256; i++ )
-	{
-		f = 255.0 * pow(( float )i / 255.0f, 2.2f / texGamma );
-		inf = (int)(f + 0.5f);
-		gammatable[i] = bound( 0, inf, 255 );
-	}
-
 	for( i = 0; i < pic->width * pic->height; i++, in += 4 )
 	{
-		in[0] = gammatable[in[0]];
-		in[1] = gammatable[in[1]];
-		in[2] = gammatable[in[2]];
+		in[0] = LightToTexGamma( in[0] );
+		in[1] = LightToTexGamma( in[1] );
+		in[2] = LightToTexGamma( in[2] );
 	}
 
 	return pic;
@@ -1422,9 +1456,16 @@ qboolean Image_RemapInternal( rgbdata_t *pic, int topColor, int bottomColor )
 		return false;
 	}
 
-	// g-cont. preview images has a swapped top and bottom colors. I don't know why.
-	Image_PaletteHueReplace( pic->palette, topColor, SUIT_HUE_START, SUIT_HUE_END );
-	Image_PaletteHueReplace( pic->palette, bottomColor, PLATE_HUE_START, PLATE_HUE_END );
+	if( Image_ComparePalette( pic->palette ) == PAL_QUAKE1 )
+	{
+		Image_PaletteTranslate( pic->palette, topColor * 16, bottomColor * 16 );
+	}
+	else
+	{
+		// g-cont. preview images has a swapped top and bottom colors. I don't know why.
+		Image_PaletteHueReplace( pic->palette, topColor, SUIT_HUE_START, SUIT_HUE_END );
+		Image_PaletteHueReplace( pic->palette, bottomColor, PLATE_HUE_START, PLATE_HUE_END );
+	}
 
 	return true;
 }
@@ -1550,7 +1591,7 @@ qboolean Image_ApplyFilter( rgbdata_t *pic, int filter, float factor, float bias
 	return true;
 }
 
-qboolean Image_Process( rgbdata_t **pix, int width, int height, float gamma, uint flags, imgfilter_t *filter )
+qboolean Image_Process( rgbdata_t **pix, int width, int height, uint flags, imgfilter_t *filter )
 {
 	rgbdata_t	*pic = *pix;
 	qboolean	result = true;
@@ -1587,7 +1628,7 @@ qboolean Image_Process( rgbdata_t **pix, int width, int height, float gamma, uin
 
 	// update format to RGBA if any
 	if( flags & IMAGE_FORCE_RGBA ) pic = Image_DecompressInternal( pic );
-	if( flags & IMAGE_LIGHTGAMMA ) pic = Image_LightGamma( pic, gamma );
+	if( flags & IMAGE_LIGHTGAMMA ) pic = Image_LightGamma( pic );
 
 	if( filter ) Image_ApplyFilter( pic, filter->filter, filter->factor, filter->bias, filter->flags, filter->blendFunc );
 

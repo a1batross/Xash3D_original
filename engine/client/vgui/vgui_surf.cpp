@@ -164,7 +164,7 @@ void CEngineSurface :: drawPrintText( const char* text, int textLen )
 	int curTextColor[4];
 
 	//  HACKHACK: allow color strings in VGUI
-	if( numColor != 7 && vgui_colorstrings->integer )
+	if( numColor != 7 && vgui_colorstrings->value )
 	{
 		for( j = 0; j < 3; j++ ) // grab predefined color
 			curTextColor[j] = g_color_table[numColor][j];
@@ -176,7 +176,7 @@ void CEngineSurface :: drawPrintText( const char* text, int textLen )
 	}
 	curTextColor[3] = _drawTextColor[3]; // copy alpha
 
-	if( textLen == 1 && vgui_colorstrings->integer )
+	if( textLen == 1 && vgui_colorstrings->value )
 	{
 		if( *text == '^' )
 		{
@@ -319,7 +319,7 @@ bool CEngineSurface :: setFullscreenMode( int wide, int tall, int bpp )
 	// NOTE: Xash3D always working in 32-bit mode
 	if( R_DescribeVIDMode( wide, tall ))
 	{
-		Cvar_SetFloat( "fullscreen", 1.0f );
+		Cvar_SetValue( "fullscreen", 1.0f );
 		return true;
 	}
 	return false;
@@ -327,5 +327,5 @@ bool CEngineSurface :: setFullscreenMode( int wide, int tall, int bpp )
 	
 void CEngineSurface :: setWindowedMode( void )
 {
-	Cvar_SetFloat( "fullscreen", 0.0f );
+	Cvar_SetValue( "fullscreen", 0.0f );
 }

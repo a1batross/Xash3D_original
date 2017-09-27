@@ -257,11 +257,12 @@ typedef struct dds_s
 
 enum
 {
-	LUMP_NORMAL = 0,
-	LUMP_TRANSPARENT,
-	LUMP_DECAL,
-	LUMP_QFONT,
-	LUMP_EXTENDED		// bmp images have extened palette with alpha-channel
+	LUMP_NORMAL = 0,		// no alpha
+	LUMP_MASKED,		// 1-bit alpha channel masked texture
+	LUMP_GRADIENT,		// gradient image (decals)
+	LUMP_EXTENDED,		// bmp images have extened palette with alpha-channel
+	LUMP_HALFLIFE,		// get predefined half-life palette
+	LUMP_QUAKE1		// get predefined quake palette
 };
 
 enum

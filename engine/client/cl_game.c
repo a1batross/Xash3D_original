@@ -34,7 +34,7 @@ GNU General Public License for more details.
 #define MAX_TEXTCHANNELS	8		// must be power of two (GoldSrc uses 4 channels)
 #define TEXT_MSGNAME	"TextMessage%i"
 
-char			cl_textbuffer[MAX_TEXTCHANNELS][512];
+char			cl_textbuffer[MAX_TEXTCHANNELS][2048];
 client_textmessage_t	cl_textmessage[MAX_TEXTCHANNELS];
 
 static dllfunc_t cdll_exports[] =
@@ -67,7 +67,7 @@ static dllfunc_t cdll_exports[] =
 { "Demo_ReadBuffer", (void **)&clgame.dllFuncs.pfnDemo_ReadBuffer },
 { "CAM_Think", (void **)&clgame.dllFuncs.CAM_Think },
 { "CL_IsThirdPerson", (void **)&clgame.dllFuncs.CL_IsThirdPerson },
-{ "CL_CameraOffset", (void **)&clgame.dllFuncs.CL_CameraOffset },
+{ "CL_CameraOffset", (void **)&clgame.dllFuncs.CL_CameraOffset },	// unused callback. Now camera code is completely moved to the user area
 { "CL_CreateMove", (void **)&clgame.dllFuncs.CL_CreateMove },
 { "IN_ActivateMouse", (void **)&clgame.dllFuncs.IN_ActivateMouse },
 { "IN_DeactivateMouse", (void **)&clgame.dllFuncs.IN_DeactivateMouse },
@@ -89,10 +89,10 @@ static dllfunc_t cdll_new_exports[] = 	// allowed only in SDK 2.3 and higher
 { "HUD_GetRenderInterface", (void **)&clgame.dllFuncs.pfnGetRenderInterface },	// Xash3D ext
 { "HUD_GetPlayerTeam", (void **)&clgame.dllFuncs.pfnGetPlayerTeam },
 { "HUD_ClipMoveToEntity", (void **)&clgame.dllFuncs.pfnClipMoveToEntity },	// Xash3D ext
-{ "HUD_UpdateEntityState", (void **)&clgame.dllFuncs.pfnUpdateEntityState },
-{ "HUD_InterpolateEntity", (void **)&clgame.dllFuncs.pfnInterpolateEntity },
 { NULL, NULL }
 };
+
+static void pfnSPR_DrawHoles( int frame, int x, int y, const wrect_t *prc );
 
 /*
 ====================
@@ -106,14 +106,11 @@ cl_entity_t *CL_GetEntityByIndex( int index )
 	if( !clgame.entities ) // not in game yet
 		return NULL;
 
+	if( index < 0 || index >= clgame.maxEntities )
+		return NULL;
+
 	if( index == 0 )
 		return cl.world;
-
-	if( index < 0 )
-		return clgame.dllFuncs.pfnGetUserEntity( abs( index ));
-
-	if( index >= clgame.maxEntities )
-		return NULL;
 
 	return CL_EDICT_NUM( index );
 }
@@ -132,18 +129,6 @@ float CL_GetServerTime( void )
 
 /*
 ====================
-CL_GetLerpFrac
-
-returns current lerp fraction
-====================
-*/
-float CL_GetLerpFrac( void )
-{
-	return cl.lerpFrac;
-}
-
-/*
-====================
 CL_IsThirdPerson
 
 returns true if thirdperson is enabled
@@ -151,7 +136,11 @@ returns true if thirdperson is enabled
 */
 qboolean CL_IsThirdPerson( void )
 {
-	return cl.thirdperson;
+	cl.local.thirdperson = clgame.dllFuncs.CL_IsThirdPerson();
+
+	if( cl.local.thirdperson )
+		return true;
+	return false;
 }
 
 /*
@@ -296,18 +285,18 @@ static int CL_AdjustXPos( float x, int width, int totalWidth )
 
 	if( x == -1 )
 	{
-		xPos = ( clgame.scrInfo.iWidth - width ) * 0.5f;
+		xPos = ( glState.width - width ) * 0.5f;
 	}
 	else
 	{
 		if ( x < 0 )
-			xPos = (1.0f + x) * clgame.scrInfo.iWidth - totalWidth;	// Alight right
+			xPos = (1.0f + x) * glState.width - totalWidth;	// Alight right
 		else // align left
-			xPos = x * clgame.scrInfo.iWidth;
+			xPos = x * glState.width;
 	}
 
-	if( xPos + width > clgame.scrInfo.iWidth )
-		xPos = clgame.scrInfo.iWidth - width;
+	if( xPos + width > glState.width )
+		xPos = glState.width - width;
 	else if( xPos < 0 )
 		xPos = 0;
 
@@ -327,19 +316,19 @@ static int CL_AdjustYPos( float y, int height )
 
 	if( y == -1 ) // centered?
 	{
-		yPos = ( clgame.scrInfo.iHeight - height ) * 0.5f;
+		yPos = ( glState.height - height ) * 0.5f;
 	}
 	else
 	{
 		// Alight bottom?
 		if( y < 0 )
-			yPos = (1.0f + y) * clgame.scrInfo.iHeight - height; // Alight bottom
+			yPos = (1.0f + y) * glState.height - height; // Alight bottom
 		else // align top
-			yPos = y * clgame.scrInfo.iHeight;
+			yPos = y * glState.height;
 	}
 
-	if( yPos + height > clgame.scrInfo.iHeight )
-		yPos = clgame.scrInfo.iHeight - height;
+	if( yPos + height > glState.height )
+		yPos = glState.height - height;
 	else if( yPos < 0 )
 		yPos = 0;
 
@@ -398,8 +387,8 @@ static void SPR_AdjustSize( float *x, float *y, float *w, float *h )
 	if( !x && !y && !w && !h ) return;
 
 	// scale for screen sizes
-	xscale = scr_width->integer / (float)clgame.scrInfo.iWidth;
-	yscale = scr_height->integer / (float)clgame.scrInfo.iHeight;
+	xscale = glState.width / (float)clgame.scrInfo.iWidth;
+	yscale = glState.height / (float)clgame.scrInfo.iHeight;
 
 	if( x ) *x *= xscale;
 	if( y ) *y *= yscale;
@@ -422,8 +411,8 @@ void PicAdjustSize( float *x, float *y, float *w, float *h )
 	if( !x && !y && !w && !h ) return;
 
 	// scale for screen sizes
-	xscale = scr_width->integer / (float)clgame.scrInfo.iWidth;
-	yscale = scr_height->integer / (float)clgame.scrInfo.iHeight;
+	xscale = glState.width / (float)clgame.scrInfo.iWidth;
+	yscale = glState.height / (float)clgame.scrInfo.iHeight;
 
 	if( x ) *x *= xscale;
 	if( y ) *y *= yscale;
@@ -537,6 +526,7 @@ static void SPR_DrawGeneric( int frame, float x, float y, float width, float hei
 	SPR_AdjustSize( &x, &y, &width, &height );
 	texnum = R_GetSpriteTexture( clgame.ds.pSprite, frame );
 	pglColor4ubv( clgame.ds.spriteColor );
+	pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
 	R_DrawStretchPic( x, y, width, height, s1, t1, s2, t2, texnum );
 }
 
@@ -595,7 +585,7 @@ void CL_DrawCenterPrint( void )
 
 		for( j = 0; j < lineLength; j++ )
 		{
-			if( x >= 0 && y >= 0 && x <= clgame.scrInfo.iWidth )
+			if( x >= 0 && y >= 0 && x <= glState.width )
 				x += Con_DrawCharacter( x, y, line[j], colorDefault );
 		}
 		y += charHeight;
@@ -648,7 +638,7 @@ void CL_DrawScreenFade( void )
 	if( sf->fadeFlags & FFADE_MODULATE )
 		GL_SetRenderMode( kRenderTransAdd );
 	else GL_SetRenderMode( kRenderTransTexture );
-	R_DrawStretchPic( 0, 0, scr_width->integer, scr_height->integer, 0, 0, 1, 1, cls.fillImage );
+	R_DrawStretchPic( 0, 0, glState.width, glState.height, 0, 0, 1, 1, tr.whiteTexture );
 	pglColor4ub( 255, 255, 255, 255 );
 }
 
@@ -733,7 +723,57 @@ void CL_ParseTextMessage( sizebuf_t *msg )
 	else text->fxtime = 0.0f;
 
 	// to prevent grab too long messages
-	Q_strncpy( (char *)text->pMessage, MSG_ReadString( msg ), 512 ); 		
+	Q_strncpy( (char *)text->pMessage, MSG_ReadString( msg ), 2048 ); 		
+
+	// NOTE: a "HudText" message contain only 'string' with message name, so we
+	// don't needs to use MSG_ routines here, just directly write msgname into netbuffer
+	CL_DispatchUserMessage( "HudText", Q_strlen( text->pName ) + 1, (void *)text->pName );
+}
+
+/*
+================
+CL_ParseFinaleCutscene
+
+show display finale or cutscene message
+================
+*/
+void CL_ParseFinaleCutscene( sizebuf_t *msg, int level )
+{
+	static int		msgindex = 0;
+	client_textmessage_t	*text;
+	int			channel;
+
+	cl.intermission = level;
+
+	channel = msgindex;
+	msgindex = (msgindex + 1) & (MAX_TEXTCHANNELS - 1);
+
+	// grab message channel
+	text = &cl_textmessage[channel];
+
+	// NOTE: svc_finale and svc_cutscene has a
+	// predefined settings like Quake-style
+	text->x = -1.0f;
+	text->y = 0.15f;
+	text->effect = 2;	// scan out effect
+	text->r1 = 245;
+	text->g1 = 245;
+	text->b1 = 245;
+	text->a1 = 0;	// unused
+	text->r2 = 0;
+	text->g2 = 0;
+	text->b2 = 0;
+	text->a2 = 0;
+	text->fadein = 0.15f;
+	text->fadeout = 0.0f;
+	text->holdtime = 99999.0f;
+	text->fxtime = 0.0f;
+
+	// to prevent grab too long messages
+	Q_strncpy( (char *)text->pMessage, MSG_ReadString( msg ), 2048 ); 		
+
+	if( *text->pMessage == '\0' )
+		return; // no real text
 
 	// NOTE: a "HudText" message contain only 'string' with message name, so we
 	// don't needs to use MSG_ routines here, just directly write msgname into netbuffer
@@ -846,52 +886,48 @@ Render crosshair
 */
 void CL_DrawCrosshair( void )
 {
-	int		x, y, width, height;
-	cl_entity_t	*pPlayer;
+	int	x, y, width, height;
 
-	if( !clgame.ds.pCrosshair || cl.refdef.crosshairangle[2] || !cl_crosshair->integer )
+	if( !clgame.ds.pCrosshair || !cl_crosshair->value )
 		return;
 
-	pPlayer = CL_GetLocalPlayer();
-
-	if( cl.frame.client.deadflag != DEAD_NO || cl.frame.client.flags & FL_FROZEN )
-		return;
-
-	// any camera on
-	if( cl.refdef.viewentity != pPlayer->index )
+	// any camera on or client is died
+	if( cl.local.health <= 0 || cl.viewentity != ( cl.playernum + 1 ))
 		return;
 
 	// get crosshair dimension
 	width = clgame.ds.rcCrosshair.right - clgame.ds.rcCrosshair.left;
 	height = clgame.ds.rcCrosshair.bottom - clgame.ds.rcCrosshair.top;
 
-	x = clgame.scrInfo.iWidth / 2; 
-	y = clgame.scrInfo.iHeight / 2;
+	x = clgame.viewport[0] + ( clgame.viewport[2] >> 1 ); 
+	y = clgame.viewport[1] + ( clgame.viewport[3] >> 1 );
 
-	// g-cont - cl.refdef.crosshairangle is the autoaim angle.
+	// g-cont - cl.crosshairangle is the autoaim angle.
 	// if we're not using autoaim, just draw in the middle of the screen
-	if( !VectorIsNull( cl.refdef.crosshairangle ))
+	if( !VectorIsNull( cl.crosshairangle ))
 	{
 		vec3_t	angles;
 		vec3_t	forward;
 		vec3_t	point, screen;
 
-		VectorAdd( cl.refdef.viewangles, cl.refdef.crosshairangle, angles );
+		VectorAdd( RI.viewangles, cl.crosshairangle, angles );
 		AngleVectors( angles, forward, NULL, NULL );
-		VectorAdd( cl.refdef.vieworg, forward, point );
+		VectorAdd( RI.vieworg, forward, point );
 		R_WorldToScreen( point, screen );
 
-		x += 0.5f * screen[0] * scr_width->integer + 0.5f;
-		y += 0.5f * screen[1] * scr_height->integer + 0.5f;
+		x += ( clgame.viewport[2] >> 1 ) * screen[0] + 0.5f;
+		y += ( clgame.viewport[3] >> 1 ) * screen[1] + 0.5f;
 	}
 
-	clgame.ds.pSprite = clgame.ds.pCrosshair;
+	// move at center the screen
+	x -= 0.5f * width;
+	y -= 0.5f * height;
 
-	GL_SetRenderMode( kRenderTransTexture );
+	clgame.ds.pSprite = clgame.ds.pCrosshair;
 	*(int *)clgame.ds.spriteColor = *(int *)clgame.ds.rgbaCrosshair;
 
-	SPR_EnableScissor( x - 0.5f * width, y - 0.5f * height, width, height );
-	SPR_DrawGeneric( 0, x - 0.5f * width, y - 0.5f * height, -1, -1, &clgame.ds.rcCrosshair );
+	SPR_EnableScissor( x, y, width, height );
+	pfnSPR_DrawHoles( 0, x, y, &clgame.ds.rcCrosshair );
 	SPR_DisableScissor();
 }
 
@@ -911,15 +947,15 @@ static void CL_DrawLoading( float percent )
 	x = ( clgame.scrInfo.iWidth - width ) >> 1;
 	y = ( clgame.scrInfo.iHeight - height) >> 1;
 
-	xscale = scr_width->integer / (float)clgame.scrInfo.iWidth;
-	yscale = scr_height->integer / (float)clgame.scrInfo.iHeight;
+	xscale = glState.width / (float)clgame.scrInfo.iWidth;
+	yscale = glState.height / (float)clgame.scrInfo.iHeight;
 
 	x *= xscale;
 	y *= yscale;
 	width *= xscale;
 	height *= yscale;
 
-	if( cl_allow_levelshots->integer )
+	if( cl_allow_levelshots->value )
           {
 		pglColor4ub( 128, 128, 128, 255 );
 		GL_SetRenderMode( kRenderTransTexture );
@@ -959,8 +995,8 @@ static void CL_DrawPause( void )
 	x = ( clgame.scrInfo.iWidth - width ) >> 1;
 	y = ( clgame.scrInfo.iHeight - height) >> 1;
 
-	xscale = scr_width->integer / (float)clgame.scrInfo.iWidth;
-	yscale = scr_height->integer / (float)clgame.scrInfo.iHeight;
+	xscale = glState.width / (float)clgame.scrInfo.iWidth;
+	yscale = glState.height / (float)clgame.scrInfo.iHeight;
 
 	x *= xscale;
 	y *= yscale;
@@ -977,22 +1013,24 @@ void CL_DrawHUD( int state )
 	if( state == CL_ACTIVE && !cl.video_prepped )
 		state = CL_LOADING;
 
-	if( state == CL_ACTIVE && cl.refdef.paused )
+	if( state == CL_ACTIVE && cl.paused )
 		state = CL_PAUSED;
 
 	switch( state )
 	{
 	case CL_ACTIVE:
-		CL_DrawScreenFade ();
+		if( !cl.intermission )
+			CL_DrawScreenFade ();
 		CL_DrawCrosshair ();
 		CL_DrawCenterPrint ();
-		clgame.dllFuncs.pfnRedraw( cl.time, cl.refdef.intermission );
+		clgame.dllFuncs.pfnRedraw( cl.time, cl.intermission );
+		if( cl.intermission ) CL_DrawScreenFade ();
 		break;
 	case CL_PAUSED:
 		CL_DrawScreenFade ();
 		CL_DrawCrosshair ();
 		CL_DrawCenterPrint ();
-		clgame.dllFuncs.pfnRedraw( cl.time, cl.refdef.intermission );
+		clgame.dllFuncs.pfnRedraw( cl.time, cl.intermission );
 		CL_DrawPause();
 		break;
 	case CL_LOADING:
@@ -1015,7 +1053,7 @@ void CL_LinkUserMessage( char *pszName, const int svc_num, int iSize )
 	if( !pszName || !*pszName )
 		Host_Error( "CL_LinkUserMessage: bad message name\n" );
 
-	if( svc_num < svc_lastmsg )
+	if( svc_num <= svc_lastmsg )
 		Host_Error( "CL_LinkUserMessage: tried to hook a system message \"%s\"\n", svc_strings[svc_num] );	
 
 	// see if already hooked
@@ -1125,12 +1163,13 @@ void CL_ClearEdicts( void )
 }
 
 /*
-===============================================================================
-	CGame Builtin Functions
+=============
+CL_LoadHudSprite
 
-===============================================================================
+upload sprite frames
+=============
 */
-static qboolean CL_LoadHudSprite( const char *szSpriteName, model_t *m_pSprite, qboolean mapSprite, uint texFlags )
+static qboolean CL_LoadHudSprite( const char *szSpriteName, model_t *m_pSprite, uint type, uint texFlags )
 {
 	byte	*buf;
 	size_t	size;
@@ -1142,9 +1181,13 @@ static qboolean CL_LoadHudSprite( const char *szSpriteName, model_t *m_pSprite, 
 	if( !buf ) return false;
 
 	Q_strncpy( m_pSprite->name, szSpriteName, sizeof( m_pSprite->name ));
-	m_pSprite->flags = 256; // it's hud sprite, make difference names to prevent free shared textures
 
-	if( mapSprite ) Mod_LoadMapSprite( m_pSprite, buf, size, &loaded );
+	// it's hud sprite, make difference names to prevent free shared textures
+	if( type == SPR_CLIENT || type == SPR_HUDSPRITE )
+		SetBits( m_pSprite->flags, MODEL_CLIENT );
+
+	if( type == SPR_MAPSPRITE )
+		Mod_LoadMapSprite( m_pSprite, buf, size, &loaded );
 	else Mod_LoadSpriteModel( m_pSprite, buf, &loaded, texFlags );		
 
 	Mem_Free( buf );
@@ -1154,27 +1197,30 @@ static qboolean CL_LoadHudSprite( const char *szSpriteName, model_t *m_pSprite, 
 		Mod_UnloadSpriteModel( m_pSprite );
 		return false;
 	}
+
 	return true;
 }
 
 /*
-=========
-pfnSPR_LoadExt
+=============
+CL_LoadSpriteModel
 
-=========
+some sprite models is exist only at client: HUD sprites,
+tent sprites or overview images
+=============
 */
-HSPRITE pfnSPR_LoadExt( const char *szPicName, uint texFlags )
+static model_t *CL_LoadSpriteModel( const char *filename, uint type, uint texFlags )
 {
 	char	name[64];
 	int	i;
 
-	if( !szPicName || !*szPicName )
+	if( !filename || !*filename )
 	{
-		MsgDev( D_ERROR, "CL_LoadSprite: bad name!\n" );
-		return 0;
+		MsgDev( D_ERROR, "CL_LoadSpriteModel: bad name!\n" );
+		return NULL;
 	}
 
-	Q_strncpy( name, szPicName, sizeof( name ));
+	Q_strncpy( name, filename, sizeof( name ));
 	COM_FixSlashes( name );
 
 	// slot 0 isn't used
@@ -1184,7 +1230,7 @@ HSPRITE pfnSPR_LoadExt( const char *szPicName, uint texFlags )
 		{
 			// prolonge registration
 			clgame.sprites[i].needload = clgame.load_sequence;
-			return i;
+			return &clgame.sprites[i];
 		}
 	}
 
@@ -1197,18 +1243,53 @@ HSPRITE pfnSPR_LoadExt( const char *szPicName, uint texFlags )
 
 	if( i == MAX_IMAGES ) 
 	{
-		MsgDev( D_ERROR, "SPR_Load: can't load %s, MAX_HSPRITES limit exceeded\n", szPicName );
-		return 0;
+		MsgDev( D_ERROR, "CL_LoadSpriteModel: can't load %s, MAX_SPRITES limit exceeded\n", filename );
+		return NULL;
 	}
 
-	// load new model
-	if( CL_LoadHudSprite( name, &clgame.sprites[i], false, texFlags ))
+	// load new map sprite
+	if( CL_LoadHudSprite( name, &clgame.sprites[i], type, texFlags ))
 	{
 		if( i < ( MAX_IMAGES - 1 ))
 			clgame.sprites[i].needload = clgame.load_sequence;
-		return i;
+		return &clgame.sprites[i];
 	}
-	return 0;
+
+	return NULL;
+}
+
+/*
+=============
+CL_LoadClientSprite
+
+load sprites for temp ents
+=============
+*/
+model_t *CL_LoadClientSprite( const char *filename )
+{
+	return CL_LoadSpriteModel( filename, SPR_CLIENT, 0 );
+}
+
+/*
+===============================================================================
+	CGame Builtin Functions
+
+===============================================================================
+*/
+/*
+=========
+pfnSPR_LoadExt
+
+=========
+*/
+HSPRITE pfnSPR_LoadExt( const char *szPicName, uint texFlags )
+{
+	model_t	*spr;
+
+	if(( spr = CL_LoadSpriteModel( szPicName, SPR_CLIENT, texFlags )) == NULL )
+		return 0;
+
+	return (spr - clgame.sprites); // return index
 }
 
 /*
@@ -1219,7 +1300,12 @@ pfnSPR_Load
 */
 HSPRITE pfnSPR_Load( const char *szPicName )
 {
-	return pfnSPR_LoadExt( szPicName, 0 );
+	model_t	*spr;
+
+	if(( spr = CL_LoadSpriteModel( szPicName, SPR_HUDSPRITE, 0 )) == NULL )
+		return 0;
+
+	return (spr - clgame.sprites); // return index
 }
 
 /*
@@ -1293,11 +1379,6 @@ static void pfnSPR_Set( HSPRITE hPic, int r, int g, int b )
 	clgame.ds.spriteColor[1] = bound( 0, g, 255 );
 	clgame.ds.spriteColor[2] = bound( 0, b, 255 );
 	clgame.ds.spriteColor[3] = 255;
-
-	// set default state
-	pglDisable( GL_BLEND );
-	pglDisable( GL_ALPHA_TEST );
-	pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
 }
 
 /*
@@ -1308,7 +1389,8 @@ pfnSPR_Draw
 */
 static void pfnSPR_Draw( int frame, int x, int y, const wrect_t *prc )
 {
-	pglEnable( GL_ALPHA_TEST );
+	pglDisable( GL_BLEND );
+
 	SPR_DrawGeneric( frame, x, y, -1, -1, prc );
 }
 
@@ -1320,8 +1402,14 @@ pfnSPR_DrawHoles
 */
 static void pfnSPR_DrawHoles( int frame, int x, int y, const wrect_t *prc )
 {
-	GL_SetRenderMode( kRenderTransAlpha );
+	pglEnable( GL_ALPHA_TEST );
+	pglBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
+	pglEnable( GL_BLEND );
+
 	SPR_DrawGeneric( frame, x, y, -1, -1, prc );
+
+	pglDisable( GL_ALPHA_TEST );
+	pglDisable( GL_BLEND );
 }
 
 /*
@@ -1332,8 +1420,12 @@ pfnSPR_DrawAdditive
 */
 static void pfnSPR_DrawAdditive( int frame, int x, int y, const wrect_t *prc )
 {
-	GL_SetRenderMode( kRenderTransAdd );
+	pglEnable( GL_BLEND );
+	pglBlendFunc( GL_ONE, GL_ONE );
+
 	SPR_DrawGeneric( frame, x, y, -1, -1, prc );
+
+	pglDisable( GL_BLEND );
 }
 
 /*
@@ -1415,19 +1507,31 @@ CL_FillRGBA
 
 =============
 */
-void CL_FillRGBA( int x, int y, int width, int height, int r, int g, int b, int a )
+void CL_FillRGBA( int x, int y, int w, int h, int r, int g, int b, int a )
 {
 	r = bound( 0, r, 255 );
 	g = bound( 0, g, 255 );
 	b = bound( 0, b, 255 );
 	a = bound( 0, a, 255 );
-	pglColor4ub( r, g, b, a );
 
-	SPR_AdjustSize( (float *)&x, (float *)&y, (float *)&width, (float *)&height );
+	SPR_AdjustSize( (float *)&x, (float *)&y, (float *)&w, (float *)&h );
 
-	GL_SetRenderMode( kRenderTransAdd );
-	R_DrawStretchPic( x, y, width, height, 0, 0, 1, 1, cls.fillImage );
-	pglColor4ub( 255, 255, 255, 255 );
+	pglDisable( GL_TEXTURE_2D );
+	pglEnable( GL_BLEND );
+	pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
+	pglBlendFunc( GL_SRC_ALPHA, GL_ONE );
+	pglColor4f( r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f );
+
+	pglBegin( GL_QUADS );
+		pglVertex2f( x, y );
+		pglVertex2f( x + w, y );
+		pglVertex2f( x + w, y + h );
+		pglVertex2f( x, y + h );
+	pglEnd ();
+
+	pglColor3f( 1.0f, 1.0f, 1.0f );
+	pglEnable( GL_TEXTURE_2D );
+	pglDisable( GL_BLEND );
 }
 
 /*
@@ -1441,10 +1545,11 @@ static int pfnGetScreenInfo( SCREENINFO *pscrinfo )
 {
 	// setup screen info
 	clgame.scrInfo.iSize = sizeof( clgame.scrInfo );
+	clgame.scrInfo.iFlags = SCRINFO_SCREENFLASH;
 
 	if( Cvar_VariableInteger( "hud_scale" ))
 	{
-		if( scr_width->integer < 640 )
+		if( glState.width < 640 )
 		{
 			// virtual screen space 320x200
 			clgame.scrInfo.iWidth = 320;
@@ -1460,8 +1565,8 @@ static int pfnGetScreenInfo( SCREENINFO *pscrinfo )
 	}
 	else
 	{
-		clgame.scrInfo.iWidth = scr_width->integer;
-		clgame.scrInfo.iHeight = scr_height->integer;
+		clgame.scrInfo.iWidth = glState.width;
+		clgame.scrInfo.iHeight = glState.height;
 		clgame.scrInfo.iFlags &= ~SCRINFO_STRETCHED;
 	}
 
@@ -1572,30 +1677,25 @@ pfnGetPlayerInfo
 static void pfnGetPlayerInfo( int ent_num, hud_player_info_t *pinfo )
 {
 	player_info_t	*player;
-	cl_entity_t	*ent;
-	qboolean		spec = false;
 
-	ent = CL_GetEntityByIndex( ent_num );
 	ent_num -= 1; // player list if offset by 1 from ents
 
 	if( ent_num >= cl.maxclients || ent_num < 0 || !cl.players[ent_num].name[0] )
 	{
-		memset( pinfo, 0, sizeof( *pinfo ));
+		pinfo->name = NULL;
+		pinfo->thisplayer = false;
 		return;
 	}
 
 	player = &cl.players[ent_num];
 	pinfo->thisplayer = ( ent_num == cl.playernum ) ? true : false;
-	if( ent ) spec = ent->curstate.spectator;
-
 	pinfo->name = player->name;
 	pinfo->model = player->model;
-
-	pinfo->spectator = spec;		
+	pinfo->spectator = player->spectator;		
 	pinfo->ping = player->ping;
 	pinfo->packetloss = player->packet_loss;
-	pinfo->topcolor = Q_atoi( Info_ValueForKey( player->userinfo, "topcolor" ));
-	pinfo->bottomcolor = Q_atoi( Info_ValueForKey( player->userinfo, "bottomcolor" ));
+	pinfo->topcolor = player->topcolor;
+	pinfo->bottomcolor = player->bottomcolor;
 }
 
 /*
@@ -1607,7 +1707,7 @@ pfnPlaySoundByName
 static void pfnPlaySoundByName( const char *szSound, float volume )
 {
 	int hSound = S_RegisterSound( szSound );
-	S_StartSound( NULL, cl.refdef.viewentity, CHAN_ITEM, hSound, volume, ATTN_NORM, PITCH_NORM, SND_STOP_LOOPING );
+	S_StartSound( NULL, cl.viewentity, CHAN_ITEM, hSound, volume, ATTN_NORM, PITCH_NORM, SND_STOP_LOOPING );
 }
 
 /*
@@ -1629,7 +1729,7 @@ static void pfnPlaySoundByIndex( int iSound, float volume )
 		MsgDev( D_ERROR, "CL_PlaySoundByIndex: invalid sound handle %i\n", iSound );
 		return;
 	}
-	S_StartSound( NULL, cl.refdef.viewentity, CHAN_ITEM, hSound, volume, ATTN_NORM, PITCH_NORM, SND_STOP_LOOPING );
+	S_StartSound( NULL, cl.viewentity, CHAN_ITEM, hSound, volume, ATTN_NORM, PITCH_NORM, SND_STOP_LOOPING );
 }
 
 /*
@@ -1697,11 +1797,13 @@ int pfnDrawConsoleString( int x, int y, char *string )
 	int	drawLen;
 
 	if( !string || !*string ) return 0; // silent ignore
+	Con_SetFont( con_fontsize->value );
+
 	clgame.ds.adjust_size = true;
-	Con_SetFont( con_fontsize->integer );
 	drawLen = Con_DrawString( x, y, string, clgame.ds.textColor );
 	MakeRGBA( clgame.ds.textColor, 255, 255, 255, 255 );
 	clgame.ds.adjust_size = false;
+
 	Con_RestoreFont();
 
 	return (x + drawLen); // exclude color prexfixes
@@ -1732,7 +1834,7 @@ compute string length in screen pixels
 */
 void pfnDrawConsoleStringLen( const char *pText, int *length, int *height )
 {
-	Con_SetFont( con_fontsize->integer );
+	Con_SetFont( con_fontsize->value );
 	Con_DrawStringLen( pText, length, height );
 	Con_RestoreFont();
 }
@@ -1796,7 +1898,7 @@ return interpolated angles from previous frame
 */
 static void pfnGetViewAngles( float *angles )
 {
-	if( angles ) VectorCopy( cl.refdef.cl_viewangles, angles );
+	if( angles ) VectorCopy( cl.viewangles, angles );
 }
 
 /*
@@ -1808,7 +1910,7 @@ return interpolated angles from previous frame
 */
 static void pfnSetViewAngles( float *angles )
 {
-	if( angles ) VectorCopy( angles, cl.refdef.cl_viewangles );
+	if( angles ) VectorCopy( angles, cl.viewangles );
 }
 
 /*
@@ -1819,7 +1921,7 @@ pfnPhysInfo_ValueForKey
 */
 static const char* pfnPhysInfo_ValueForKey( const char *key )
 {
-	return Info_ValueForKey( cl.frame.client.physinfo, key );
+	return Info_ValueForKey( cls.physinfo, key );
 }
 
 /*
@@ -1842,7 +1944,7 @@ value that come from server
 */
 static float pfnGetClientMaxspeed( void )
 {
-	return cl.frame.client.maxspeed;
+	return cl.local.maxspeed;
 }
 
 /*
@@ -1889,11 +1991,7 @@ pfnIsNoClipping
 */
 int pfnIsNoClipping( void )
 {
-	cl_entity_t *pl = CL_GetLocalPlayer();
-
-	if( !pl ) return false;
-
-	return pl->curstate.movetype == MOVETYPE_NOCLIP;
+	return ( cl.frames[cl.parsecountmod].playerstate[cl.playernum].movetype == MOVETYPE_NOCLIP );
 }
 
 /*
@@ -1946,8 +2044,8 @@ void pfnCalcShake( void )
 
 		// compute random shake extents (the shake will settle down from this)
 		for( i = 0; i < 3; i++ )
-			clgame.shake.offset[i] = Com_RandomFloat( -clgame.shake.amplitude, clgame.shake.amplitude );
-		clgame.shake.angle = Com_RandomFloat( -clgame.shake.amplitude * 0.25f, clgame.shake.amplitude * 0.25f );
+			clgame.shake.offset[i] = COM_RandomFloat( -clgame.shake.amplitude, clgame.shake.amplitude );
+		clgame.shake.angle = COM_RandomFloat( -clgame.shake.amplitude * 0.25f, clgame.shake.amplitude * 0.25f );
 	}
 
 	// ramp down amplitude over duration (fraction goes from 1 to 0 linearly with slope 1/duration)
@@ -2000,8 +2098,7 @@ pfnIsSpectateOnly
 */
 static int pfnIsSpectateOnly( void )
 {
-	cl_entity_t *pPlayer = CL_GetLocalPlayer();
-	return pPlayer ? (pPlayer->curstate.spectator != 0) : 0;
+	return (cls.spectator != 0);
 }
 
 /*
@@ -2156,7 +2253,8 @@ CL_FindModelIndex
 */
 int CL_FindModelIndex( const char *m )
 {
-	int	i;
+	static float	lasttimewarn;
+	int		i;
 
 	if( !m || !m[0] )
 		return 0;
@@ -2167,11 +2265,13 @@ int CL_FindModelIndex( const char *m )
 			return i;
 	}
 
-	if( cls.state == ca_active && Q_strnicmp( m, "models/player/", 14 ))
+	if( lasttimewarn < host.realtime )
 	{
-		// tell user about problem (but don't spam console about playermodel)
-		MsgDev( D_NOTE, "CL_ModelIndex: %s not precached\n", m );
+		// tell user about problem (but don't spam console)
+		MsgDev( D_ERROR, "CL_ModelIndex: %s not precached\n", m );
+		lasttimewarn = host.realtime + 1.0f;
 	}
+
 	return 0;
 }
 
@@ -2196,9 +2296,7 @@ pfnLocalPlayerDucking
 */
 int pfnLocalPlayerDucking( void )
 {
-	if( CL_IsPredicted( ))
-		return (cl.predicted.usehull == 1);
-	return cl.frame.client.bInDuck;
+	return (cl.local.usehull == 1) ? true : false;
 }
 
 /*
@@ -2209,12 +2307,7 @@ pfnLocalPlayerViewheight
 */
 void pfnLocalPlayerViewheight( float *view_ofs )
 {
-	// predicted or smoothed
-	if( !view_ofs ) return;
-
-	if( CL_IsPredicted( ))
-		VectorCopy( cl.predicted.viewofs, view_ofs );		
-	else VectorCopy( cl.frame.client.view_ofs, view_ofs );
+	if( view_ofs ) VectorCopy( cl.viewheight, view_ofs );		
 }
 
 /*
@@ -2260,6 +2353,22 @@ physent_t *pfnGetPhysent( int idx )
 	{
 		// return physent
 		return &clgame.pmove->physents[idx];
+	}
+	return NULL;
+}
+
+/*
+=============
+pfnGetVisent
+
+=============
+*/
+physent_t *pfnGetVisent( int idx )
+{
+	if( idx >= 0 && idx < clgame.pmove->numvisent )
+	{
+		// return physent
+		return &clgame.pmove->visents[idx];
 	}
 	return NULL;
 }
@@ -2332,6 +2441,17 @@ static struct msurface_s *pfnTraceSurface( int ground, float *vstart, float *ven
 
 	pe = &clgame.pmove->physents[ground];
 	return PM_TraceSurface( pe, vstart, vend );
+}
+
+/*
+=============
+pfnGetMovevars
+
+=============
+*/
+static movevars_t *pfnGetMoveVars( void )
+{
+	return &clgame.movevars;
 }
 	
 /*
@@ -2445,49 +2565,7 @@ pfnLoadMapSprite
 */
 model_t *pfnLoadMapSprite( const char *filename )
 {
-	char	name[64];
-	int	i;
-
-	if( !filename || !*filename )
-	{
-		MsgDev( D_ERROR, "CL_LoadMapSprite: bad name!\n" );
-		return NULL;
-	}
-
-	Q_strncpy( name, filename, sizeof( name ));
-	COM_FixSlashes( name );
-
-	// slot 0 isn't used
-	for( i = 1; i < MAX_IMAGES; i++ )
-	{
-		if( !Q_stricmp( clgame.sprites[i].name, name ))
-		{
-			// prolonge registration
-			clgame.sprites[i].needload = clgame.load_sequence;
-			return &clgame.sprites[i];
-		}
-	}
-
-	// find a free model slot spot
-	for( i = 1; i < MAX_IMAGES; i++ )
-	{
-		if( !clgame.sprites[i].name[0] )
-			break; // this is a valid spot
-	}
-
-	if( i == MAX_IMAGES ) 
-	{
-		MsgDev( D_ERROR, "LoadMapSprite: can't load %s, MAX_HSPRITES limit exceeded\n", filename );
-		return NULL;
-	}
-
-	// load new map sprite
-	if( CL_LoadHudSprite( name, &clgame.sprites[i], true, 0 ))
-	{
-		clgame.sprites[i].needload = clgame.load_sequence;
-		return &clgame.sprites[i];
-	}
-	return NULL;
+	return CL_LoadSpriteModel( filename, SPR_MAPSPRITE, 0 );
 }
 
 /*
@@ -2516,13 +2594,22 @@ PlayerInfo_SetValueForKey
 */
 void PlayerInfo_SetValueForKey( const char *key, const char *value )
 {
-	cvar_t	*var;
+	convar_t	*var;
 
-	var = (cvar_t *)Cvar_FindVar( key );
-	if( !var || !(var->flags & CVAR_USERINFO ))
-		return;
+	if( !Q_strcmp( Info_ValueForKey( cls.userinfo, key ), value ))
+		return; // not changes ?
 
-	Cvar_DirectSet( var, value );
+	var = Cvar_FindVar( key );
+
+	if( var && FBitSet( var->flags, FCVAR_USERINFO ))
+	{
+		Cvar_DirectSet( var, value );
+	}
+	else if( Info_SetValueForStarKey( cls.userinfo, key, value, MAX_INFO_STRING ))
+	{
+		// time to update server copy of userinfo
+		CL_ServerCommand( true, "setinfo \"%s\" \"%s\"\n", key, value );
+	}
 }
 
 /*
@@ -2543,38 +2630,23 @@ qboolean pfnGetPlayerUniqueID( int iPlayer, char playerID[16] )
 =============
 pfnGetTrackerIDForPlayer
 
+obsolete, unused
 =============
 */
 int pfnGetTrackerIDForPlayer( int playerSlot )
 {
-	playerSlot -= 1;	// make into a client index
-
-	if( !cl.players[playerSlot].userinfo[0] || !cl.players[playerSlot].name[0] )
-			return 0;
-	return Q_atoi( Info_ValueForKey( cl.players[playerSlot].userinfo, "*tracker" ));
+	return 0;
 }
 
 /*
 =============
 pfnGetPlayerForTrackerID
 
+obsolete, unused
 =============
 */
 int pfnGetPlayerForTrackerID( int trackerID )
 {
-	int	i;
-
-	for( i = 0; i < MAX_CLIENTS; i++ )
-	{
-		if( !cl.players[i].userinfo[0] || !cl.players[i].name[0] )
-			continue;
-
-		if( Q_atoi( Info_ValueForKey( cl.players[i].userinfo, "*tracker" )) == trackerID )
-		{
-			// make into a player slot
-			return (i+1);
-		}
-	}
 	return 0;
 }
 
@@ -2589,7 +2661,7 @@ int pfnServerCmdUnreliable( char *szCmdString )
 	if( !szCmdString || !szCmdString[0] )
 		return 0;
 
-	MSG_WriteByte( &cls.datagram, clc_stringcmd );
+	MSG_BeginClientCmd( &cls.datagram, clc_stringcmd );
 	MSG_WriteString( &cls.datagram, szCmdString );
 
 	return 1;
@@ -2768,7 +2840,7 @@ LocalPlayerInfo_ValueForKey
 */
 const char *LocalPlayerInfo_ValueForKey( const char* key )
 {
-	return Info_ValueForKey( Cvar_Userinfo(), key );
+	return Info_ValueForKey( cls.userinfo, key );
 }
 
 /*
@@ -2816,7 +2888,7 @@ pfnPlaySoundVoiceByName
 void pfnPlaySoundVoiceByName( char *filename, float volume, int pitch )
 {
 	int hSound = S_RegisterSound( filename );
-	S_StartSound( NULL, cl.refdef.viewentity, CHAN_AUTO, hSound, volume, ATTN_NORM, pitch, SND_STOP_LOOPING );
+	S_StartSound( NULL, cl.viewentity, CHAN_AUTO, hSound, volume, ATTN_NORM, pitch, SND_STOP_LOOPING );
 }
 
 /*
@@ -2852,7 +2924,7 @@ pfnPlaySoundByNameAtPitch
 void pfnPlaySoundByNameAtPitch( char *filename, float volume, int pitch )
 {
 	int hSound = S_RegisterSound( filename );
-	S_StartSound( NULL, cl.refdef.viewentity, CHAN_STATIC, hSound, volume, ATTN_NORM, pitch, SND_STOP_LOOPING );
+	S_StartSound( NULL, cl.viewentity, CHAN_STATIC, hSound, volume, ATTN_NORM, pitch, SND_STOP_LOOPING );
 }
 
 /*
@@ -2861,23 +2933,31 @@ CL_FillRGBABlend
 
 =============
 */
-void CL_FillRGBABlend( int x, int y, int width, int height, int r, int g, int b, int a )
+void CL_FillRGBABlend( int x, int y, int w, int h, int r, int g, int b, int a )
 {
 	r = bound( 0, r, 255 );
 	g = bound( 0, g, 255 );
 	b = bound( 0, b, 255 );
 	a = bound( 0, a, 255 );
-	pglColor4ub( r, g, b, a );
 
-	SPR_AdjustSize( (float *)&x, (float *)&y, (float *)&width, (float *)&height );
+	SPR_AdjustSize( (float *)&x, (float *)&y, (float *)&w, (float *)&h );
 
+	pglDisable( GL_TEXTURE_2D );
 	pglEnable( GL_BLEND );
-	pglDisable( GL_ALPHA_TEST );
-	pglBlendFunc( GL_ONE_MINUS_SRC_ALPHA, GL_ONE );
 	pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
+	pglBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
+	pglColor4f( r / 255.0f, g / 255.0f, b / 255.0f, a / 255.0f );
 
-	R_DrawStretchPic( x, y, width, height, 0, 0, 1, 1, cls.fillImage );
-	pglColor4ub( 255, 255, 255, 255 );
+	pglBegin( GL_QUADS );
+		pglVertex2f( x, y );
+		pglVertex2f( x + w, y );
+		pglVertex2f( x + w, y + h );
+		pglVertex2f( x, y + h );
+	pglEnd ();
+
+	pglColor3f( 1.0f, 1.0f, 1.0f );
+	pglEnable( GL_TEXTURE_2D );
+	pglDisable( GL_BLEND );
 }
 
 /*
@@ -2920,27 +3000,30 @@ void TriRenderMode( int mode )
 	switch( mode )
 	{
 	case kRenderNormal:
-	default:	pglDisable( GL_BLEND );
-		pglDisable( GL_ALPHA_TEST );
 		pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
+		pglDisable( GL_BLEND );
+		pglDepthMask( GL_TRUE );
+		break;
+	case kRenderTransAlpha:
+		pglEnable( GL_BLEND );
+		pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
+		pglBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
+		pglDepthMask( GL_FALSE );
 		break;
 	case kRenderTransColor:
-	case kRenderTransAlpha:
 	case kRenderTransTexture:
-		// NOTE: TriAPI doesn't have 'solid' mode
 		pglEnable( GL_BLEND );
-		pglDisable( GL_ALPHA_TEST );
 		pglBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
-		pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
 		break;
 	case kRenderGlow:
 	case kRenderTransAdd:
-		pglEnable( GL_BLEND );
-		pglDisable( GL_ALPHA_TEST );
 		pglBlendFunc( GL_SRC_ALPHA, GL_ONE );
-		pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
+		pglEnable( GL_BLEND );
+		pglDepthMask( GL_FALSE );
 		break;
 	}
+
+	clgame.ds.renderMode = mode;
 }
 
 /*
@@ -2993,7 +3076,6 @@ draw triangle sequence
 void TriEnd( void )
 {
 	pglEnd();
-	pglDisable( GL_ALPHA_TEST );
 }
 
 /*
@@ -3004,11 +3086,14 @@ TriColor4f
 */
 void TriColor4f( float r, float g, float b, float a )
 {
-	clgame.ds.triColor[0] = (byte)bound( 0, (r * 255.0f), 255 );
-	clgame.ds.triColor[1] = (byte)bound( 0, (g * 255.0f), 255 );
-	clgame.ds.triColor[2] = (byte)bound( 0, (b * 255.0f), 255 );
-	clgame.ds.triColor[3] = (byte)bound( 0, (a * 255.0f), 255 );
-	pglColor4ub( clgame.ds.triColor[0], clgame.ds.triColor[1], clgame.ds.triColor[2], clgame.ds.triColor[3] );
+	if( clgame.ds.renderMode == kRenderTransAlpha )
+		pglColor4ub( r * 255.9f, g * 255.9f, b * 255.9f, a * 255.0f );
+	else pglColor4f( r * a, g * a, b * a, 1.0 );
+
+	clgame.ds.triRGBA[0] = r;
+	clgame.ds.triRGBA[1] = g;
+	clgame.ds.triRGBA[2] = b;
+	clgame.ds.triRGBA[3] = a;
 }
 
 /*
@@ -3019,11 +3104,12 @@ TriColor4ub
 */
 void TriColor4ub( byte r, byte g, byte b, byte a )
 {
-	clgame.ds.triColor[0] = r;
-	clgame.ds.triColor[1] = g;
-	clgame.ds.triColor[2] = b;
-	clgame.ds.triColor[3] = a;
-	pglColor4ub( r, g, b, a );
+	clgame.ds.triRGBA[0] = r * (1.0f / 255.0f);
+	clgame.ds.triRGBA[1] = g * (1.0f / 255.0f);
+	clgame.ds.triRGBA[2] = b * (1.0f / 255.0f);
+	clgame.ds.triRGBA[3] = a * (1.0f / 255.0f);
+
+	pglColor4f( clgame.ds.triRGBA[0], clgame.ds.triRGBA[1], clgame.ds.triRGBA[2], 1.0f );
 }
 
 /*
@@ -3067,14 +3153,13 @@ TriBrightness
 */
 void TriBrightness( float brightness )
 {
-	rgba_t	rgba;
+	float	r, g, b;
 
-	brightness = max( 0.0f, brightness );
-	rgba[0] = clgame.ds.triColor[0] * brightness;
-	rgba[1] = clgame.ds.triColor[1] * brightness;
-	rgba[2] = clgame.ds.triColor[2] * brightness;
+	r = clgame.ds.triRGBA[0] * clgame.ds.triRGBA[3] * brightness;
+	g = clgame.ds.triRGBA[1] * clgame.ds.triRGBA[3] * brightness;
+	b = clgame.ds.triRGBA[2] * clgame.ds.triRGBA[3] * brightness;
 
-	pglColor4ub( rgba[0], rgba[1], rgba[2], clgame.ds.triColor[3] );
+	pglColor4f( r, g, b, 1.0f );
 }
 
 /*
@@ -3083,7 +3168,7 @@ TriCullFace
 
 =============
 */
-void TriCullFace( TRICULLSTYLE mode )
+void TriCullFace( int mode )
 {
 	switch( mode )
 	{
@@ -3107,23 +3192,12 @@ bind current texture
 int TriSpriteTexture( model_t *pSpriteModel, int frame )
 {
 	int	gl_texturenum;
-	msprite_t	*psprite;
 
 	if(( gl_texturenum = R_GetSpriteTexture( pSpriteModel, frame )) == 0 )
 		return 0;
 
 	if( gl_texturenum <= 0 || gl_texturenum > MAX_TEXTURES )
-	{
-		MsgDev( D_ERROR, "TriSpriteTexture: bad index %i\n", gl_texturenum );
 		gl_texturenum = tr.defaultTexture;
-	}
-
-	psprite = pSpriteModel->cache.data;
-	if( psprite->texFormat == SPR_ALPHTEST )
-	{
-		pglEnable( GL_ALPHA_TEST );
-		pglAlphaFunc( GL_GEQUAL, 0.5f );
-	}
 
 	GL_Bind( GL_TEXTURE0, gl_texturenum );
 
@@ -3143,10 +3217,10 @@ int TriWorldToScreen( float *world, float *screen )
 
 	retval = R_WorldToScreen( world, screen );
 
-	screen[0] =  0.5f * screen[0] * (float)cl.refdef.viewport[2];
-	screen[1] = -0.5f * screen[1] * (float)cl.refdef.viewport[3];
-	screen[0] += 0.5f * (float)cl.refdef.viewport[2];
-	screen[1] += 0.5f * (float)cl.refdef.viewport[3];
+	screen[0] =  0.5f * screen[0] * (float)clgame.viewport[2];
+	screen[1] = -0.5f * screen[1] * (float)clgame.viewport[3];
+	screen[0] += 0.5f * (float)clgame.viewport[2];
+	screen[1] += 0.5f * (float)clgame.viewport[3];
 
 	return retval;
 }
@@ -3160,35 +3234,36 @@ enables global fog on the level
 */
 void TriFog( float flFogColor[3], float flStart, float flEnd, int bOn )
 {
+	// overrided by internal fog
 	if( RI.fogEnabled ) return;
-	RI.fogCustom = true;
+	RI.fogCustom = bOn;
 
-	if( !bOn )
+	// check for invalid parms
+	if( flEnd <= flStart )
 	{
-		pglDisable( GL_FOG );
 		RI.fogCustom = false;
+		pglDisable( GL_FOG );
 		return;
 	}
+
+	if( RI.fogCustom )
+		pglEnable( GL_FOG );
+	else pglDisable( GL_FOG );
 
 	// copy fog params
 	RI.fogColor[0] = flFogColor[0] / 255.0f;
 	RI.fogColor[1] = flFogColor[1] / 255.0f;
 	RI.fogColor[2] = flFogColor[2] / 255.0f;
 	RI.fogStart = flStart;
+	RI.fogColor[3] = 1.0f;
 	RI.fogDensity = 0.0f;
+	RI.fogSkybox = true;
 	RI.fogEnd = flEnd;
 
-	if( VectorIsNull( RI.fogColor ))
-	{
-		pglDisable( GL_FOG );
-		return;	
-	}
-
-	pglEnable( GL_FOG );
 	pglFogi( GL_FOG_MODE, GL_LINEAR );
+	pglFogfv( GL_FOG_COLOR, RI.fogColor );
 	pglFogf( GL_FOG_START, RI.fogStart );
 	pglFogf( GL_FOG_END, RI.fogEnd );
-	pglFogfv( GL_FOG_COLOR, RI.fogColor );
 	pglHint( GL_FOG_HINT, GL_NICEST );
 }
 
@@ -3225,16 +3300,15 @@ NOTE: dlights are ignored
 */
 void TriLightAtPoint( float *pos, float *value )
 {
-	color24	ambient;
+	colorVec	vLightColor;
 
-	if( !pos || !value )
-		return;
+	if( !pos || !value ) return;
 
-	R_LightForPoint( pos, &ambient, false, false, 0.0f );
+	vLightColor = R_LightPoint( pos );
 
-	value[0] = (float)ambient.r * 255.0f;
-	value[1] = (float)ambient.g * 255.0f;
-	value[2] = (float)ambient.b * 255.0f;
+	value[0] = vLightColor.r;
+	value[1] = vLightColor.g;
+	value[2] = vLightColor.b;
 }
 
 /*
@@ -3246,8 +3320,11 @@ Heavy legacy of Quake...
 */
 void TriColor4fRendermode( float r, float g, float b, float a, int rendermode )
 {
-	if( rendermode == kRenderTransAlpha )
+	if( clgame.ds.renderMode == kRenderTransAlpha )
+	{
+		clgame.ds.triRGBA[3] = a / 255.0f;
 		pglColor4f( r, g, b, a );
+	}
 	else pglColor4f( r * a, g * a, b * a, 1.0f );
 }
 
@@ -3260,7 +3337,7 @@ TriForParams
 void TriFogParams( float flDensity, int iFogSkybox )
 {
 	RI.fogDensity = flDensity;
-	RI.fogCustom = iFogSkybox;
+	RI.fogSkybox = iFogSkybox;
 }
 
 /*
@@ -3330,6 +3407,23 @@ void NetAPI_InitNetworking( void )
 	NET_Config( true ); // allow remote
 }
 
+int Net_GetPacketLoss( void )
+{
+	int	packet_loss = 0;
+
+	if( cls.state == ca_active )
+	{
+		packet_loss = bound( 0, (int)cls.packet_loss, 100 );
+
+		if ( packet_loss < 0 )
+			packet_loss = 0;
+		if ( packet_loss > 100 )
+			packet_loss = 100;
+	}
+
+	return packet_loss;
+}
+
 /*
 =================
 NetAPI_InitNetworking
@@ -3338,15 +3432,24 @@ NetAPI_InitNetworking
 */
 void NetAPI_Status( net_status_t *status )
 {
+	qboolean	connected = false;
+	int	packet_loss = 0;
+
 	ASSERT( status != NULL );
 
-	status->connected = NET_IsLocalAddress( cls.netchan.remote_address ) ? false : true;
-	status->connection_time = host.realtime - cls.netchan.connect_time;
+	if( cls.state > ca_disconnected && cls.state != ca_cinematic )
+		connected = true;
+
+	if( cls.state == ca_active )
+		packet_loss = bound( 0, (int)cls.packet_loss, 100 );
+
+	status->connected = connected;
+	status->connection_time = (connected) ? (host.realtime - cls.netchan.connect_time) : 0.0;
+	status->latency = (connected) ? cl.frames[cl.parsecountmod].latency : 0.0;
 	status->remote_address = cls.netchan.remote_address;
-	status->packet_loss = cls.packet_loss / 100.0; // percent
-	status->latency = cl.frame.latency;
+	status->packet_loss = packet_loss;
 	status->local_address = net_local;
-	status->rate = cls.netchan.rate;
+	status->rate = rate->value;
 }
 
 /*
@@ -3449,14 +3552,14 @@ void NetAPI_CancelRequest( int context )
 				nr->pfnFunc( &nr->resp );
                               }
 
-			memset( &clgame.net_requests[i], 0, sizeof( net_request_t ));
-
 			if( clgame.net_requests[i].resp.type == NETAPI_REQUEST_SERVERLIST && &clgame.net_requests[i] == clgame.master_request )
 			{
 				if( clgame.request_type == NET_REQUEST_CLIENT )
 					clgame.request_type = NET_REQUEST_CANCEL;
 				clgame.master_request = NULL;
 			}
+
+			memset( &clgame.net_requests[i], 0, sizeof( net_request_t ));
 			break;
 		}
 	}
@@ -3647,78 +3750,78 @@ triangleapi_t gTriApi =
 
 static efx_api_t gEfxApi =
 {
-	CL_AllocParticle,
-	CL_BlobExplosion,
-	CL_Blood,
-	CL_BloodSprite,
-	CL_BloodStream,
-	CL_BreakModel,
-	CL_Bubbles,
-	CL_BubbleTrail,
-	CL_BulletImpactParticles,
-	CL_EntityParticles,
-	CL_Explosion,
-	CL_FizzEffect,
-	CL_FireField,
-	CL_FlickerParticles,
-	CL_FunnelSprite,
-	CL_Implosion,
-	CL_Large_Funnel,
-	CL_LavaSplash,
-	CL_MultiGunshot,
-	CL_MuzzleFlash,
-	CL_ParticleBox,
-	CL_ParticleBurst,
-	CL_ParticleExplosion,
-	CL_ParticleExplosion2,
-	CL_ParticleLine,
-	CL_PlayerSprites,
-	CL_Projectile,
-	CL_RicochetSound,
-	CL_RicochetSprite,
-	CL_RocketFlare,
-	CL_RocketTrail,
-	CL_RunParticleEffect,
-	CL_ShowLine,
-	CL_SparkEffect,
-	CL_SparkShower,
-	CL_SparkStreaks,
-	CL_Spray,
-	CL_Sprite_Explode,
-	CL_Sprite_Smoke,
-	CL_Sprite_Spray,
-	CL_Sprite_Trail,
-	CL_Sprite_WallPuff,
-	CL_StreakSplash,
-	CL_TracerEffect,
-	CL_UserTracerParticle,
-	CL_TracerParticles,
-	CL_TeleportSplash,
-	CL_TempSphereModel,
-	CL_TempModel,
-	CL_DefaultSprite,
-	CL_TempSprite,
+	R_AllocParticle,
+	R_BlobExplosion,
+	R_Blood,
+	R_BloodSprite,
+	R_BloodStream,
+	R_BreakModel,
+	R_Bubbles,
+	R_BubbleTrail,
+	R_BulletImpactParticles,
+	R_EntityParticles,
+	R_Explosion,
+	R_FizzEffect,
+	R_FireField,
+	R_FlickerParticles,
+	R_FunnelSprite,
+	R_Implosion,
+	R_LargeFunnel,
+	R_LavaSplash,
+	R_MultiGunshot,
+	R_MuzzleFlash,
+	R_ParticleBox,
+	R_ParticleBurst,
+	R_ParticleExplosion,
+	R_ParticleExplosion2,
+	R_ParticleLine,
+	R_PlayerSprites,
+	R_Projectile,
+	R_RicochetSound,
+	R_RicochetSprite,
+	R_RocketFlare,
+	R_RocketTrail,
+	R_RunParticleEffect,
+	R_ShowLine,
+	R_SparkEffect,
+	R_SparkShower,
+	R_SparkStreaks,
+	R_Spray,
+	R_Sprite_Explode,
+	R_Sprite_Smoke,
+	R_Sprite_Spray,
+	R_Sprite_Trail,
+	R_Sprite_WallPuff,
+	R_StreakSplash,
+	R_TracerEffect,
+	R_UserTracerParticle,
+	R_TracerParticles,
+	R_TeleportSplash,
+	R_TempSphereModel,
+	R_TempModel,
+	R_DefaultSprite,
+	R_TempSprite,
 	CL_DecalIndex,
 	CL_DecalIndexFromName,
 	CL_DecalShoot,
-	CL_AttachTentToPlayer,
-	CL_KillAttachedTents,
-	CL_BeamCirclePoints,
-	CL_BeamEntPoint,
-	CL_BeamEnts,
-	CL_BeamFollow,
-	CL_BeamKill,
-	CL_BeamLightning,
-	CL_BeamPoints,
-	CL_BeamRing,
+	R_AttachTentToPlayer,
+	R_KillAttachedTents,
+	R_BeamCirclePoints,
+	R_BeamEntPoint,
+	R_BeamEnts,
+	R_BeamFollow,
+	R_BeamKill,
+	R_BeamLightning,
+	R_BeamPoints,
+	R_BeamRing,
 	CL_AllocDlight,
 	CL_AllocElight,
 	CL_TempEntAlloc,
 	CL_TempEntAllocNoModel,
 	CL_TempEntAllocHigh,
 	CL_TempEntAllocCustom,
-	CL_GetPackedColor,
-	CL_LookupColor,
+	R_GetPackedColor,
+	R_LookupColor,
 	CL_DecalRemoveAll,
 	CL_FireCustomDecal,
 };
@@ -3752,6 +3855,9 @@ static event_api_t gEventApi =
 	CL_PlayerTraceExt,
 	CL_SoundFromIndex,
 	pfnTraceSurface,
+	pfnGetMoveVars,
+	CL_VisTraceLine,
+	pfnGetVisent,
 };
 
 static demo_api_t gDemoApi =
@@ -3826,7 +3932,7 @@ static cl_enginefunc_t gEngfuncs =
 	pfnGetViewAngles,
 	pfnSetViewAngles,
 	CL_GetMaxClients,
-	Cvar_SetFloat,
+	Cvar_SetValue,
 	Cmd_Argc,
 	Cmd_Argv,
 	Con_Printf,
@@ -3856,8 +3962,8 @@ static cl_enginefunc_t gEngfuncs =
 	pfnPrecacheEvent,
 	CL_PlaybackEvent,
 	CL_WeaponAnim,
-	Com_RandomFloat,
-	Com_RandomLong,
+	COM_RandomFloat,
+	COM_RandomLong,
 	pfnHookEvent,
 	Con_Visible,
 	pfnGetGameDirectory,
@@ -3890,7 +3996,7 @@ static cl_enginefunc_t gEngfuncs =
 	pfnGetMousePos,
 	pfnSetMousePos,
 	pfnSetMouseEnable,
-	Cvar_GetList,
+	Cvar_GetListHead,
 	Cmd_GetFirstFunctionHandle,
 	Cmd_GetNextFunctionHandle,
 	Cmd_GetName,
@@ -3941,15 +4047,15 @@ void CL_UnloadProgs( void )
 	if( !( !Q_stricmp( GI->gamedir, "hlfx" ) && GI->version == 0.5f ))
 		clgame.dllFuncs.pfnShutdown();
 
-	Cvar_FullSet( "cl_background", "0", CVAR_READ_ONLY );
-	Cvar_FullSet( "host_clientloaded", "0", CVAR_INIT );
+	Cvar_FullSet( "cl_background", "0", FCVAR_READ_ONLY );
+	Cvar_FullSet( "host_clientloaded", "0", FCVAR_READ_ONLY );
 
 	Com_FreeLibrary( clgame.hInstance );
 	Mem_FreePool( &cls.mempool );
 	Mem_FreePool( &clgame.mempool );
 	memset( &clgame, 0, sizeof( clgame ));
 
-	Cvar_Unlink( CVAR_CLIENTDLL );
+	Cvar_Unlink( FCVAR_CLIENTDLL );
 	Cmd_Unlink( CMD_CLIENTDLL );
 }
 
@@ -3961,9 +4067,6 @@ qboolean CL_LoadProgs( const char *name )
 	qboolean			critical_exports = true;
 
 	if( clgame.hInstance ) CL_UnloadProgs();
-
-	// setup globals
-	cl.refdef.movevars = &clgame.movevars;
 
 	// initialize PlayerMove
 	clgame.pmove = &gpMove;
@@ -4050,10 +4153,7 @@ qboolean CL_LoadProgs( const char *name )
 		return false;
 	}
 
-	Cvar_Get( "cl_nopred", "1", CVAR_ARCHIVE, "disable client movement predicting" );
-	cl_lw = Cvar_Get( "cl_lw", "0", CVAR_ARCHIVE|CVAR_USERINFO, "enable client weapon predicting" );
-	Cvar_Get( "cl_lc", "0", CVAR_ARCHIVE|CVAR_USERINFO, "enable lag compensation" );
-	Cvar_FullSet( "host_clientloaded", "1", CVAR_INIT );
+	Cvar_FullSet( "host_clientloaded", "1", FCVAR_READ_ONLY );
 
 	clgame.maxRemapInfos = 0; // will be alloc on first call CL_InitEdicts();
 	clgame.maxEntities = 2; // world + localclient (have valid entities not in game)
@@ -4074,6 +4174,12 @@ qboolean CL_LoadProgs( const char *name )
 	clgame.dllFuncs.pfnInit();
 
 	CL_InitStudioAPI( );
+
+	// trying to grab them from client.dll
+	cl_righthand = Cvar_FindVar( "cl_righthand" );
+
+	if( cl_righthand == NULL )
+		cl_righthand = Cvar_Get( "cl_righthand", "0", FCVAR_ARCHIVE, "flip viewmodel (left to right)" );
 
 	return true;
 }

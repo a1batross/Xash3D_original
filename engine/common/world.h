@@ -22,6 +22,7 @@ GNU General Public License for more details.
 
 #define FMOVE_IGNORE_GLASS	0x100
 #define FMOVE_SIMPLEBOX	0x200
+#define FMOVE_MONSTERCLIP	0x400
 
 #define CONTENTS_NONE	0	// no custom contents specified
 
@@ -46,7 +47,6 @@ void RemoveLink( link_t *l );
 void ClearLink( link_t *l );
 
 // trace common
-qboolean SV_RecursiveHullCheck( hull_t *hull, int num, float p1f, float p2f, vec3_t p1, vec3_t p2, trace_t *trace );
 void World_MoveBounds( const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end, vec3_t boxmins, vec3_t boxmaxs );
 void World_TransformAABB( matrix4x4 transform, const vec3_t mins, const vec3_t maxs, vec3_t outmins, vec3_t outmaxs );
 trace_t World_CombineTraces( trace_t *cliptrace, trace_t *trace, edict_t *touch );
@@ -72,7 +72,6 @@ int RankForContents( int contents );
 
 #define check_angles( x )	( (int)x == 90 || (int)x == 180 || (int)x == 270 || (int)x == -90 || (int)x == -180 || (int)x == -270 )
 
-#include "bspfile.h"
 #include "pm_shared.h"
 
 /*

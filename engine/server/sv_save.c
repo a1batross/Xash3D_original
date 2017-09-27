@@ -474,7 +474,7 @@ void ReapplyDecal( SAVERESTOREDATA *pSaveData, decallist_t *entry, qboolean adja
 		VectorCopy( entry->position, testend );
 		VectorMA( testend, -5.0f, entry->impactPlaneNormal, testend );
 
-		tr = SV_Move( testspot, vec3_origin, vec3_origin, testend, MOVE_NOMONSTERS, NULL );
+		tr = SV_Move( testspot, vec3_origin, vec3_origin, testend, MOVE_NOMONSTERS, NULL, false );
 
 		// NOTE: this code may does wrong result on moving brushes e.g. func_tracktrain
 		if( tr.fraction != 1.0f && !tr.allsolid )
@@ -505,7 +505,7 @@ void RestoreSound( soundlist_t *entry )
 	edict_t	*ent;
 
 	// this can happens if serialized map contain 4096 static decals...
-	if(( MSG_GetNumBytesWritten( &sv.signon ) + 20 ) >= MSG_GetMaxBytes( &sv.signon ))
+	if( MSG_GetNumBytesLeft( &sv.signon ) < 36 )
 		return;
 
 	if( entry->name[0] == '!' && Q_isdigit( entry->name + 1 ))
@@ -515,8 +515,8 @@ void RestoreSound( soundlist_t *entry )
 	}
 	else if( entry->name[0] == '#' && Q_isdigit( entry->name + 1 ))
 	{
-		flags |= SND_SENTENCE;
-		soundIndex = Q_atoi( entry->name + 1 ) + 1536;
+		flags |= SND_SENTENCE|SND_SEQUENCE;
+		soundIndex = Q_atoi( entry->name + 1 );
 	}
 	else
 	{
@@ -541,8 +541,14 @@ void RestoreSound( soundlist_t *entry )
 
 	if( !SV_IsValidEdict( ent ))
 	{
-		MsgDev( D_ERROR, "SV_RestoreSound: edict == NULL\n" );
-		return;
+		if( entry->channel != CHAN_STATIC )
+		{
+			MsgDev( D_ERROR, "SV_RestoreSound: edict == NULL\n" );
+			return;
+		}
+
+		// just get world for static channel
+		ent = EDICT_NUM( 0 );
 	}
 
 	if( entry->volume != VOL_NORM ) flags |= SND_VOLUME;
@@ -550,20 +556,16 @@ void RestoreSound( soundlist_t *entry )
 	if( entry->pitch != PITCH_NORM ) flags |= SND_PITCH;
 	if( !entry->looping ) flags |= SND_STOP_LOOPING;	// just in case
 
-	if( soundIndex > 255 ) flags |= SND_LARGE_INDEX;
-
-	MSG_WriteByte( &sv.signon, svc_restoresound );
-	MSG_WriteWord( &sv.signon, flags );
-	if( flags & SND_LARGE_INDEX )
-		MSG_WriteWord( &sv.signon, soundIndex );
-	else MSG_WriteByte( &sv.signon, soundIndex );
-	MSG_WriteByte( &sv.signon, entry->channel );
+	MSG_BeginServerCmd( &sv.signon, svc_restoresound );
+	MSG_WriteUBitLong( &sv.signon, flags, MAX_SND_FLAGS_BITS );
+	MSG_WriteUBitLong( &sv.signon, soundIndex, MAX_SOUND_BITS );
+	MSG_WriteUBitLong( &sv.signon, entry->channel, MAX_SND_CHAN_BITS );
 
 	if( flags & SND_VOLUME ) MSG_WriteByte( &sv.signon, entry->volume * 255 );
 	if( flags & SND_ATTENUATION ) MSG_WriteByte( &sv.signon, entry->attenuation * 64 );
 	if( flags & SND_PITCH ) MSG_WriteByte( &sv.signon, entry->pitch );
 
-	MSG_WriteWord( &sv.signon, entry->entnum );
+	MSG_WriteUBitLong( &sv.signon, entry->entnum, MAX_ENTITY_BITS );
 	MSG_WriteVec3Coord( &sv.signon, entry->origin );
 	MSG_WriteByte( &sv.signon, entry->wordIndex );
 
@@ -623,7 +625,7 @@ int SV_IsValidSave( void )
 		return 0;
 	}
 
-	if( sv_maxclients->integer != 1 )
+	if( svs.maxclients != 1 )
 	{
 		Msg( "Can't save multiplayer games.\n" );
 		return 0;
@@ -763,7 +765,7 @@ SAVERESTOREDATA *SV_SaveInit( int size )
 	const int		nTokens = 0xfff;	// Assume a maximum of 4K-1 symbol table entries(each of some length)
 	int		numents;
 
-	if( size <= 0 ) size = 0x200000;	// Reserve 2Mb for now
+	if( size <= 0 ) size = 0x400000;	// Reserve 4Mb for now
 	numents = svgame.numEntities;
 
 	pSaveData = Mem_Alloc( host.mempool, sizeof(SAVERESTOREDATA) + ( sizeof(ENTITYTABLE) * numents ) + size );
@@ -793,8 +795,8 @@ void SV_SaveGameStateGlobals( SAVERESTOREDATA *pSaveData )
 	header.connectionCount = pSaveData->connectionCount;
 	header.time = svgame.globals->time;
 
-	if( sv_skyname->string[0] )
-		Q_strncpy( header.skyName, sv_skyname->string, sizeof( header.skyName ));
+	if( sv_skyname.string[0] )
+		Q_strncpy( header.skyName, sv_skyname.string, sizeof( header.skyName ));
 	else Q_strncpy( header.skyName, "", sizeof( header.skyName ));
 
 	Q_strncpy( header.mapName, sv.name, sizeof( header.mapName ));
@@ -1071,6 +1073,7 @@ void SV_SaveClientState( SAVERESTOREDATA *pSaveData, const char *level )
 	soundlist_t	soundInfo[MAX_CHANNELS];
 	string		curtrack, looptrack;
 	int		soundCount = 0;
+	byte		decalFlags;
 
 	Q_snprintf( name, sizeof( name ), "save/%s.HL2", level );
 
@@ -1114,12 +1117,13 @@ void SV_SaveClientState( SAVERESTOREDATA *pSaveData, const char *level )
 
 		nameSize = Q_strlen( entry->name ) + 1;
 		decalScale = (entry->scale * 4096);
+		decalFlags = entry->flags;
 
 		FS_Write( pFile, localPos, sizeof( localPos ));
 		FS_Write( pFile, &nameSize, sizeof( nameSize ));
 		FS_Write( pFile, entry->name, nameSize ); 
 		FS_Write( pFile, &entry->entityIndex, sizeof( entry->entityIndex ));
-		FS_Write( pFile, &entry->flags, sizeof( entry->flags ));
+		FS_Write( pFile, &decalFlags, sizeof( decalFlags ));
 		FS_Write( pFile, &decalScale, sizeof( decalScale ));
 		FS_Write( pFile, entry->impactPlaneNormal, sizeof( entry->impactPlaneNormal ));
 
@@ -1242,6 +1246,7 @@ void SV_LoadClientState( SAVERESTOREDATA *pSaveData, const char *level, qboolean
 	ClientSections_t	sections;
 	soundlist_t	soundInfo[MAX_CHANNELS];
 	int		soundCount;
+	byte		decalFlags;
 	
 	Q_snprintf( name, sizeof( name ), "save/%s.HL2", level );
 
@@ -1290,7 +1295,7 @@ void SV_LoadClientState( SAVERESTOREDATA *pSaveData, const char *level, qboolean
 			FS_Read( pFile, &nameSize, sizeof( nameSize ));
 			FS_Read( pFile, entry->name, nameSize ); 
 			FS_Read( pFile, &entry->entityIndex, sizeof( entry->entityIndex ));
-			FS_Read( pFile, &entry->flags, sizeof( entry->flags ));
+			FS_Read( pFile, &decalFlags, sizeof( decalFlags ));
 			FS_Read( pFile, &decalScale, sizeof( decalScale ));
 			FS_Read( pFile, entry->impactPlaneNormal, sizeof( entry->impactPlaneNormal ));
 
@@ -1299,6 +1304,7 @@ void SV_LoadClientState( SAVERESTOREDATA *pSaveData, const char *level, qboolean
 			else VectorCopy( localPos, entry->position );
 
 			entry->scale = ((float)decalScale / 4096.0f);
+			entry->flags = decalFlags;
 
 			if( entry->flags & FDECAL_STUDIO )
 			{
@@ -1367,7 +1373,7 @@ void SV_LoadClientState( SAVERESTOREDATA *pSaveData, const char *level, qboolean
 
 		FS_Read( pFile, &soundCount, sizeof( int ));
 
-		for( i = 0; i < soundCount; i++ )
+		for( i = 0; i < Q_min( soundCount, MAX_CHANNELS ); i++ )
 		{
 			soundlist_t	*entry;
 			byte		nameSize;
@@ -1412,7 +1418,7 @@ void SV_LoadClientState( SAVERESTOREDATA *pSaveData, const char *level, qboolean
 		// read current track position
 		FS_Read( pFile, &position, sizeof( position ));
 
-		MSG_WriteByte( &sv.signon, svc_stufftext );
+		MSG_BeginServerCmd( &sv.signon, svc_stufftext );
 		MSG_WriteString( &sv.signon, va( "music \"%s\" \"%s\" %i\n", curtrack, looptrack, position ));
 	}
 
@@ -1531,29 +1537,29 @@ int SV_LoadGameState( char const *level, qboolean createPlayers )
 
 	SV_EntityPatchRead( pSaveData, level );
 
-	Cvar_SetFloat( "skill", header.skillLevel );
+	Cvar_SetValue( "skill", header.skillLevel );
 	Q_strncpy( sv.name, header.mapName, sizeof( sv.name ));
 	svgame.globals->mapname = MAKE_STRING( sv.name );
 	Cvar_Set( "sv_skyname", header.skyName );
 
 	// restore sky parms
-	Cvar_SetFloat( "sv_skycolor_r", header.skyColor_r );
-	Cvar_SetFloat( "sv_skycolor_g", header.skyColor_g );
-	Cvar_SetFloat( "sv_skycolor_b", header.skyColor_b );
-	Cvar_SetFloat( "sv_skyvec_x", header.skyVec_x );
-	Cvar_SetFloat( "sv_skyvec_y", header.skyVec_y );
-	Cvar_SetFloat( "sv_skyvec_z", header.skyVec_z );
-	Cvar_SetFloat( "sv_skydir_x", header.skyDir_x );
-	Cvar_SetFloat( "sv_skydir_y", header.skyDir_y );
-	Cvar_SetFloat( "sv_skydir_z", header.skyDir_z );
-	Cvar_SetFloat( "sv_skyangle", header.skyAngle );
-	Cvar_SetFloat( "sv_skyspeed", header.skySpeed );
+	Cvar_SetValue( "sv_skycolor_r", header.skyColor_r );
+	Cvar_SetValue( "sv_skycolor_g", header.skyColor_g );
+	Cvar_SetValue( "sv_skycolor_b", header.skyColor_b );
+	Cvar_SetValue( "sv_skyvec_x", header.skyVec_x );
+	Cvar_SetValue( "sv_skyvec_y", header.skyVec_y );
+	Cvar_SetValue( "sv_skyvec_z", header.skyVec_z );
+	Cvar_SetValue( "sv_skydir_x", header.skyDir_x );
+	Cvar_SetValue( "sv_skydir_y", header.skyDir_y );
+	Cvar_SetValue( "sv_skydir_z", header.skyDir_z );
+	Cvar_SetValue( "sv_skyangle", header.skyAngle );
+	Cvar_SetValue( "sv_skyspeed", header.skySpeed );
 
 	// restore serverflags
 	svgame.globals->serverflags = header.serverflags;
 
 	if( header.wateralpha <= 0.0f ) header.wateralpha = 1.0f; // make compatibility with old saves
-	Cvar_SetFloat( "sv_wateralpha", header.wateralpha );
+	Cvar_SetValue( "sv_wateralpha", header.wateralpha );
 
 	// re-base the savedata since we re-ordered the entity/table / restore fields
 	SaveRestore_Rebase( pSaveData );
@@ -1578,7 +1584,7 @@ int SV_LoadGameState( char const *level, qboolean createPlayers )
 					pent = EDICT_NUM( 0 );
 
 					SV_InitEdict( pent );
-					pent = SV_AllocPrivateData( pent, pEntInfo->classname );
+					pent = SV_CreateNamedEntity( pent, pEntInfo->classname );
 				}
 				else if(( pEntInfo->id > 0 ) && ( pEntInfo->id < svgame.globals->maxClients + 1 ))
 				{
@@ -1596,13 +1602,13 @@ int SV_LoadGameState( char const *level, qboolean createPlayers )
 					{
 						ASSERT( ed->free == false );
 						// create the player
-						pent = SV_AllocPrivateData( ed, pEntInfo->classname );
+						pent = SV_CreateNamedEntity( ed, pEntInfo->classname );
 					}
 					else pent = NULL;
 				}
 				else
 				{
-					pent = SV_AllocPrivateData( NULL, pEntInfo->classname );
+					pent = SV_CreateNamedEntity( NULL, pEntInfo->classname );
 				}
 
 				pEntInfo->pent = pent;
@@ -1710,13 +1716,13 @@ int SV_CreateEntityTransitionList( SAVERESTOREDATA *pSaveData, int levelMask )
 								ASSERT( 0 );
 							}
 
-							pent = SV_AllocPrivateData( ed, pEntInfo->classname );
+							pent = SV_CreateNamedEntity( ed, pEntInfo->classname );
 						}
 					}
 					else if( active )
 					{
 						// create named entity
-						pent = SV_AllocPrivateData( NULL, pEntInfo->classname );
+						pent = SV_CreateNamedEntity( NULL, pEntInfo->classname );
 					}
 				}
 				else
@@ -1920,7 +1926,6 @@ void SV_ChangeLevel( qboolean loadfromsavedgame, const char *mapname, const char
 	}
 
 	// init network stuff
-	NET_Config(( sv_maxclients->integer > 1 ));
 	Q_strncpy( level, mapname, MAX_STRING );
 	Q_strncpy( oldlevel, sv.name, MAX_STRING );
 	sv.background = false;
@@ -2036,7 +2041,7 @@ int SV_SaveGameSlot( const char *pSaveName, const char *pSaveComment )
 	return 1;
 }
 
-int SV_SaveReadHeader( file_t *pFile, GAME_HEADER *pHeader, int readGlobalState )
+int SV_SaveReadHeader( file_t *pFile, GAME_HEADER *pHeader )
 {
 	int		i, tag, size, tokenCount, tokenSize;
 	char		*pszTokenList;
@@ -2093,20 +2098,18 @@ int SV_SaveReadHeader( file_t *pFile, GAME_HEADER *pHeader, int readGlobalState 
 	SaveRestore_Init( pSaveData, (char *)(pszTokenList), size );
 	FS_Read( pFile, SaveRestore_GetBuffer( pSaveData ), size );
 
-	if( readGlobalState )
-		svgame.dllFuncs.pfnResetGlobalState();
+	svgame.dllFuncs.pfnResetGlobalState();
 
 	svgame.dllFuncs.pfnSaveReadFields( pSaveData, "GameHeader", pHeader, gGameHeader, ARRAYSIZE( gGameHeader ));	
 
-	if( readGlobalState )
-		svgame.dllFuncs.pfnRestoreGlobalState( pSaveData );
+	svgame.dllFuncs.pfnRestoreGlobalState( pSaveData );
 
 	SV_SaveFinish( pSaveData );
 	
 	return 1;
 }
 
-qboolean SV_LoadGame( const char *pName )
+qboolean SV_LoadGame( const char *pPath )
 {
 	file_t		*pFile;
 	qboolean		validload = false;
@@ -2116,36 +2119,33 @@ qboolean SV_LoadGame( const char *pName )
 	if( host.type == HOST_DEDICATED )
 		return false;
 
-	if( !pName || !pName[0] )
+	if( !pPath || !pPath[0] )
 		return false;
 
-	Q_snprintf( name, sizeof( name ), "save/%s.sav", pName );
+	FS_FileBase( pPath, name );
 
 	// silently ignore if missed
-	if( !FS_FileExists( name, true ))
+	if( !FS_FileExists( pPath, true ))
 		return false;
 
-	// init network stuff
-	NET_Config ( false ); // close network sockets
-
-	if( sv.background || sv_maxclients->integer > 1 )
+	if( sv.background || svs.maxclients > 1 )
 		SV_Shutdown( true );
 	sv.background = false;
 
 	SCR_BeginLoadingPlaque ( false );
 	S_StopBackgroundTrack();
 
-	MsgDev( D_INFO, "Loading game from %s...\n", name );
+	MsgDev( D_INFO, "Loading game from %s...\n", pPath );
 	SV_ClearSaveDir();
 
 	if( !svs.initialized ) SV_InitGame ();
 	if( !svs.initialized ) return false;
 
-	pFile = FS_Open( name, "rb", true );
+	pFile = FS_Open( pPath, "rb", true );
 
 	if( pFile )
 	{
-		if( SV_SaveReadHeader( pFile, &gameHeader, 1 ))
+		if( SV_SaveReadHeader( pFile, &gameHeader ))
 		{
 			SV_DirectoryExtract( pFile, gameHeader.mapCount );
 			validload = true;
@@ -2156,15 +2156,14 @@ qboolean SV_LoadGame( const char *pName )
 
 	if( !validload )
 	{
-		Q_snprintf( host.finalmsg, MAX_STRING, "Couldn't load %s.sav\n", pName );
+		Q_snprintf( host.finalmsg, MAX_STRING, "Couldn't load %s.sav\n", name );
 		SV_Shutdown( false );
 		return false;
 	}
 
-	Cvar_FullSet( "coop", "0", CVAR_LATCH );
-	Cvar_FullSet( "teamplay", "0", CVAR_LATCH );
-	Cvar_FullSet( "deathmatch", "0", CVAR_LATCH );
-	Cvar_FullSet( "maxplayers", "1", CVAR_LATCH );
+	Cvar_FullSet( "maxplayers", "1", FCVAR_LATCH );
+	Cvar_SetValue( "deathmatch", 0 );
+	Cvar_SetValue( "coop", 0 );
 
 	return Host_NewGame( gameHeader.mapName, true );
 }

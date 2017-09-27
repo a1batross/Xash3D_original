@@ -35,15 +35,13 @@ typedef float		vec_t;
 typedef vec_t		vec2_t[2];
 typedef vec_t		vec3_t[3];
 typedef vec_t		vec4_t[4];
-typedef vec_t		quat_t[4];
 typedef byte		rgba_t[4];	// unsigned byte colorpack
-typedef byte		rgb_t[3];		// unsigned byte colorpack
 typedef vec_t		matrix3x4[3][4];
 typedef vec_t		matrix4x4[4][4];
 
 #include "const.h"
 
-#define ASSERT( exp )	if(!( exp )) Sys_Break( "assert failed at %s:%i\n", __FILE__, __LINE__ )
+#define ASSERT( exp )	if(!( exp )) Sys_Error( "assert failed at %s:%i\n", __FILE__, __LINE__ )
 
 /*
 ========================================================================
@@ -74,11 +72,10 @@ char *Sys_GetClipboardData( void );
 char *Sys_GetCurrentUser( void );
 int Sys_CheckParm( const char *parm );
 void Sys_Error( const char *error, ... );
-void Sys_Break( const char *error, ... );
 qboolean Sys_LoadLibrary( dll_info_t *dll );
 void* Sys_GetProcAddress( dll_info_t *dll, const char* name );
 qboolean Sys_FreeLibrary( dll_info_t *dll );
-void Sys_ParseCommandLine( LPSTR lpCmdLine );
+void Sys_ParseCommandLine( LPSTR lpCmdLine, qboolean uncensored );
 void Sys_MergeCommandLine( LPSTR lpCmdLine );
 long _stdcall Sys_Crash( PEXCEPTION_POINTERS pInfo );
 void Sys_SetClipboardData( const byte *buffer, size_t size );

@@ -35,6 +35,8 @@
 
 using namespace vgui;
 
+#define Q_isspace( ch )	(ch < 32 || ch > 255)
+
 class CTextImage2 : public Image
 {
 public:
@@ -154,7 +156,7 @@ public:
 		strcpy(buf, text);
 
 		int len = strlen(buf);
-		while (len && isspace(buf[--len]))
+		while (len && Q_isspace(buf[--len]))
 		{
 			buf[len] = 0;
 		}

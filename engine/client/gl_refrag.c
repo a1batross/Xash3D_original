@@ -155,7 +155,7 @@ void R_AddEfrags( cl_entity_t *ent )
 	// because all other code don't expected this
 	if( ent->model->type == mod_studio )
 	{
-		studiohdr_t *phdr = (studiohdr_t *)Mod_Extradata( ent->model );
+		studiohdr_t *phdr = (studiohdr_t *)Mod_StudioExtradata( ent->model );
 		mstudioseqdesc_t *pseqdesc;
 
 		if( !phdr ) return;

@@ -19,158 +19,112 @@ GNU General Public License for more details.
 
 #define HEARTBEAT_SECONDS	300.0f 		// 300 seconds
 
-convar_t	*sv_zmax;
+// server cvars
+CVAR_DEFINE_AUTO( sv_lan, "0", 0, "server is a lan server ( no heartbeat, no authentication, no non-class C addresses, 9999.0 rate, etc." );
+CVAR_DEFINE_AUTO( sv_lan_rate, "20000.0", 0, "rate for lan server" );
+CVAR_DEFINE_AUTO( sv_aim, "1", FCVAR_ARCHIVE|FCVAR_SERVER, "auto aiming option" );
+CVAR_DEFINE_AUTO( sv_unlag, "1", 0, "allow lag compensation on server-side" );
+CVAR_DEFINE_AUTO( sv_maxunlag, "0.5", 0, "max latency value which can be interpolated (by default ping should not exceed 500 units)" );
+CVAR_DEFINE_AUTO( sv_unlagpush, "0.0", 0, "interpolation bias for unlag time" );
+CVAR_DEFINE_AUTO( sv_unlagsamples, "1", 0, "max samples to interpolate" );
+CVAR_DEFINE_AUTO( rcon_password, "", 0, "remote connect password" );
+CVAR_DEFINE_AUTO( sv_filterban, "1", 0, "filter banned users" );
+CVAR_DEFINE_AUTO( sv_cheats, "0", FCVAR_SERVER, "allow cheats on server" );
+CVAR_DEFINE_AUTO( sv_instancedbaseline, "1", 0, "allow to use instanced baselines to saves network overhead" );
+CVAR_DEFINE_AUTO( sv_contact, "", FCVAR_ARCHIVE|FCVAR_SERVER, "server techincal support contact address or web-page" );
+CVAR_DEFINE_AUTO( sv_minupdaterate, "10.0", FCVAR_ARCHIVE, "minimal value for 'cl_updaterate' window" );
+CVAR_DEFINE_AUTO( sv_maxupdaterate, "30.0", FCVAR_ARCHIVE, "maximal value for 'cl_updaterate' window" );
+CVAR_DEFINE_AUTO( sv_minrate, "0", FCVAR_SERVER, "min bandwidth rate allowed on server, 0 == unlimited" );
+CVAR_DEFINE_AUTO( sv_maxrate, "0", FCVAR_SERVER, "max bandwidth rate allowed on server, 0 == unlimited" );
+CVAR_DEFINE_AUTO( sv_logrelay, "0", FCVAR_ARCHIVE, "allow log messages from remote machines to be logged on this server" );
+CVAR_DEFINE_AUTO( sv_newunit, "0", 0, "clear level-saves from previous SP game chapter to help keep .sav file size as minimum" );
+CVAR_DEFINE_AUTO( sv_clienttrace, "1", FCVAR_SERVER, "0 = big box(Quake), 0.5 = halfsize, 1 = normal (100%), otherwise it's a scaling factor" );
+CVAR_DEFINE_AUTO( sv_timeout, "65", 0, "after this many seconds without a message from a client, the client is dropped" );
+CVAR_DEFINE_AUTO( sv_failuretime, "0.5", 0, "after this long without a packet from client, don't send any more until client starts sending again" );
+CVAR_DEFINE_AUTO( sv_password, "", FCVAR_SERVER|FCVAR_PROTECTED, "server password for entry into multiplayer games" );
+CVAR_DEFINE_AUTO( sv_proxies, "1", FCVAR_SERVER, "maximum count of allowed proxies for HLTV spectating" );
+CVAR_DEFINE_AUTO( sv_send_logos, "1", 0, "send custom decal logo to other players so they can view his too" );
+CVAR_DEFINE_AUTO( sv_send_resources, "1", 0, "allow to download missed resources for players" );
+CVAR_DEFINE_AUTO( sv_logbans, "0", 0, "print into the server log info about player bans" );
+CVAR_DEFINE_AUTO( sv_allow_upload, "1", FCVAR_SERVER, "allow uploading custom resources on a server" );
+CVAR_DEFINE_AUTO( sv_allow_download, "1", FCVAR_SERVER, "allow downloading custom resources to the client" );
+CVAR_DEFINE_AUTO( sv_downloadurl, "", FCVAR_PROTECTED, "location from which clients can download missing files" );
+CVAR_DEFINE( sv_consistency, "mp_consistency", "1", FCVAR_SERVER, "enbale consistency check in multiplayer" );
+
+// game-related cvars
+CVAR_DEFINE_AUTO( mapcyclefile, "mapcycle.txt", 0, "name of multiplayer map cycle configuration file" );
+CVAR_DEFINE_AUTO( motdfile, "motd.txt", 0, "name of 'message of the day' file" );
+CVAR_DEFINE_AUTO( logsdir, "logs", 0, "place to store multiplayer logs" );
+CVAR_DEFINE_AUTO( bannedcfgfile, "banned.cfg", 0, "name of list of banned users" );
+CVAR_DEFINE_AUTO( deathmatch, "0", 0, "deathmatch mode in multiplayer game" );
+CVAR_DEFINE_AUTO( coop, "0", 0, "cooperative mode in multiplayer game" );
+CVAR_DEFINE_AUTO( teamplay, "0", 0, "team mode in multiplayer game" );
+CVAR_DEFINE_AUTO( skill, "1", 0, "skill level in singleplayer game" );
+CVAR_DEFINE_AUTO( temp1, "0", 0, "temporary cvar that used by some mods" );
+
+// physic-related variables
+CVAR_DEFINE_AUTO( sv_gravity, "800", FCVAR_MOVEVARS, "world gravity value" );
+CVAR_DEFINE_AUTO( sv_stopspeed, "100", FCVAR_MOVEVARS, "how fast you come to a complete stop" );
+CVAR_DEFINE_AUTO( sv_maxspeed, "320", FCVAR_MOVEVARS, "maximum speed a player can accelerate to when on ground" );
+CVAR_DEFINE_AUTO( sv_spectatormaxspeed, "500", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "maximum speed a spectator can accelerate in air" );
+CVAR_DEFINE_AUTO( sv_accelerate, "10", FCVAR_MOVEVARS, "rate at which a player accelerates to sv_maxspeed" );
+CVAR_DEFINE_AUTO( sv_airaccelerate, "10", FCVAR_MOVEVARS, "rate at which a player accelerates to sv_maxspeed while in the air" );
+CVAR_DEFINE_AUTO( sv_wateraccelerate, "10", FCVAR_MOVEVARS, "rate at which a player accelerates to sv_maxspeed while in the water" );
+CVAR_DEFINE_AUTO( sv_friction, "4", FCVAR_MOVEVARS, "how fast you slow down" );
+CVAR_DEFINE( sv_edgefriction, "edgefriction", "2", FCVAR_MOVEVARS, "how much you slow down when nearing a ledge you might fall off" );
+CVAR_DEFINE_AUTO( sv_waterfriction, "1", FCVAR_MOVEVARS, "how fast you slow down in water" );
+CVAR_DEFINE_AUTO( sv_bounce, "1", FCVAR_MOVEVARS, "bounce factor for entities with MOVETYPE_BOUNCE" );
+CVAR_DEFINE_AUTO( sv_stepsize, "18", FCVAR_MOVEVARS, "how high you and NPS's can step up" );
+CVAR_DEFINE_AUTO( sv_maxvelocity, "2000", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "max velocity for all things in the world" );
+CVAR_DEFINE_AUTO( sv_zmax, "4096", FCVAR_MOVEVARS|FCVAR_SPONLY, "maximum viewable distance" );
+CVAR_DEFINE_AUTO( sv_wateramp, "0", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "world waveheight factor" );
+CVAR_DEFINE( sv_footsteps, "mp_footsteps", "1", FCVAR_MOVEVARS, "world gravity value" );
+CVAR_DEFINE_AUTO( sv_skyname, "desert", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "skybox name (can be dynamically changed in-game)" );
+CVAR_DEFINE_AUTO( sv_rollangle, "0", FCVAR_MOVEVARS|FCVAR_UNLOGGED|FCVAR_ARCHIVE, "how much to tilt the view when strafing" );
+CVAR_DEFINE_AUTO( sv_rollspeed, "200", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "how much strafing is necessary to tilt the view" );
+CVAR_DEFINE_AUTO( sv_skycolor_r, "0", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "skylight red component value" );
+CVAR_DEFINE_AUTO( sv_skycolor_g, "0", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "skylight green component value" );
+CVAR_DEFINE_AUTO( sv_skycolor_b, "0", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "skylight blue component value" );
+CVAR_DEFINE_AUTO( sv_skyvec_x, "0", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "skylight direction by x-axis" );
+CVAR_DEFINE_AUTO( sv_skyvec_y, "0", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "skylight direction by y-axis" );
+CVAR_DEFINE_AUTO( sv_skyvec_z, "0", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "skylight direction by z-axis" );
+CVAR_DEFINE_AUTO( sv_wateralpha, "1", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "world surfaces water transparency factor. 1.0 - solid, 0.0 - fully transparent" );
+CVAR_DEFINE_AUTO( sv_skydir_x, "0", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "sky rotation factor around x-axis" );
+CVAR_DEFINE_AUTO( sv_skydir_y, "0", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "sky rotation factor around y-axis" );
+CVAR_DEFINE_AUTO( sv_skydir_z, "1", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "sky rotation factor around z-axis" ); // g-cont. add default sky rotate direction
+CVAR_DEFINE_AUTO( sv_skyangle, "0", FCVAR_MOVEVARS|FCVAR_UNLOGGED, "skybox rotational angle (in degrees)" );
+CVAR_DEFINE_AUTO( sv_skyspeed, "0", 0, "skybox rotational speed" );
+
+CVAR_DEFINE( sv_spawntime, "host_spawntime", "0.1", FCVAR_ARCHIVE, "host.frametime on spawn new map (force to 0.8 if have problems)" );
+CVAR_DEFINE( sv_changetime, "host_changetime", "0.001", FCVAR_ARCHIVE, "host.frametime on changelevel (force to 0.1 if have player stucks)" );
+
+// obsolete cvars which we should keep because game DLL's will be relies on it
+CVAR_DEFINE_AUTO( showtriggers, "0", FCVAR_LATCH, "debug cvar shows triggers" );
+CVAR_DEFINE_AUTO( sv_airmove, "1", FCVAR_SERVER, "obsolete, compatibility issues" );
+
+// gore-related cvars
+CVAR_DEFINE_AUTO( violence_hblood, "1", 0, "draw human blood" );
+CVAR_DEFINE_AUTO( violence_ablood, "1", 0, "draw alien blood" );
+CVAR_DEFINE_AUTO( violence_hgibs, "1", 0, "show human gib entities" );
+CVAR_DEFINE_AUTO( violence_agibs, "1", 0, "show alien gib entities" );
+
 convar_t	*sv_novis;			// disable server culling entities by vis
-convar_t	*sv_unlag;
-convar_t	*sv_maxunlag;
-convar_t	*sv_unlagpush;
-convar_t	*sv_unlagsamples;
 convar_t	*sv_pausable;
-convar_t	*sv_newunit;
-convar_t	*sv_wateramp;
 convar_t	*timeout;				// seconds without any message
 convar_t	*zombietime;			// seconds to sink messages after disconnect
-convar_t	*rcon_password;			// password for remote server commands
-convar_t	*sv_airaccelerate;
-convar_t	*sv_wateraccelerate;
-convar_t	*sv_maxvelocity;
-convar_t	*sv_gravity;
-convar_t	*sv_stepsize;
-convar_t	*sv_rollangle;
-convar_t	*sv_rollspeed;
-convar_t	*sv_wallbounce;
-convar_t	*sv_maxspeed;
-convar_t	*sv_spectatormaxspeed;
-convar_t	*sv_accelerate;
-convar_t	*sv_friction;
-convar_t	*sv_edgefriction;
-convar_t	*sv_waterfriction;
-convar_t	*sv_stopspeed;
 convar_t	*hostname;
 convar_t	*sv_lighting_modulate;
 convar_t	*sv_maxclients;
 convar_t	*sv_check_errors;
-convar_t	*sv_footsteps;
 convar_t	*public_server;			// should heartbeats be sent
 convar_t	*sv_reconnect_limit;		// minimum seconds between connect messages
-convar_t	*sv_failuretime;
-convar_t	*sv_allow_upload;
-convar_t	*sv_allow_download;
-convar_t	*sv_allow_studio_attachment_angles;
-convar_t	*sv_allow_rotate_pushables;
 convar_t	*sv_validate_changelevel;
-convar_t	*sv_clienttrace;
-convar_t	*sv_send_resources;
-convar_t	*sv_send_logos;
 convar_t	*sv_sendvelocity;
-convar_t	*sv_airmove;
-convar_t	*sv_quakehulls;
-convar_t	*mp_consistency;
-convar_t	*serverinfo;
-convar_t	*physinfo;
-convar_t	*clockwindow;
-convar_t	*deathmatch;
-convar_t	*teamplay;
-convar_t	*skill;
-convar_t	*coop;
-
-// sky variables
-convar_t	*sv_skycolor_r;
-convar_t	*sv_skycolor_g;
-convar_t	*sv_skycolor_b;
-convar_t	*sv_skyvec_x;
-convar_t	*sv_skyvec_y;
-convar_t	*sv_skyvec_z;
-convar_t	*sv_skyname;
-convar_t	*sv_wateralpha;
-convar_t	*sv_skydir_x;
-convar_t	*sv_skydir_y;
-convar_t	*sv_skydir_z;
-convar_t	*sv_skyangle;
-convar_t	*sv_skyspeed;
+convar_t	*sv_hostmap;
 
 void Master_Shutdown( void );
 
 //============================================================================
-
-/*
-===================
-SV_CalcPings
-
-Updates the cl->ping variables
-===================
-*/
-void SV_CalcPings( void )
-{
-	sv_client_t	*cl;
-	int		i, j;
-	int		total, count;
-
-	if( !svs.clients ) return;
-
-	// clamp fps counter
-	for( i = 0; i < sv_maxclients->integer; i++ )
-	{
-		cl = &svs.clients[i];
-
-		if( cl->state != cs_spawned || FBitSet( cl->flags, FCL_FAKECLIENT ))
-			continue;
-
-		total = count = 0;
-
-		for( j = 0; j < (SV_UPDATE_BACKUP / 2); j++ )
-		{
-			client_frame_t	*frame;
-
-			frame = &cl->frames[(cl->netchan.incoming_acknowledged - (j + 1)) & SV_UPDATE_MASK];
-			if( frame->latency > 0 )
-			{
-				count++;
-				total += frame->latency;
-			}
-		}
-
-		if( !count ) cl->ping = 0;
-		else cl->ping = total / count;
-	}
-}
-
-/*
-===================
-SV_CalcPacketLoss
-
-determine % of packets that were not ack'd.
-===================
-*/
-int SV_CalcPacketLoss( sv_client_t *cl )
-{
-	int	i, lost, count;
-	float	losspercent;
-	register client_frame_t *frame;
-	int	numsamples;
-
-	lost  = 0;
-	count = 0;
-
-	if( FBitSet( cl->flags, FCL_FAKECLIENT ))
-		return 0;
-
-	numsamples = SV_UPDATE_BACKUP / 2;
-
-	for( i = 0; i < numsamples; i++ )
-	{
-		frame = &cl->frames[(cl->netchan.incoming_acknowledged - 1 - i) & SV_UPDATE_MASK];
-		if( frame->latency == -1 )
-			lost++;
-		count++;
-	}
-
-	if( !count ) return 100;
-	losspercent = 100.0f * ( float )lost / ( float )count;
-
-	return (int)losspercent;
-}
-
 /*
 ================
 SV_HasActivePlayers
@@ -185,7 +139,7 @@ qboolean SV_HasActivePlayers( void )
 	// server inactive
 	if( !svs.clients ) return false;
 
-	for( i = 0; i < sv_maxclients->integer; i++ )
+	for( i = 0; i < svs.maxclients; i++ )
 	{
 		if( svs.clients[i].state == cs_spawned )
 			return true;
@@ -203,83 +157,63 @@ send updates to client if changed
 */
 void SV_UpdateMovevars( qboolean initialize )
 {
-	if( !initialize && !physinfo->modified )
+	if( !initialize && !host.movevars_changed )
 		return;
 
 	// check range
-	if( sv_zmax->value < 256.0f ) Cvar_SetFloat( "sv_zmax", 256.0f );
+	if( sv_zmax.value < 256.0f ) Cvar_SetValue( "sv_zmax", 256.0f );
 
 	// clamp it right
 	if( host.features & ENGINE_WRITE_LARGE_COORD )
 	{
-		if( sv_zmax->value > 131070.0f )
-			Cvar_SetFloat( "sv_zmax", 131070.0f );
+		if( sv_zmax.value > 131070.0f )
+			Cvar_SetValue( "sv_zmax", 131070.0f );
 	}
 	else
 	{
-		if( sv_zmax->value > 32767.0f )
-			Cvar_SetFloat( "sv_zmax", 32767.0f );
+		if( sv_zmax.value > 32767.0f )
+			Cvar_SetValue( "sv_zmax", 32767.0f );
 	}
 
-	svgame.movevars.gravity = sv_gravity->value;
-	svgame.movevars.stopspeed = sv_stopspeed->value;
-	svgame.movevars.maxspeed = sv_maxspeed->value;
-	svgame.movevars.spectatormaxspeed = sv_spectatormaxspeed->value;
-	svgame.movevars.accelerate = sv_accelerate->value;
-	svgame.movevars.airaccelerate = sv_airaccelerate->value;
-	svgame.movevars.wateraccelerate = sv_wateraccelerate->value;
-	svgame.movevars.friction = sv_friction->value;
-	svgame.movevars.edgefriction = sv_edgefriction->value;
-	svgame.movevars.waterfriction = sv_waterfriction->value;
-	svgame.movevars.bounce = sv_wallbounce->value;
-	svgame.movevars.stepsize = sv_stepsize->value;
-	svgame.movevars.maxvelocity = sv_maxvelocity->value;
-	svgame.movevars.zmax = sv_zmax->value;
-	svgame.movevars.waveHeight = sv_wateramp->value;
-	Q_strncpy( svgame.movevars.skyName, sv_skyname->string, sizeof( svgame.movevars.skyName ));
-	svgame.movevars.footsteps = sv_footsteps->integer;
-	svgame.movevars.rollangle = sv_rollangle->value;
-	svgame.movevars.rollspeed = sv_rollspeed->value;
-	svgame.movevars.skycolor_r = sv_skycolor_r->value;
-	svgame.movevars.skycolor_g = sv_skycolor_g->value;
-	svgame.movevars.skycolor_b = sv_skycolor_b->value;
-	svgame.movevars.skyvec_x = sv_skyvec_x->value;
-	svgame.movevars.skyvec_y = sv_skyvec_y->value;
-	svgame.movevars.skyvec_z = sv_skyvec_z->value;
-	svgame.movevars.skydir_x = sv_skydir_x->value;
-	svgame.movevars.skydir_y = sv_skydir_y->value;
-	svgame.movevars.skydir_z = sv_skydir_z->value;
-	svgame.movevars.skyangle = sv_skyangle->value;
-	svgame.movevars.wateralpha = sv_wateralpha->value;
+	svgame.movevars.gravity = sv_gravity.value;
+	svgame.movevars.stopspeed = sv_stopspeed.value;
+	svgame.movevars.maxspeed = sv_maxspeed.value;
+	svgame.movevars.spectatormaxspeed = sv_spectatormaxspeed.value;
+	svgame.movevars.accelerate = sv_accelerate.value;
+	svgame.movevars.airaccelerate = sv_airaccelerate.value;
+	svgame.movevars.wateraccelerate = sv_wateraccelerate.value;
+	svgame.movevars.friction = sv_friction.value;
+	svgame.movevars.edgefriction = sv_edgefriction.value;
+	svgame.movevars.waterfriction = sv_waterfriction.value;
+	svgame.movevars.bounce = sv_bounce.value;
+	svgame.movevars.stepsize = sv_stepsize.value;
+	svgame.movevars.maxvelocity = sv_maxvelocity.value;
+	svgame.movevars.zmax = sv_zmax.value;
+	svgame.movevars.waveHeight = sv_wateramp.value;
+	Q_strncpy( svgame.movevars.skyName, sv_skyname.string, sizeof( svgame.movevars.skyName ));
+	svgame.movevars.footsteps = sv_footsteps.value;
+	svgame.movevars.rollangle = sv_rollangle.value;
+	svgame.movevars.rollspeed = sv_rollspeed.value;
+	svgame.movevars.skycolor_r = sv_skycolor_r.value;
+	svgame.movevars.skycolor_g = sv_skycolor_g.value;
+	svgame.movevars.skycolor_b = sv_skycolor_b.value;
+	svgame.movevars.skyvec_x = sv_skyvec_x.value;
+	svgame.movevars.skyvec_y = sv_skyvec_y.value;
+	svgame.movevars.skyvec_z = sv_skyvec_z.value;
+	svgame.movevars.skydir_x = sv_skydir_x.value;
+	svgame.movevars.skydir_y = sv_skydir_y.value;
+	svgame.movevars.skydir_z = sv_skydir_z.value;
+	svgame.movevars.skyangle = sv_skyangle.value;
+	svgame.movevars.wateralpha = sv_wateralpha.value;
 	svgame.movevars.features = host.features; // just in case. not really need
+	svgame.movevars.entgravity = 1.0f;
 
 	if( initialize ) return; // too early
 
 	if( MSG_WriteDeltaMovevars( &sv.reliable_datagram, &svgame.oldmovevars, &svgame.movevars ))
 		memcpy( &svgame.oldmovevars, &svgame.movevars, sizeof( movevars_t )); // oldstate changed
 
-	physinfo->modified = false;
-}
-
-void pfnUpdateServerInfo( const char *szKey, const char *szValue, const char *unused, void *unused2 )
-{
-	convar_t	*cv = Cvar_FindVar( szKey );
-
-	if( !cv || !cv->modified ) return; // this cvar not changed
-
-	MSG_WriteByte( &sv.reliable_datagram, svc_serverinfo );
-	MSG_WriteString( &sv.reliable_datagram, szKey );
-	MSG_WriteString( &sv.reliable_datagram, szValue );
-	cv->modified = false; // reset state
-}
-
-void SV_UpdateServerInfo( void )
-{
-	if( !serverinfo->modified ) return;
-
-	Cvar_LookupVars( CVAR_SERVERINFO, NULL, NULL, pfnUpdateServerInfo ); 
-
-	serverinfo->modified = false;
+	host.movevars_changed = false;
 }
 
 /*
@@ -291,34 +225,37 @@ void SV_CheckCmdTimes( void )
 {
 	sv_client_t	*cl;
 	static double	lastreset = 0;
-	double		timewindow;
+	float		diff;
 	int		i;
+
+	if( Host_IsLocalGame( ))
+		return;
 
 	if(( host.realtime - lastreset ) < 1.0 )
 		return;
 
 	lastreset = host.realtime;
 
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 	{
 		if( cl->state != cs_spawned )
 			continue;
 
-		if( cl->last_cmdtime == 0.0 )
+		if( cl->connecttime == 0.0 )
 		{
-			cl->last_cmdtime = host.realtime;
+			cl->connecttime = host.realtime;
 		}
 
-		timewindow = cl->last_movetime + cl->last_cmdtime - host.realtime;
+		diff = cl->connecttime + cl->cmdtime - host.realtime;
 
-		if( timewindow > clockwindow->value )
+		if( diff > net_clockwindow->value )
 		{
-			cl->next_movetime = clockwindow->value + host.realtime;
-			cl->last_movetime = host.realtime - cl->last_cmdtime;
+			cl->ignorecmdtime = net_clockwindow->value + host.realtime;
+			cl->cmdtime = host.realtime - cl->connecttime;
 		}
-		else if( timewindow < -clockwindow->value )
+		else if( diff < -net_clockwindow->value )
 		{
-			cl->last_movetime = host.realtime - cl->last_cmdtime;
+			cl->cmdtime = host.realtime - cl->connecttime;
 		}
 	}
 }
@@ -368,7 +305,7 @@ void SV_ReadPackets( void )
 		qport = (int)MSG_ReadShort( &net_message ) & 0xffff;
 
 		// check for packets from connected clients
-		for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+		for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 		{
 			if( cl->state == cs_free || FBitSet( cl->flags, FCL_FAKECLIENT ))
 				continue;
@@ -387,7 +324,7 @@ void SV_ReadPackets( void )
 
 			if( Netchan_Process( &cl->netchan, &net_message ))
 			{	
-				if(( sv_maxclients->integer == 1 && !FBitSet( host.features, ENGINE_FIXED_FRAMERATE )) || cl->state != cs_spawned )
+				if(( svs.maxclients == 1 && !host_limitlocal->value ) || ( cl->state != cs_spawned ))
 					SetBits( cl->flags, FCL_SEND_NET_MESSAGE ); // reply at end of frame
 
 				// this is a valid, sequenced packet, so process it
@@ -403,10 +340,21 @@ void SV_ReadPackets( void )
 			// fragmentation/reassembly sending takes priority over all game messages, want this in the future?
 			if( Netchan_IncomingReady( &cl->netchan ))
 			{
-				if( Netchan_CopyNormalFragments( &cl->netchan, &net_message ))
+				if( Netchan_CopyNormalFragments( &cl->netchan, &net_message, &curSize ))
 				{
-					MSG_Clear( &net_message );
-					SV_ExecuteClientMessage( cl, &net_message );
+					MSG_Init( &net_message, "ClientPacket", net_message_buffer, curSize );
+
+					if( svs.maxclients == 1 || cl->state != cs_spawned )
+						SetBits( cl->flags, FCL_SEND_NET_MESSAGE ); // reply at end of frame
+
+					// this is a valid, sequenced packet, so process it
+					if( cl->state != cs_zombie )
+					{
+						cl->lastmessage = host.realtime; // don't timeout
+						SV_ExecuteClientMessage( cl, &net_message );
+						svgame.globals->frametime = sv.frametime;
+						svgame.globals->time = sv.time;
+					}
 				}
 
 				if( Netchan_CopyFileFragments( &cl->netchan, &net_message ))
@@ -417,7 +365,7 @@ void SV_ReadPackets( void )
 			break;
 		}
 
-		if( i != sv_maxclients->integer )
+		if( i != svs.maxclients )
 			continue;
 	}
 
@@ -448,7 +396,7 @@ void SV_CheckTimeouts( void )
 	droppoint = host.realtime - timeout->value;
 	zombiepoint = host.realtime - zombietime->value;
 
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 	{
 		if( cl->state >= cs_connected )
 		{
@@ -557,16 +505,18 @@ SV_RunGameFrame
 SV_RunGameFrame
 =================
 */
-qboolean SV_RunGameFrame( void )
+void SV_RunGameFrame( void )
 {
-	int	numFrames = 0;
+	int	numFrames = 0; // debug
 
-	if( !( sv.simulating = SV_IsSimulating( )))
-		return true;
+	if(!( sv.simulating = SV_IsSimulating( )))
+		return;
 
 	if( FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
 	{
-		while( sv.time_residual >= sv.frametime )
+		sv.time_residual += host.frametime;
+
+		if( sv.time_residual >= sv.frametime )
 		{
 			SV_Physics();
 
@@ -574,15 +524,13 @@ qboolean SV_RunGameFrame( void )
 			sv.time += sv.frametime;
 			numFrames++;
 		}
-		return (numFrames != 0);
 	}
 	else
 	{
 		SV_Physics();
 
 		sv.time += sv.frametime;
-
-		return true;
+		numFrames++;
 	}
 }
 
@@ -598,16 +546,10 @@ void Host_ServerFrame( void )
 	if( !svs.initialized ) return;
 
 	if( FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
-		sv.frametime = ( 1.0 / (double)( GAME_FPS - 0.01 )); // FP issues
-	else sv.frametime = host.frametime;
-
-	if( sv.simulating || sv.state != ss_active )
-		sv.time_residual += host.frametime;
+		sv.frametime = ( 1.0 / (double)GAME_FPS );
+	else sv.frametime = host.frametime; // GoldSrc style
 
 	svgame.globals->frametime = sv.frametime;
-
-	// check timeouts
-	SV_CheckTimeouts ();
 
 	// check clients timewindow
 	SV_CheckCmdTimes ();
@@ -615,17 +557,14 @@ void Host_ServerFrame( void )
 	// read packets from clients
 	SV_ReadPackets ();
 
-	// update ping based on the last known frame from all clients
-	SV_CalcPings ();
-
-	// refresh serverinfo on the client side
-	SV_UpdateServerInfo ();
-
 	// refresh physic movevars on the client side
 	SV_UpdateMovevars ( false );
 
+	// check timeouts
+	SV_CheckTimeouts ();
+
 	// let everything in the world think and move
-	if( !SV_RunGameFrame ()) return;
+	SV_RunGameFrame ();
 		
 	// send messages back to the clients that had packets read this frame
 	SV_SendClientMessages ();
@@ -666,7 +605,7 @@ let it know we are alive, and log information
 */
 void Master_Heartbeat( void )
 {
-	if( !public_server->integer || sv_maxclients->integer == 1 )
+	if( !public_server->value || svs.maxclients == 1 )
 		return; // only public servers send heartbeats
 
 	// check for time wraparound
@@ -713,10 +652,11 @@ void SV_AddToMaster( netadr_t from, sizebuf_t *msg )
 	uint	challenge;
 	char	s[MAX_INFO_STRING] = "0\n"; // skip 2 bytes of header
 	int	clients = 0, bots = 0, index;
+	int	len = sizeof( s );
 
 	if( svs.clients )
 	{
-		for( index = 0; index < sv_maxclients->integer; index++ )
+		for( index = 0; index < svs.maxclients; index++ )
 		{
 			if( svs.clients[index].state >= cs_connected )
 			{
@@ -729,21 +669,21 @@ void SV_AddToMaster( netadr_t from, sizebuf_t *msg )
 
 	challenge = MSG_ReadUBitLong( msg, sizeof( uint ) << 3 );
 
-	Info_SetValueForKey( s, "protocol", va( "%d", PROTOCOL_VERSION ) ); // protocol version
-	Info_SetValueForKey( s, "challenge", va( "%u", challenge ) ); // challenge number
-	Info_SetValueForKey( s, "players", va( "%d", clients ) ); // current player number, without bots
-	Info_SetValueForKey( s, "max", sv_maxclients->string ); // max_players
-	Info_SetValueForKey( s, "bots", va( "%d", bots ) ); // bot count
-	Info_SetValueForKey( s, "gamedir", GI->gamedir ); // gamedir
-	Info_SetValueForKey( s, "map", sv.name ); // current map
-	Info_SetValueForKey( s, "type", (host.type == HOST_DEDICATED) ? "d" : "l" ); // dedicated or local
-	Info_SetValueForKey( s, "password", "0" ); // is password set
-	Info_SetValueForKey( s, "os", "w" ); // Windows
-	Info_SetValueForKey( s, "secure", "0" ); // server anti-cheat
-	Info_SetValueForKey( s, "lan", "0" ); // LAN servers doesn't send info to master
-	Info_SetValueForKey( s, "version", va( "%g", XASH_VERSION )); // server region. 255 -- all regions
-	Info_SetValueForKey( s, "region", "255" ); // server region. 255 -- all regions
-	Info_SetValueForKey( s, "product", GI->gamefolder ); // product? Where is the difference with gamedir?
+	Info_SetValueForKey( s, "protocol", va( "%d", PROTOCOL_VERSION ), len ); // protocol version
+	Info_SetValueForKey( s, "challenge", va( "%u", challenge ), len ); // challenge number
+	Info_SetValueForKey( s, "players", va( "%d", clients ), len ); // current player number, without bots
+	Info_SetValueForKey( s, "max", va( "%d", svs.maxclients ), len ); // max_players
+	Info_SetValueForKey( s, "bots", va( "%d", bots ), len ); // bot count
+	Info_SetValueForKey( s, "gamedir", GI->gamedir, len ); // gamedir
+	Info_SetValueForKey( s, "map", sv.name, len ); // current map
+	Info_SetValueForKey( s, "type", (host.type == HOST_DEDICATED) ? "d" : "l", len ); // dedicated or local
+	Info_SetValueForKey( s, "password", "0", len ); // is password set
+	Info_SetValueForKey( s, "os", "w", len ); // Windows
+	Info_SetValueForKey( s, "secure", "0", len ); // server anti-cheat
+	Info_SetValueForKey( s, "lan", "0", len ); // LAN servers doesn't send info to master
+	Info_SetValueForKey( s, "version", va( "%g", XASH_VERSION ), len ); // server region. 255 -- all regions
+	Info_SetValueForKey( s, "region", "255", len ); // server region. 255 -- all regions
+	Info_SetValueForKey( s, "product", GI->gamefolder, len ); // product? Where is the difference with gamedir?
 
 	NET_SendPacket( NS_SERVER, Q_strlen( s ), s, from );
 }
@@ -759,94 +699,99 @@ Only called at startup, not for each game
 */
 void SV_Init( void )
 {
-	SV_InitOperatorCommands();
+	SV_InitHostCommands();
 
-	skill = Cvar_Get ("skill", "1", CVAR_LATCH, "game skill level" );
-	deathmatch = Cvar_Get ("deathmatch", "0", CVAR_LATCH|CVAR_SERVERINFO, "displays deathmatch state" );
-	teamplay = Cvar_Get ("teamplay", "0", CVAR_LATCH|CVAR_SERVERINFO, "displays teamplay state" );
-	coop = Cvar_Get ("coop", "0", CVAR_LATCH|CVAR_SERVERINFO, "displays cooperative state" );
-	Cvar_Get ("protocol", va( "%i", PROTOCOL_VERSION ), CVAR_INIT, "displays server protocol version" );
-	Cvar_Get ("defaultmap", "", CVAR_SERVERNOTIFY, "holds the multiplayer mapname" );
-	Cvar_Get ("showtriggers", "0", CVAR_LATCH, "debug cvar shows triggers" );
-	Cvar_Get ("sv_aim", "0", CVAR_ARCHIVE, "enable auto-aiming" );
-	Cvar_Get ("mapcyclefile", "mapcycle.txt", 0, "name of multiplayer map cycle configuration file" );
+	Cvar_Get ("protocol", va( "%i", PROTOCOL_VERSION ), FCVAR_READ_ONLY, "displays server protocol version" );
+	Cvar_Get ("suitvolume", "0.25", FCVAR_ARCHIVE, "HEV suit volume" );
+	Cvar_Get ("sv_background", "0", FCVAR_READ_ONLY, "indicate what background map is running" );
+	Cvar_Get( "gamedir", GI->gamefolder, FCVAR_SERVER|FCVAR_READ_ONLY, "game folder" );
+	Cvar_Get( "sv_alltalk", "1", 0, "allow to talking for all players (legacy, unused)" );
+	Cvar_Get( "sv_allow_PhysX", "1", FCVAR_ARCHIVE, "allow XashXT to usage PhysX engine" );			// XashXT cvar
+	Cvar_Get( "sv_precache_meshes", "1", FCVAR_ARCHIVE, "cache SOLID_CUSTOM meshes before level loading" );	// Paranoia 2 cvar
+	Cvar_Get ("mapcyclefile", "mapcycle.txt", 0, "name of config file for map changing rules" );
 	Cvar_Get ("servercfgfile","server.cfg", 0, "name of dedicated server configuration file" );
 	Cvar_Get ("lservercfgfile","listenserver.cfg", 0, "name of listen server configuration file" );
-	Cvar_Get ("motdfile", "motd.txt", 0, "name of 'message of the day' file" );
-	Cvar_Get ("sv_language", "0", 0, "game language (currently unused)" );
-	Cvar_Get ("suitvolume", "0.25", CVAR_ARCHIVE, "HEV suit volume" );
-	Cvar_Get ("sv_background", "0", CVAR_READ_ONLY, "indicate what background map is running" );
-	Cvar_Get( "gamedir", GI->gamefolder, CVAR_SERVERINFO|CVAR_SERVERNOTIFY|CVAR_INIT, "game folder" );
-	Cvar_Get( "sv_alltalk", "1", 0, "allow to talking for all players (legacy, unused)" );
-	Cvar_Get( "sv_airmove", "1", CVAR_SERVERNOTIFY, "enable airmovement (legacy, unused)" );
-	Cvar_Get( "mp_autocrosshair", "0", 0, "allow auto crosshair in multiplayer (legacy, unused)" );
-	Cvar_Get( "sv_allow_PhysX", "1", CVAR_ARCHIVE, "allow XashXT to usage PhysX engine" );			// XashXT cvar
-	Cvar_Get( "sv_precache_meshes", "1", CVAR_ARCHIVE, "cache SOLID_CUSTOM meshes before level loading" );	// Paranoia 2 cvar
-		
-	// half-life shared variables
-	sv_zmax = Cvar_Get ("sv_zmax", "4096", CVAR_PHYSICINFO, "zfar server value" );
-	sv_wateramp = Cvar_Get ("sv_wateramp", "0", CVAR_PHYSICINFO, "global water wave height" );
-	sv_skycolor_r = Cvar_Get ("sv_skycolor_r", "255", CVAR_PHYSICINFO, "skycolor red" );
-	sv_skycolor_g = Cvar_Get ("sv_skycolor_g", "255", CVAR_PHYSICINFO, "skycolor green" );
-	sv_skycolor_b = Cvar_Get ("sv_skycolor_b", "255", CVAR_PHYSICINFO, "skycolor blue" );
-	sv_skyvec_x = Cvar_Get ("sv_skyvec_x", "0", CVAR_PHYSICINFO, "skylight direction x" );
-	sv_skyvec_y = Cvar_Get ("sv_skyvec_y", "0", CVAR_PHYSICINFO, "skylight direction y" );
-	sv_skyvec_z = Cvar_Get ("sv_skyvec_z", "0", CVAR_PHYSICINFO, "skylight direction z" );
-	sv_skyname = Cvar_Get ("sv_skyname", "desert", CVAR_PHYSICINFO, "skybox name (can be dynamically changed in-game)" );
-	sv_skydir_x = Cvar_Get ("sv_skydir_x", "0", CVAR_PHYSICINFO, "sky rotation direction x" );
-	sv_skydir_y = Cvar_Get ("sv_skydir_y", "0", CVAR_PHYSICINFO, "sky rotation direction y" );
-	sv_skydir_z = Cvar_Get ("sv_skydir_z", "1", CVAR_PHYSICINFO, "sky rotation direction z" ); // g-cont. add default sky rotate direction
-	sv_skyangle = Cvar_Get ("sv_skyangle", "0", CVAR_PHYSICINFO, "skybox rotational angle (in degrees)" );
-	sv_skyspeed = Cvar_Get ("sv_skyspeed", "0", 0, "skybox rotational speed" );
-	sv_footsteps = Cvar_Get ("mp_footsteps", "1", CVAR_PHYSICINFO, "can hear footsteps from other players" );
-	sv_wateralpha = Cvar_Get ("sv_wateralpha", "1", CVAR_PHYSICINFO, "world surfaces water transparency factor. 1.0 - solid, 0.0 - fully transparent" );
 
-	rcon_password = Cvar_Get( "rcon_password", "", 0, "remote connect password" );
-	sv_stepsize = Cvar_Get( "sv_stepsize", "18", CVAR_ARCHIVE|CVAR_PHYSICINFO, "how high you can step up" );
-	sv_newunit = Cvar_Get( "sv_newunit", "0", 0, "sets to 1 while new unit is loading" );
-	hostname = Cvar_Get( "hostname", "unnamed", CVAR_SERVERNOTIFY|CVAR_ARCHIVE, "host name" );
-	timeout = Cvar_Get( "timeout", "125", CVAR_SERVERNOTIFY, "connection timeout" );
-	zombietime = Cvar_Get( "zombietime", "2", CVAR_SERVERNOTIFY, "timeout for clients-zombie (who died but not respawned)" );
-	sv_pausable = Cvar_Get( "pausable", "1", CVAR_SERVERNOTIFY, "allow players to pause or not" );
-	sv_allow_studio_attachment_angles = Cvar_Get( "sv_allow_studio_attachment_angles", "0", CVAR_ARCHIVE, "enable calc angles for attachment points (on studio models)" );
-	sv_allow_rotate_pushables = Cvar_Get( "sv_allow_rotate_pushables", "0", CVAR_ARCHIVE, "let the pushers rotate pushables with included origin-brush" );
-	sv_validate_changelevel = Cvar_Get( "sv_validate_changelevel", "1", CVAR_ARCHIVE, "test change level for level-designer errors" );
-	sv_clienttrace = Cvar_Get( "sv_clienttrace", "1", CVAR_SERVERNOTIFY, "scaling factor for client hitboxes" );
-	sv_wallbounce = Cvar_Get( "sv_wallbounce", "1.0", CVAR_PHYSICINFO, "bounce factor for client with MOVETYPE_BOUNCE" );
-	sv_spectatormaxspeed = Cvar_Get( "sv_spectatormaxspeed", "500", CVAR_PHYSICINFO, "spectator maxspeed" );
-	sv_waterfriction = Cvar_Get( "sv_waterfriction", "1", CVAR_PHYSICINFO, "how fast you slow down in water" );
-	sv_wateraccelerate = Cvar_Get( "sv_wateraccelerate", "10", CVAR_PHYSICINFO, "rate at which a player accelerates to sv_maxspeed while in the water" );
-	sv_rollangle = Cvar_Get( "sv_rollangle", "0", CVAR_PHYSICINFO, "how much to tilt the view when strafing" );
-	sv_rollspeed = Cvar_Get( "sv_rollspeed", "200", CVAR_PHYSICINFO, "how much strafing is necessary to tilt the view" );
-	sv_airaccelerate = Cvar_Get("sv_airaccelerate", "10", CVAR_PHYSICINFO, "player accellerate in air" );
-	sv_maxvelocity = Cvar_Get( "sv_maxvelocity", "2000", CVAR_PHYSICINFO, "max world velocity" );
-          sv_gravity = Cvar_Get( "sv_gravity", "800", CVAR_PHYSICINFO, "world gravity" );
-	sv_maxspeed = Cvar_Get( "sv_maxspeed", "320", CVAR_PHYSICINFO, "maximum speed a player can accelerate to when on ground");
-	sv_accelerate = Cvar_Get( "sv_accelerate", "10", CVAR_PHYSICINFO, "rate at which a player accelerates to sv_maxspeed" );
-	sv_friction = Cvar_Get( "sv_friction", "4", CVAR_PHYSICINFO, "how fast you slow down" );
-	sv_edgefriction = Cvar_Get( "edgefriction", "2", CVAR_PHYSICINFO, "how much you slow down when nearing a ledge you might fall off" );
-	sv_stopspeed = Cvar_Get( "sv_stopspeed", "100", CVAR_PHYSICINFO, "how fast you come to a complete stop" );
-	sv_maxclients = Cvar_Get( "maxplayers", "1", CVAR_LATCH|CVAR_SERVERNOTIFY, "server clients limit" );
-	sv_check_errors = Cvar_Get( "sv_check_errors", "0", CVAR_ARCHIVE, "check edicts for errors" );
-	physinfo = Cvar_Get( "@physinfo", "0", CVAR_READ_ONLY, "" ); // use ->modified value only
-	serverinfo = Cvar_Get( "@serverinfo", "0", CVAR_READ_ONLY, "" ); // use ->modified value only
-	public_server = Cvar_Get ("public", "0", CVAR_SERVERNOTIFY, "change server type from private to public" );
-	sv_lighting_modulate = Cvar_Get( "r_lighting_modulate", "0.6", CVAR_ARCHIVE, "lightstyles modulate scale" );
-	sv_reconnect_limit = Cvar_Get ("sv_reconnect_limit", "3", CVAR_ARCHIVE, "max reconnect attempts" );
-	sv_failuretime = Cvar_Get( "sv_failuretime", "0.5", 0, "after this long without a packet from client, don't send any more until client starts sending again" );
-	sv_unlag = Cvar_Get( "sv_unlag", "1", 0, "allow lag compensation on server-side" );
-	sv_maxunlag = Cvar_Get( "sv_maxunlag", "0.5", 0, "max latency which can be interpolated" );
-	sv_unlagpush = Cvar_Get( "sv_unlagpush", "0.0", 0, "unlag push bias" );
-	sv_unlagsamples = Cvar_Get( "sv_unlagsamples", "1", 0, "max samples to interpolate" );
-	sv_allow_upload = Cvar_Get( "sv_allow_upload", "1", 0, "allow uploading custom resources from clients" );
-	sv_allow_download = Cvar_Get( "sv_allow_download", "1", 0, "allow download missed resources to clients" );
-	sv_send_logos = Cvar_Get( "sv_send_logos", "1", 0, "send custom player decals to other clients" );
-	sv_send_resources = Cvar_Get( "sv_send_resources", "1", 0, "send generic resources that specified in 'mapname.res'" );
-	sv_sendvelocity = Cvar_Get( "sv_sendvelocity", "1", CVAR_ARCHIVE, "force to send velocity for event_t structure across network" );
-	sv_quakehulls = Cvar_Get( "sv_quakehulls", "0", CVAR_ARCHIVE, "using quake style hull select instead of half-life style hull select" );
-	mp_consistency = Cvar_Get( "mp_consistency", "1", CVAR_SERVERNOTIFY, "enbale consistency check in multiplayer" );
-	clockwindow = Cvar_Get( "clockwindow", "0.5", 0, "timewindow to execute client moves" );
+	Cvar_RegisterVariable (&sv_zmax);
+	Cvar_RegisterVariable (&sv_wateramp);
+	Cvar_RegisterVariable (&sv_skycolor_r);
+	Cvar_RegisterVariable (&sv_skycolor_g);
+	Cvar_RegisterVariable (&sv_skycolor_b);
+	Cvar_RegisterVariable (&sv_skyvec_x);
+	Cvar_RegisterVariable (&sv_skyvec_y);
+	Cvar_RegisterVariable (&sv_skyvec_z);
+	Cvar_RegisterVariable (&sv_skyname);
+	Cvar_RegisterVariable (&sv_skydir_x);
+	Cvar_RegisterVariable (&sv_skydir_y);
+	Cvar_RegisterVariable (&sv_skydir_z);
+	Cvar_RegisterVariable (&sv_skyangle);
+	Cvar_RegisterVariable (&sv_skyspeed);
+	Cvar_RegisterVariable (&sv_footsteps);
+	Cvar_RegisterVariable (&sv_wateralpha);
+	Cvar_RegisterVariable (&sv_cheats);
+	Cvar_RegisterVariable (&sv_airmove);
+
+	Cvar_RegisterVariable (&showtriggers);
+	Cvar_RegisterVariable (&sv_aim);
+	Cvar_RegisterVariable (&motdfile);
+	Cvar_RegisterVariable (&deathmatch);
+	Cvar_RegisterVariable (&coop);
+	Cvar_RegisterVariable (&teamplay);
+	Cvar_RegisterVariable (&skill);
+	Cvar_RegisterVariable (&temp1);
+
+	Cvar_RegisterVariable (&rcon_password);
+	Cvar_RegisterVariable (&sv_stepsize);
+	Cvar_RegisterVariable (&sv_newunit);
+	hostname = Cvar_Get( "hostname", "unnamed", FCVAR_SERVER|FCVAR_ARCHIVE, "host name" );
+	timeout = Cvar_Get( "timeout", "125", FCVAR_SERVER, "connection timeout" );
+	zombietime = Cvar_Get( "zombietime", "2", FCVAR_SERVER, "timeout for clients-zombie (who died but not respawned)" );
+	sv_pausable = Cvar_Get( "pausable", "1", FCVAR_SERVER, "allow players to pause or not" );
+	sv_validate_changelevel = Cvar_Get( "sv_validate_changelevel", "1", FCVAR_ARCHIVE, "test change level for level-designer errors" );
+	Cvar_RegisterVariable (&sv_clienttrace);
+	Cvar_RegisterVariable (&sv_bounce);
+	Cvar_RegisterVariable (&sv_spectatormaxspeed);
+	Cvar_RegisterVariable (&sv_waterfriction);
+	Cvar_RegisterVariable (&sv_wateraccelerate);
+	Cvar_RegisterVariable (&sv_rollangle);
+	Cvar_RegisterVariable (&sv_rollspeed);
+	Cvar_RegisterVariable (&sv_airaccelerate);
+	Cvar_RegisterVariable (&sv_maxvelocity);
+ 	Cvar_RegisterVariable (&sv_gravity);
+	Cvar_RegisterVariable (&sv_maxspeed);
+	Cvar_RegisterVariable (&sv_accelerate);
+	Cvar_RegisterVariable (&sv_friction);
+	Cvar_RegisterVariable (&sv_edgefriction);
+	Cvar_RegisterVariable (&sv_stopspeed);
+	sv_maxclients = Cvar_Get( "maxplayers", "1", FCVAR_LATCH, "server max capacity" );
+	sv_check_errors = Cvar_Get( "sv_check_errors", "0", FCVAR_ARCHIVE, "check edicts for errors" );
+	public_server = Cvar_Get ("public", "0", 0, "change server type from private to public" );
+	sv_lighting_modulate = Cvar_Get( "r_lighting_modulate", "0.6", FCVAR_ARCHIVE, "lightstyles modulate scale" );
+	sv_reconnect_limit = Cvar_Get ("sv_reconnect_limit", "3", FCVAR_ARCHIVE, "max reconnect attempts" );
+	Cvar_RegisterVariable (&sv_failuretime );
+	Cvar_RegisterVariable (&sv_unlag);
+	Cvar_RegisterVariable (&sv_maxunlag);
+	Cvar_RegisterVariable (&sv_unlagpush);
+	Cvar_RegisterVariable (&sv_unlagsamples);
+	Cvar_RegisterVariable (&sv_allow_upload);
+	Cvar_RegisterVariable (&sv_allow_download);
+	Cvar_RegisterVariable (&sv_send_logos);
+	Cvar_RegisterVariable (&sv_send_resources);
+	sv_sendvelocity = Cvar_Get( "sv_sendvelocity", "1", FCVAR_ARCHIVE, "force to send velocity for event_t structure across network" );
+	Cvar_RegisterVariable (&sv_consistency);
 	sv_novis = Cvar_Get( "sv_novis", "0", 0, "force to ignore server visibility" );
+	sv_hostmap = Cvar_Get( "hostmap", GI->startmap, 0, "keep name of last entered map" );
+
+	Cvar_RegisterVariable (&sv_spawntime);
+	Cvar_RegisterVariable (&sv_changetime);
+
+	Cvar_RegisterVariable (&violence_ablood);
+	Cvar_RegisterVariable (&violence_hblood);
+	Cvar_RegisterVariable (&violence_agibs);
+	Cvar_RegisterVariable (&violence_hgibs);
+
+	// when we in developer-mode automatically turn cheats on
+	if( host.developer > 1 ) Cvar_SetValue( "sv_cheats", 1.0f );
 
 	SV_ClearSaveDir ();	// delete all temporary *.hl files
 	MSG_Init( &net_message, "NetMessage", net_message_buffer, sizeof( net_message_buffer ));
@@ -870,30 +815,30 @@ void SV_FinalMessage( char *message, qboolean reconnect )
 	int		i;
 	
 	MSG_Init( &msg, "FinalMessage", msg_buf, sizeof( msg_buf ));
-	MSG_WriteByte( &msg, svc_print );
+	MSG_BeginServerCmd( &msg, svc_print );
 	MSG_WriteByte( &msg, PRINT_HIGH );
 	MSG_WriteString( &msg, va( "%s\n", message ));
 
 	if( reconnect )
 	{
-		MSG_WriteByte( &msg, svc_changing );
+		MSG_BeginServerCmd( &msg, svc_changing );
 
-		if( sv.loadgame || sv_maxclients->integer > 1 || sv.changelevel )
+		if( sv.loadgame || svs.maxclients > 1 || sv.changelevel )
 			MSG_WriteOneBit( &msg, 1 ); // changelevel
 		else MSG_WriteOneBit( &msg, 0 );
 	}
 	else
 	{
-		MSG_WriteByte( &msg, svc_disconnect );
+		MSG_BeginServerCmd( &msg, svc_disconnect );
 	}
 
 	// send it twice
 	// stagger the packets to crutch operating system limited buffers
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 		if( cl->state >= cs_connected && !FBitSet( cl->flags, FCL_FAKECLIENT ))
 			Netchan_Transmit( &cl->netchan, MSG_GetNumBytesWritten( &msg ), MSG_GetData( &msg ));
 
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 		if( cl->state >= cs_connected && !FBitSet( cl->flags, FCL_FAKECLIENT ))
 			Netchan_Transmit( &cl->netchan, MSG_GetNumBytesWritten( &msg ), MSG_GetData( &msg ));
 }
@@ -920,7 +865,7 @@ void SV_Shutdown( qboolean reconnect )
 	if( svs.clients )
 		SV_FinalMessage( host.finalmsg, reconnect );
 
-	if( public_server->integer && sv_maxclients->integer != 1 )
+	if( public_server->value && svs.maxclients != 1 )
 		Master_Shutdown();
 
 	if( !reconnect ) SV_UnloadProgs ();

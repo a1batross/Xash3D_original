@@ -425,7 +425,8 @@ int VOX_MixDataToDevice( channel_t *pchan, int sampleCount, int outputRate, int 
 
 	while( sampleCount > 0 && pchan->currentWord )
 	{
-		int outputCount = S_MixDataToDevice( pchan, sampleCount, outputRate, outputOffset );
+		int	timeCompress = pchan->words[pchan->wordIndex].timecompress;
+		int	outputCount = S_MixDataToDevice( pchan, sampleCount, outputRate, outputOffset, timeCompress );
 
 		outputOffset += outputCount;
 		sampleCount -= outputCount;
@@ -609,12 +610,7 @@ void VOX_ReadSentenceFile( const char *psentenceFileName )
 
 	// load file
 	pFileData = (char *)FS_LoadFile( psentenceFileName, &fileSize, false );
-
-	if( !pFileData )
-	{
-		MsgDev( D_WARN, "couldn't load %s\n", psentenceFileName );
-		return;
-	} 
+	if( !pFileData ) return; // this game just doesn't used vox sound system
 
 	pch = pFileData;
 	pchlast = pch + fileSize;

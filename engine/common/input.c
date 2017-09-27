@@ -183,7 +183,7 @@ void IN_ToggleClientMouse( int newstate, int oldstate )
 		clgame.dllFuncs.IN_ActivateMouse();
 	}
 
-	if( newstate == key_menu && ( !CL_IsBackgroundMap() || CL_IsBackgroundDemo()))
+	if( newstate == key_menu && ( !CL_IsBackgroundMap() || CL_IsBackgroundDemo( )))
 	{
 		in_mouseactive = false;
 		ClipCursor( NULL );
@@ -377,34 +377,7 @@ void Host_InputFrame( void )
 {
 	qboolean	shutdownMouse = false;
 
-	rand (); // keep the random time dependent
-
 	Sys_SendKeyEvents ();
-
-	Cbuf_Execute ();
-
-	if( host.type == HOST_DEDICATED )
-	{
-		if( !FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
-		{
-			// let the dedicated server some sleep
-			Sys_Sleep( 1 );
-		}
-	}
-	else
-	{
-		if( host.state == HOST_NOFOCUS )
-		{
-			if( Host_ServerState() && CL_IsInGame( ))
-				Sys_Sleep( 1 ); // listenserver
-			else Sys_Sleep( 20 ); // sleep 20 ms otherwise
-		}
-		else if( host.state == HOST_SLEEP )
-		{
-			// completely sleep in minimized state
-			Sys_Sleep( 20 );
-		}
-	}
 
 	if( !in_mouseinitialized )
 		return;
@@ -415,8 +388,9 @@ void Host_InputFrame( void )
 		return;
 	}
 
-	if( cl.refdef.paused && cls.key_dest == key_game )
-		shutdownMouse = true; // release mouse during pause or console typeing
+	// release mouse during pause or console typeing
+	if( cl.paused && cls.key_dest == key_game )
+		shutdownMouse = true;
 	
 	if( shutdownMouse && !Cvar_VariableInteger( "fullscreen" ))
 	{
@@ -515,8 +489,8 @@ LONG IN_WndProc( HWND hWnd, UINT uMsg, UINT wParam, LONG lParam )
 			style = GetWindowLong( hWnd, GWL_STYLE );
 			AdjustWindowRect( &rect, style, FALSE );
 
-			Cvar_SetFloat( "r_xpos", xPos + rect.left );
-			Cvar_SetFloat( "r_ypos", yPos + rect.top );
+			Cvar_SetValue( "_window_xpos", xPos + rect.left );
+			Cvar_SetValue( "_window_ypos", yPos + rect.top );
 			GetWindowRect( host.hWnd, &real_rect );
 		}
 		break;
@@ -545,7 +519,7 @@ LONG IN_WndProc( HWND hWnd, UINT uMsg, UINT wParam, LONG lParam )
 		if( wParam == VK_RETURN )
 		{
 			// alt+enter fullscreen switch
-			Cvar_SetFloat( "fullscreen", !Cvar_VariableValue( "fullscreen" ));
+			Cvar_SetValue( "fullscreen", !Cvar_VariableValue( "fullscreen" ));
 			return 0;
 		}
 		// intentional fallthrough

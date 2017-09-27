@@ -24,29 +24,26 @@ GNU General Public License for more details.
 #define MP3_OK		0
 #define MP3_NEED_MORE	1
 
-#define FRAME_SIZE		32768//16384	// must match with mp3 frame size
-
-typedef struct mpeg_s
+typedef struct
 {
-	void	*state;		// hidden decoder state
-	void	*vbrtag;		// valid for VBR-encoded mpegs
+	int	rate;		// num samples per second (e.g. 11025 - 11 khz)
+	int	channels;		// num channels (1 - mono, 2 - stereo)
+	int	playtime;		// stream size in milliseconds
+} wavinfo_t;
 
-	int	channels;		// num channels
-	int	samples;		// per one second
-	int	play_time;	// stream size in milliseconds
-	int	rate;		// frequency
-	int	outsize;		// current data size
-	char	out[8192];	// temporary buffer
-	size_t	streamsize;	// size in bytes
-} mpeg_t;
+// custom stdio
+typedef long (*pfread)( void *handle, void *buf, size_t count );
+typedef long (*pfseek)( void *handle, long offset, int whence );
 
-// mpg123 exports
-int create_decoder( mpeg_t *mpg );
-int read_mpeg_header( mpeg_t *mpg, const char *data, long bufsize, long streamsize );
-int read_mpeg_stream( mpeg_t *mpg, const char *data, long bufsize );
-extern int set_current_pos( mpeg_t *mpg, int newpos, int (*pfnSeek)( void*, long, int ), void *file );
-int get_current_pos( mpeg_t *mpg, int curpos );
-void close_decoder( mpeg_t *mpg );
+extern void *create_decoder( int *error );
+extern int feed_mpeg_header( void *mpg, const char *data, long bufsize, long streamsize, wavinfo_t *sc );
+extern int feed_mpeg_stream( void *mpg, const char *data, long bufsize, char *outbuf, size_t *outsize );
+extern int open_mpeg_stream( void *mpg, void *file, pfread f_read, pfseek f_seek, wavinfo_t *sc );
+extern int read_mpeg_stream( void *mpg, char *outbuf, size_t *outsize );
+extern int get_stream_pos( void *mpg );
+extern int set_stream_pos( void *mpg, int curpos );
+extern void close_decoder( void *mpg );
+const char *get_error( void *mpeg );
 
 /*
 =================================================================
@@ -57,38 +54,50 @@ void close_decoder( mpeg_t *mpg );
 */
 qboolean Sound_LoadMPG( const char *name, const byte *buffer, size_t filesize )
 {
-	mpeg_t	mpeg;
+	void	*mpeg;
 	size_t	pos = 0;
 	size_t	bytesWrite = 0;
+	char	out[OUTBUF_SIZE];
+	size_t	outsize;
+	int	ret;
+	wavinfo_t	sc;
 
 	// load the file
 	if( !buffer || filesize < FRAME_SIZE )
 		return false;
 
 	// couldn't create decoder
-	if( !create_decoder( &mpeg ))
+	if(( mpeg = create_decoder( &ret )) == NULL )
 		return false;
 
+#ifdef _DEBUG
+	if( ret ) MsgDev( D_ERROR, "%s\n", get_error( mpeg ));
+#endif
+
 	// trying to read header
-	if( !read_mpeg_header( &mpeg, buffer, FRAME_SIZE, filesize ))
+	if( !feed_mpeg_header( mpeg, buffer, FRAME_SIZE, filesize, &sc ))
 	{
+#ifdef _DEBUG
+		MsgDev( D_ERROR, "Sound_LoadMPG: failed to load (%s): %s\n", name, get_error( mpeg ));
+#else
 		MsgDev( D_ERROR, "Sound_LoadMPG: (%s) is probably corrupted\n", name );
-		close_decoder( &mpeg );
+#endif
+		close_decoder( mpeg );
 		return false;
 	}
 
-	sound.channels = mpeg.channels;
-	sound.rate = mpeg.rate;
+	sound.channels = sc.channels;
+	sound.rate = sc.rate;
 	sound.width = 2; // always 16-bit PCM
 	sound.loopstart = -1;
-	sound.size = ( sound.channels * sound.rate * sound.width ) * ( mpeg.play_time / 1000 ); // in bytes
+	sound.size = ( sound.channels * sound.rate * sound.width ) * ( sc.playtime / 1000 ); // in bytes
 	pos += FRAME_SIZE;	// evaluate pos
 
 	if( !sound.size )
 	{
 		// bad mpeg file ?
 		MsgDev( D_ERROR, "Sound_LoadMPG: (%s) is probably corrupted\n", name );
-		close_decoder( &mpeg );
+		close_decoder( mpeg );
 		return false;
 	}
 
@@ -98,9 +107,9 @@ qboolean Sound_LoadMPG( const char *name, const byte *buffer, size_t filesize )
 	// decompress mpg into pcm wav format
 	while( bytesWrite < sound.size )
 	{
-		int	outsize;
+		int	size;
 
-		if( read_mpeg_stream( &mpeg, NULL, 0 ) != MP3_OK )
+		if( feed_mpeg_stream( mpeg, NULL, 0, out, &outsize ) != MP3_OK && outsize <= 0 )
 		{
 			char	*data = (char *)buffer + pos;
 			int	bufsize;
@@ -111,20 +120,20 @@ qboolean Sound_LoadMPG( const char *name, const byte *buffer, size_t filesize )
 			else bufsize = FRAME_SIZE;
 			pos += bufsize;
 
-			if( read_mpeg_stream( &mpeg, data, bufsize ) != MP3_OK )
+			if( feed_mpeg_stream( mpeg, data, bufsize, out, &outsize ) != MP3_OK )
 				break; // there was end of the stream
 		}
 
-		if( bytesWrite + mpeg.outsize > sound.size )
-			outsize = ( sound.size - bytesWrite );
-		else outsize = mpeg.outsize;
+		if( bytesWrite + outsize > sound.size )
+			size = ( sound.size - bytesWrite );
+		else size = outsize;
 
-		memcpy( &sound.wav[bytesWrite], mpeg.out, outsize );
+		memcpy( &sound.wav[bytesWrite], out, size );
 		bytesWrite += outsize;
 	}
 
 	sound.samples = bytesWrite / ( sound.width * sound.channels );
-	close_decoder( &mpeg );
+	close_decoder( mpeg );
 
 	return true;
 }
@@ -136,68 +145,52 @@ Stream_OpenMPG
 */
 stream_t *Stream_OpenMPG( const char *filename )
 {
-	mpeg_t	*mpegFile;
 	stream_t	*stream;
+	void	*mpeg;
 	file_t	*file;
-	long	filesize, read_len;
-	char	tempbuff[FRAME_SIZE];
+	int	ret;
+	wavinfo_t	sc;
 
 	file = FS_Open( filename, "rb", false );
 	if( !file ) return NULL;
-
-	filesize = FS_FileLength( file );
-	if( filesize < FRAME_SIZE )
-	{
-		MsgDev( D_ERROR, "Stream_OpenMPG: %s is probably corrupted\n", filename );
-		FS_Close( file );
-		return NULL;
-	}
 
 	// at this point we have valid stream
 	stream = Mem_Alloc( host.soundpool, sizeof( stream_t ));
 	stream->file = file;
 	stream->pos = 0;
 
-	mpegFile = Mem_Alloc( host.soundpool, sizeof( mpeg_t ));
-
 	// couldn't create decoder
-	if( !create_decoder( mpegFile ))
+	if(( mpeg = create_decoder( &ret )) == NULL )
 	{
 		MsgDev( D_ERROR, "Stream_OpenMPG: couldn't create decoder\n" );
-		Mem_Free( mpegFile );
 		Mem_Free( stream );
 		FS_Close( file );
 		return NULL;
 	}
 
-	read_len = FS_Read( file, tempbuff, sizeof( tempbuff ));
-	if( read_len < sizeof( tempbuff ))
+#ifdef _DEBUG
+	if( ret ) MsgDev( D_ERROR, "%s\n", get_error( mpeg ));
+#endif
+	// trying to open stream and read header
+	if( !open_mpeg_stream( mpeg, file, FS_Read, FS_Seek, &sc ))
 	{
-		MsgDev( D_ERROR, "Stream_OpenMPG: %s is probably corrupted\n", filename );
-		close_decoder( mpegFile );
-		Mem_Free( mpegFile );
+#ifdef _DEBUG
+		MsgDev( D_ERROR, "Stream_OpenMPG: failed to load (%s): %s\n", filename, get_error( mpeg ));
+#else
+		MsgDev( D_ERROR, "Stream_OpenMPG: (%s) is probably corrupted\n", filename );
+#endif
+		close_decoder( mpeg );
 		Mem_Free( stream );
 		FS_Close( file );
-		return NULL;
-	}
 
-	// trying to read header
-	if( !read_mpeg_header( mpegFile, tempbuff, sizeof( tempbuff ), filesize ))
-	{
-		MsgDev( D_ERROR, "Sound_LoadMPG: (%s) is probably corrupted\n", filename );
-		close_decoder( mpegFile );
-		Mem_Free( mpegFile );
-		Mem_Free( stream );
-		FS_Close( file );
 		return NULL;
 	}
 
 	stream->buffsize = 0; // how many samples left from previous frame
-	stream->channels = mpegFile->channels;
-	stream->pos += mpegFile->outsize;
-	stream->rate = mpegFile->rate;
+	stream->channels = sc.channels;
+	stream->rate = sc.rate;
 	stream->width = 2;	// always 16 bit
-	stream->ptr = mpegFile;
+	stream->ptr = mpeg;
 	stream->type = WF_MPGDATA;
 
 	return stream;
@@ -214,57 +207,31 @@ long Stream_ReadMPG( stream_t *stream, long needBytes, void *buffer )
 {
 	// buffer handling
 	int	bytesWritten = 0;
-	int	result;
-	mpeg_t	*mpg;
+	void	*mpg;
 
-	mpg = (mpeg_t *)stream->ptr;
-	Assert( mpg != NULL );
+	mpg = stream->ptr;
 
 	while( 1 )
 	{
-		char	tempbuff[FRAME_SIZE];
-		long	read_len, outsize;
 		byte	*data;
+		long	outsize;
 
 		if( !stream->buffsize )
 		{
-			if( stream->timejump )
-			{
-				int numReads = 0;
-
-				// flush all the previous data				
-				while( read_mpeg_stream( mpg, NULL, 0 ) == MP3_OK && numReads++ < 255 );
-				read_len = FS_Read( stream->file, tempbuff, sizeof( tempbuff ));
-				result = read_mpeg_stream( mpg, tempbuff, read_len );
-				stream->timejump = false;
-				bytesWritten = 0;
-			}
-			else result = read_mpeg_stream( mpg, NULL, 0 );
-
-			stream->pos += mpg->outsize;
-
-			if( result != MP3_OK )
-			{
-				// if there are no bytes remainig so we can decompress the new frame
-				read_len = FS_Read( stream->file, tempbuff, sizeof( tempbuff ));
-				result = read_mpeg_stream( mpg, tempbuff, read_len );
-				stream->pos += mpg->outsize;
-
-				if( result != MP3_OK )
-					break; // there was end of the stream
-			}
+			if( read_mpeg_stream( mpg, stream->temp, &stream->pos ) != MP3_OK )
+				break; // there was end of the stream
 		}
 
 		// check remaining size
-		if( bytesWritten + mpg->outsize > needBytes )
+		if( bytesWritten + stream->pos > needBytes )
 			outsize = ( needBytes - bytesWritten ); 
-		else outsize = mpg->outsize;
+		else outsize = stream->pos;
 
 		// copy raw sample to output buffer
 		data = (byte *)buffer + bytesWritten;
-		memcpy( data, &mpg->out[stream->buffsize], outsize );
+		memcpy( data, &stream->temp[stream->buffsize], outsize );
 		bytesWritten += outsize;
-		mpg->outsize -= outsize;
+		stream->pos -= outsize;
 		stream->buffsize += outsize;
 
 		// continue from this sample on a next call
@@ -286,13 +253,9 @@ assume stream is valid
 */
 long Stream_SetPosMPG( stream_t *stream, long newpos )
 {
-	// update stream pos for right work GetPos function
-	int newPos = set_current_pos( stream->ptr, newpos, FS_Seek, stream->file );
-
-	if( newPos != -1 )
+	if( set_stream_pos( stream->ptr, newpos ) != -1 )
 	{
-		stream->pos = newPos;
-		stream->timejump = true;
+		// flush any previous data
 		stream->buffsize = 0;
 		return true;
 	}
@@ -310,7 +273,7 @@ assume stream is valid
 */
 long Stream_GetPosMPG( stream_t *stream )
 {
-	return get_current_pos( stream->ptr, stream->pos );
+	return get_stream_pos( stream->ptr );
 }
 
 /*
@@ -324,16 +287,14 @@ void Stream_FreeMPG( stream_t *stream )
 {
 	if( stream->ptr )
 	{
-		mpeg_t	*mpg;
-
-		mpg = (mpeg_t *)stream->ptr;
-		close_decoder( mpg );
-		Mem_Free( stream->ptr );
+		close_decoder( stream->ptr );
+		stream->ptr = NULL;
 	}
 
 	if( stream->file )
 	{
 		FS_Close( stream->file );
+		stream->file = NULL;
 	}
 
 	Mem_Free( stream );

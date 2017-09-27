@@ -1,3 +1,94 @@
+build 3886
+
+Client: fixup processing russian leter 'ÿ' in READ_STRING()
+Client: fixup russian leters support in VGUI
+Engine: add support for Arguire QBSP 'broken' clipnodes  (engine is need to rebuilt with broken binary compatibility)
+Engine: add support of Darkplaces BSP2 format (engine is need to rebuilt with broken binary compatibility)
+Engine: re-organize model_t structures for easy acess to custom user data
+Engine: full implementation of Quake1 alias models (this is usefull for my new project that called QWrap)
+Engine: kRenderWorldGlow is no longer supported and removed
+Engine: re-organize cvar system for better consistency, replace variable 'modified' with same flag to get acess from user dlls
+Engine: some expansion of event_api_t
+Engine: HD-textures is no longer supported and removed
+Engine: global revision for engine feature flags
+Engine: client beams code was totally rewrited
+Render: tracers code was rewrited
+Engine: for custom renderering from client-side was created new interface struct that called ref_viewpass_t. ref_params_t now is macthed with GoldSrc
+Engine: RenderAPI version was updated to 36.
+Render: hardware gamma in no longer supported and completely changed to software gamma like in GoldSrc.
+FS: get support of quake WAD2 file format
+Engine: allow to save cvars at game-side into config.cfg and properly restore them
+Render: new frustum culling code (come from P2:Savior renderer)
+GameUI: allow menu request video-res list from the engine instead of keep copy of array into the menu code (this may cause potentital mismatch trouble)
+Render: full implementation of Quake1 sprites and LordHavoc spr32 file format (this is usefull for my new project that called QWrap) 
+Render: studio model renderer was rewrited to get more compatibility with GoldSrc.
+Render: studio shadows now using light direction (instead of fixed vector)
+Render: studio boneweighting implementation (for new P2:Savior mdl format extesion)
+Sound: musicvolume was renamed to MP3Volume to match same name in GoldSrc
+Client: demo playing is now using viewangle interpolation and movement predicting
+Client: rewrite client-side events queue and playing code
+Client: rewrite client frame delta-compression
+Client: rewrite client predicting
+Client: rewrite client interpolation
+Client: fix old trouble with beam follow that tends to glueing with new unsupposed entity
+Sound: fix sound origin for rotating bmodels
+Client: reorganize client frame for better compatibility
+Network: protocol was updatetd to version 49 (this is not match with GoldSrc just same number)
+Client: rewrite handling of client-only models
+Engine: rewrite conception of network user variables (info strings)
+Network: fix network message fragmentation
+Console: now in-game console can displayed all the message from engine starts and nothing to skip
+Network: rewrite net graph code, optimize
+Newtork: adds the debugging tools fakelag and fakeloss
+Client: rewrite client trace allow to collide with pmove->visents properly
+Client: loading quake-style icons for "loading" and "paused" images.
+Client: get support for quake1 fixed fonts
+Client: rewrite temp entities, tune effects constants and other things
+Client: cull tempentities with PVS
+Render: change fog handle to prevent some troubles in mods that based on SoHL.
+Render: decals on translucent surfaces is now properly sorted from backside view
+Render: optimize water waves (perfomance)
+Render: merge decals into batches on world geometry (perfomance)
+Render: add a new cvar r_lightmap_nearest to show unsmoothed lightmaps (debugging thing)
+Render: apply box filter to 1-bit alpha channel (remove ugly borders)
+Render: get support with func_details that contain alpha-test textures
+Render: rewrite sorting of translucent entities and brushfaces
+Render: new code for lighting studio and alias models
+Render: handle typical gl-errors while gl_check_errors is set to 1
+Render: particles code was rewrited
+Render: now tracers uses external texture sprites/dot.spr instead of procedural particle (same as in GoldSrc)
+Render: some fixes for random tiled textures
+Render: rewrite sprite lerping between frames, fixup some errors
+Render: interpolate attachment origin for attached sprites in case a parent doesn't have a real attachment points
+Render: studio glow-shells was rewritten, fix broken shell normals (old GoldSrc bug)
+Render: allow model scale on studio models culling (cause problems in SoHL-based mods)
+Render: compute true min-max for all studio models automagically (this useful on client trace for pmove->visents)
+Render: remove picmip and skymip code
+Render: disable GL_EXT_texture_lod_bias on all Intel cards (this cause problems)
+Render: handle skybox images for Quake1 and Half-Life rules (underline suffix issues)
+Render: render stub texture for missed skyboxes
+Sound: rewrite sound PHS occlusion, fixup some errors
+Input: fix old bug where buttons automatically unpressed during changelevel
+Engine: totaly rewritten code for system of config executes, eliminate re-executing etc
+Console: cmd "mapstats" now displayed map compiler name (if available)
+Console: commandline option -oldfont is cause to load console font from gfx.wad (like in GoldSrc)
+FS: allow to place wad-files into pak-files (and keep right acess order)
+FS: rewriting games analyze on engine startup (missing gameinfo, empty mod folders and other problems)
+Engine: clipping hull sizes is now shared across network
+Server: disable extended pusher physics as default (it will activated with feature ENGINE_PHYSICS_PUSHER_EXT)
+Engine: rewrited dedicated server code (restarting and cmdline)
+Engine: load colored lighting from external file mapname.lit (quake feature)
+ImageLib: allow to interpret masked textures as colored decals (GoldSrc can too)
+SoundLib: update mpeglib version to avoid glitches and crashes on mp3-seeking.
+Server: remember last issued map and restart from them (cvar hostmap)
+Server: properly handle of func_monsterclip tracelines
+Server: disable PAS for singleplayer (same as in GoldSrc)
+Server: fix error with user message overflows (thx albatross)
+Server: allow to spawn unnamed entity with class "custom"
+Server: new code of velocity normalization
+GameUI: fixup menu buttons loader (0-entries palettes)
+Engine: many small fixes and other improvements that i can't to list all them here
+
 build 3597
 
 Engine: implemenantion of generic extension of BSP file format. Some extra lumps used by mods to get a new features like terrains, improved lighting etc

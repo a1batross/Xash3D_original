@@ -478,7 +478,7 @@ void Sys_InitLog( void )
 {
 	const char	*mode;
 
-	if( host.change_game )
+	if( host.change_game && host.type != HOST_DEDICATED )
 		mode = "a";
 	else mode = "w";
 
@@ -517,7 +517,8 @@ void Sys_CloseLog( void )
 	{
 		fprintf( s_wcd.logfile, "\n");
 		fprintf( s_wcd.logfile, "=================================================================================");
-		fprintf( s_wcd.logfile, "\n\t%s (build %i) %s at %s\n", s_wcd.title, Q_buildnum(), event_name, Q_timestamp( TIME_FULL ));
+		if( host.change_game ) fprintf( s_wcd.logfile, "\n\t%s (build %i) %s\n", s_wcd.title, Q_buildnum(), event_name );
+		else fprintf( s_wcd.logfile, "\n\t%s (build %i) %s at %s\n", s_wcd.title, Q_buildnum(), event_name, Q_timestamp( TIME_FULL ));
 		fprintf( s_wcd.logfile, "=================================================================================");
 		if( host.change_game ) fprintf( s_wcd.logfile, "\n" ); // just for tabulate
 

@@ -17,7 +17,6 @@ GNU General Public License for more details.
 #define MOD_LOCAL_H
 
 #include "common.h"
-#include "bspfile.h"
 #include "edict.h"
 #include "eiface.h"
 #include "com_model.h"
@@ -30,6 +29,7 @@ GNU General Public License for more details.
 #define DVIS_PVS			0
 #define DVIS_PHS			1
 #define ANIM_CYCLE			2
+#define MOD_FRAMES			20
 
 // remapping info
 #define SUIT_HUE_START		192
@@ -37,10 +37,12 @@ GNU General Public License for more details.
 #define PLATE_HUE_START		160
 #define PLATE_HUE_END		191
 
-#define LM_SAMPLE_SIZE		world.lm_sample_size	// lightmap resoultion
+#define SHIRT_HUE_START		16
+#define SHIRT_HUE_END		32
+#define PANTS_HUE_START		96
+#define PANTS_HUE_END		112
 
-#define SURF_INFO( surf, mod )	((mextrasurf_t *)mod->cache.data + (surf - mod->surfaces)) 
-#define INFO_SURF( surf, mod )	(mod->surfaces + (surf - (mextrasurf_t *)mod->cache.data)) 
+#define LM_SAMPLE_SIZE		world.lm_sample_size	// lightmap resoultion
 
 #define CHECKVISBIT( vis, b )		((b) >= 0 ? (byte)((vis)[(b) >> 3] & (1 << ((b) & 7))) : (byte)false )
 #define SETVISBIT( vis, b )( void )	((b) >= 0 ? (byte)((vis)[(b) >> 3] |= (1 << ((b) & 7))) : (byte)false )
@@ -54,6 +56,10 @@ GNU General Public License for more details.
 #define MODEL_CONVEYOR		BIT( 0 )
 #define MODEL_HAS_ORIGIN		BIT( 1 )
 #define MODEL_LIQUID		BIT( 2 )	// model has only point hull
+#define MODEL_TRANSPARENT		BIT( 3 )	// have transparent surfaces
+#define MODEL_COLORED_LIGHTING	BIT( 4 )	// lightmaps stored as RGB
+
+#define MODEL_CLIENT		BIT( 30 )	// client sprite
 
 typedef struct wadlist_s
 {
@@ -77,7 +83,6 @@ typedef struct
 	int		mapversion;	// map version (an key-value in worldspawn settings)
 	uint		checksum;		// current map checksum
 	int		load_sequence;	// increace each map change
-	vec3_t		hull_sizes[MAX_MAP_HULLS];	// actual hull sizes
 	msurface_t	**draw_surfaces;	// used for sorting translucent surfaces
 	int		max_surfaces;	// max surfaces per submodel (for all models)
 
@@ -90,6 +95,7 @@ typedef struct
 	int		block_size;	// lightmap blocksize
 	color24		*deluxedata;	// deluxemap data pointer
 	char		message[2048];	// just for debug
+	char		compiler[256];	// map compiler
 
 	// visibility info
 	byte		*visdata;		// uncompressed visdata
@@ -123,29 +129,28 @@ void Mod_ClearAll( qboolean keep_playermodel );
 void Mod_Shutdown( void );
 void Mod_ClearUserData( void );
 void Mod_PrintBSPFileSizes( void );
-void Mod_SetupHulls( vec3_t mins[MAX_MAP_HULLS], vec3_t maxs[MAX_MAP_HULLS] );
 void Mod_GetBounds( int handle, vec3_t mins, vec3_t maxs );
 void Mod_GetFrames( int handle, int *numFrames );
 void Mod_LoadWorld( const char *name, uint *checksum, qboolean multiplayer );
+int Mod_FrameCount( model_t *mod );
 void Mod_FreeUnused( void );
 void *Mod_Calloc( int number, size_t size );
 void *Mod_CacheCheck( struct cache_user_s *c );
 void Mod_LoadCacheFile( const char *path, struct cache_user_s *cu );
-void *Mod_Extradata( model_t *mod );
+void *Mod_AliasExtradata( model_t *mod );
+void *Mod_StudioExtradata( model_t *mod );
 model_t *Mod_FindName( const char *name, qboolean create );
 model_t *Mod_LoadModel( model_t *mod, qboolean world );
 model_t *Mod_ForName( const char *name, qboolean world );
 qboolean Mod_RegisterModel( const char *name, int index );
 mleaf_t *Mod_PointInLeaf( const vec3_t p, mnode_t *node );
 qboolean Mod_HeadnodeVisible( mnode_t *node, const byte *visbits, short *lastleaf );
-void Mod_TesselatePolygon( msurface_t *surf, model_t *mod, float tessSize );
 int Mod_BoxLeafnums( const vec3_t mins, const vec3_t maxs, short *list, int listsize, int *lastleaf );
 int Mod_FatPVS( const vec3_t org, float radius, byte *visbuffer, int visbytes, qboolean merge, qboolean fullvis );
 qboolean Mod_BoxVisible( const vec3_t mins, const vec3_t maxs, const byte *visbits );
 int Mod_CheckLump( const char *filename, const int lump, int *lumpsize );
 int Mod_ReadLump( const char *filename, const int lump, void **lumpdata, int *lumpsize );
 int Mod_SaveLump( const char *filename, const int lump, void *lumpdata, int lumpsize );
-void Mod_BuildSurfacePolygons( msurface_t *surf, mextrasurf_t *info );
 void Mod_AmbientLevels( const vec3_t p, byte *pvolumes );
 int Mod_SampleSizeForFace( msurface_t *surf );
 byte *Mod_GetPVSForPoint( const vec3_t p );
@@ -162,6 +167,11 @@ qboolean Mod_GetStudioBounds( const char *name, vec3_t mins, vec3_t maxs );
 void Mod_StudioGetAttachment( const edict_t *e, int iAttachment, float *org, float *ang );
 void Mod_GetBonePosition( const edict_t *e, int iBone, float *org, float *ang );
 hull_t *Mod_HullForStudio( model_t *m, float frame, int seq, vec3_t ang, vec3_t org, vec3_t size, byte *pcnt, byte *pbl, int *hitboxes, edict_t *ed );
+void R_StudioSlerpBones( int numbones, vec4_t q1[], float pos1[][3], vec4_t q2[], float pos2[][3], float s );
+void R_StudioCalcBoneQuaternion( int frame, float s, void *pbone, void *panim, float *adj, vec4_t q );
+void R_StudioCalcBonePosition( int frame, float s, void *pbone, void *panim, vec3_t adj, vec3_t pos );
+void *R_StudioGetAnim( void *m_pStudioHeader, void *m_pSubModel, void *pseqdesc );
+void Mod_StudioComputeBounds( void *buffer, vec3_t mins, vec3_t maxs, qboolean ignore_sequences );
 int Mod_HitgroupForStudioHull( int index );
 
 #endif//MOD_LOCAL_H

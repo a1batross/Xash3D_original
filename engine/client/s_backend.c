@@ -39,8 +39,6 @@ typedef enum
 	SIS_NOTAVAIL
 } si_state_t;
 
-convar_t		*s_primary;
-
 static HWND	snd_hwnd;
 static qboolean	snd_firsttime = true;
 static qboolean	primary_format_set;
@@ -144,64 +142,43 @@ static qboolean DS_CreateBuffers( void *hInst )
 	}
 	else MsgDev( D_NOTE, "- failed\n" );
 
-	if( !primary_format_set || !s_primary->integer )
+	// create the secondary buffer we'll actually work with
+	memset( &dsbuf, 0, sizeof( dsbuf ));
+	dsbuf.dwSize = sizeof( DSBUFFERDESC );
+	dsbuf.dwFlags = (DSBCAPS_CTRLFREQUENCY|DSBCAPS_LOCSOFTWARE);
+	dsbuf.dwBufferBytes = SECONDARY_BUFFER_SIZE;
+	dsbuf.lpwfxFormat = &format;
+
+	memset( &dsbcaps, 0, sizeof( dsbcaps ));
+	dsbcaps.dwSize = sizeof( dsbcaps );
+
+	MsgDev( D_NOTE, "DS_CreateBuffers: creating secondary buffer " );
+
+	if( pDS->lpVtbl->CreateSoundBuffer( pDS, &dsbuf, &pDSBuf, NULL ) == DS_OK )
 	{
-		// create the secondary buffer we'll actually work with
-		memset( &dsbuf, 0, sizeof( dsbuf ));
-		dsbuf.dwSize = sizeof( DSBUFFERDESC );
-		dsbuf.dwFlags = (DSBCAPS_CTRLFREQUENCY|DSBCAPS_LOCSOFTWARE);
-		dsbuf.dwBufferBytes = SECONDARY_BUFFER_SIZE;
-		dsbuf.lpwfxFormat = &format;
-
-		memset( &dsbcaps, 0, sizeof( dsbcaps ));
-		dsbcaps.dwSize = sizeof( dsbcaps );
-
-		MsgDev( D_NOTE, "DS_CreateBuffers: creating secondary buffer " );
-		if( pDS->lpVtbl->CreateSoundBuffer( pDS, &dsbuf, &pDSBuf, NULL ) == DS_OK )
-		{
-			MsgDev( D_NOTE, "- ok\n" );
-		}
-		else
-		{
-			// couldn't get hardware, fallback to software.
-			dsbuf.dwFlags = (DSBCAPS_LOCSOFTWARE|DSBCAPS_GETCURRENTPOSITION2);
-			if( pDS->lpVtbl->CreateSoundBuffer( pDS, &dsbuf, &pDSBuf, NULL ) != DS_OK )
-			{
-				MsgDev( D_NOTE, "- failed\n" );
-				SNDDMA_FreeSound ();
-				return false;
-			}
-			MsgDev( D_INFO, "- failed. forced to software\n" );
-		}
-
-		if( pDSBuf->lpVtbl->GetCaps( pDSBuf, &dsbcaps ) != DS_OK )
-		{
-			MsgDev( D_ERROR, "DS_CreateBuffers: GetCaps failed\n");
-			SNDDMA_FreeSound ();
-			return false;
-		}
-		MsgDev( D_NOTE, "DS_CreateBuffers: using secondary sound buffer\n" );
+		MsgDev( D_NOTE, "- ok\n" );
 	}
 	else
 	{
-		MsgDev( D_NOTE, "DS_CreateBuffers: using primary sound buffer\n" );
-		MsgDev( D_NOTE, "DS_CreateBuffers: setting WRITEPRIMARY coop level " );
-		if( pDS->lpVtbl->SetCooperativeLevel( pDS, hInst, DSSCL_WRITEPRIMARY ) != DS_OK )
+		// couldn't get hardware, fallback to software.
+		dsbuf.dwFlags = (DSBCAPS_LOCSOFTWARE|DSBCAPS_GETCURRENTPOSITION2);
+		if( pDS->lpVtbl->CreateSoundBuffer( pDS, &dsbuf, &pDSBuf, NULL ) != DS_OK )
 		{
 			MsgDev( D_NOTE, "- failed\n" );
 			SNDDMA_FreeSound ();
 			return false;
 		}
-		MsgDev( D_NOTE, "- ok\n" );
-
-		if( pDSPBuf->lpVtbl->GetCaps( pDSPBuf, &dsbcaps ) != DS_OK )
-		{
-			MsgDev( D_ERROR, "DS_CreateBuffers: GetCaps failed\n");
-			SNDDMA_FreeSound ();
-			return false;
-		}
-		pDSBuf = pDSPBuf;
+		MsgDev( D_INFO, "- failed. forced to software\n" );
 	}
+
+	if( pDSBuf->lpVtbl->GetCaps( pDSBuf, &dsbcaps ) != DS_OK )
+	{
+		MsgDev( D_ERROR, "DS_CreateBuffers: GetCaps failed\n");
+		SNDDMA_FreeSound ();
+		return false;
+	}
+
+	MsgDev( D_NOTE, "DS_CreateBuffers: using secondary sound buffer\n" );
 
 	// make sure mixer is active
 	if( pDSBuf->lpVtbl->Play( pDSBuf, 0, 0, DSBPLAY_LOOPING ) != DS_OK )
@@ -348,8 +325,6 @@ int SNDDMA_Init( void *hInst )
 
 	memset( &dma, 0, sizeof( dma ));
 
-	s_primary = Cvar_Get( "s_primary", "0", CVAR_INIT, "use direct primary buffer" ); 
-
 	// init DirectSound
 	stat = SNDDMA_InitDirect( hInst );
 
@@ -423,7 +398,7 @@ int SNDDMA_GetSoundtime( void )
 			// time to chop things off to avoid 32 bit limits
 			buffers = 0;
 			paintedtime = fullsamples;
-			S_StopAllSounds();
+			S_StopAllSounds( true );
 		}
 	}
 

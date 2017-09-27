@@ -16,6 +16,8 @@ GNU General Public License for more details.
 #ifndef BSPFILE_H
 #define BSPFILE_H
 
+//#define SUPPORT_BSP2_FORMAT		// allow to loading Darkplaces BSP2 maps (with broke binary compatibility)
+
 /*
 ==============================================================================
 
@@ -29,6 +31,7 @@ BRUSH MODELS
 #define Q1BSP_VERSION	29	// quake1 regular version (beta is 28)
 #define HLBSP_VERSION	30	// half-life regular version
 #define XTBSP_VERSION	31	// extended lightmaps and expanded clipnodes limit
+#define QBSP2_VERSION	(('B' << 0) | ('S' << 8) | ('P' << 16) | ('2'<<24))
 
 #define IDEXTRAHEADER	(('H'<<24)+('S'<<16)+('A'<<8)+'X') // little-endian "XASH"
 #define EXTRA_VERSION	4	// ver. 1 was occupied by old versions of XashXT, ver. 2 was occupied by old vesrions of P2:savior
@@ -62,9 +65,18 @@ BRUSH MODELS
 #define LS_UNUSED			0xFE
 #define LS_NONE			0xFF
 
+#ifdef SUPPORT_BSP2_FORMAT
+#define MAX_MAP_MODELS		2048		// can be increased up to 2048 if needed
+#define MAX_MAP_ENTSTRING		0x200000		// 2 Mb should be enough
+#define MAX_MAP_PLANES		131072		// can be increased without problems
+#define MAX_MAP_NODES		262144		// because negative shorts are leafs
+#define MAX_MAP_CLIPNODES		524288		// because negative shorts are contents
+#define MAX_MAP_LEAFS		131072		// CRITICAL STUFF to run ad_sepulcher!!!
+#define MAX_MAP_VERTS		524288		// unsigned short limit
+#define MAX_MAP_FACES		262144		// unsigned short limit
+#define MAX_MAP_MARKSURFACES		524288		// unsigned short limit
+#else
 #define MAX_MAP_MODELS		1024		// can be increased up to 2048 if needed
-#define MAX_MAP_BRUSHES		32768		// unsigned short limit
-#define MAX_MAP_ENTITIES		8192		// can be increased up to 32768 if needed
 #define MAX_MAP_ENTSTRING		0x80000		// 512 kB should be enough
 #define MAX_MAP_PLANES		65536		// can be increased without problems
 #define MAX_MAP_NODES		32767		// because negative shorts are leafs
@@ -73,13 +85,17 @@ BRUSH MODELS
 #define MAX_MAP_VERTS		65535		// unsigned short limit
 #define MAX_MAP_FACES		65535		// unsigned short limit
 #define MAX_MAP_MARKSURFACES		65535		// unsigned short limit
+#endif
+
+#define MAX_MAP_BRUSHES		32768		// unsigned short limit
+#define MAX_MAP_ENTITIES		8192		// can be increased up to 32768 if needed
 #define MAX_MAP_TEXINFO		MAX_MAP_FACES	// in theory each face may have personal texinfo
 #define MAX_MAP_EDGES		0x100000		// can be increased but not needed
 #define MAX_MAP_SURFEDGES		0x200000		// can be increased but not needed
 #define MAX_MAP_TEXTURES		2048		// can be increased but not needed
 #define MAX_MAP_MIPTEX		0x2000000		// 32 Mb internal textures data
 #define MAX_MAP_LIGHTING		0x2000000		// 32 Mb lightmap raw data (can contain deluxemaps)
-#define MAX_MAP_VISIBILITY		0x800000		// 8 Mb visdata
+#define MAX_MAP_VISIBILITY		0x1000000		// 16 Mb visdata
 
 // quake lump ordering
 #define LUMP_ENTITIES		0
@@ -199,6 +215,16 @@ typedef struct
 	word	numfaces;			// counting both sides
 } dnode_t;
 
+typedef struct
+{
+	int	planenum;
+	int	children[2];		// negative numbers are -(leafs+1), not nodes
+	float	mins[3];			// for sphere culling
+	float	maxs[3];
+	int	firstface;
+	int	numfaces;			// counting both sides
+} dnode2_t;
+
 // leaf 0 is the generic CONTENTS_SOLID leaf, used for all solid areas
 // all other leafs need visibility info
 typedef struct
@@ -217,9 +243,29 @@ typedef struct
 
 typedef struct
 {
+	int	contents;
+	int	visofs;			// -1 = no visibility info
+
+	float	mins[3];			// for frustum culling
+	float	maxs[3];
+
+	int	firstmarksurface;
+	int	nummarksurfaces;
+
+	byte	ambient_level[NUM_AMBIENTS];
+} dleaf2_t;
+
+typedef struct
+{
 	int	planenum;
 	short	children[2];		// negative numbers are contents
 } dclipnode_t;
+
+typedef struct
+{
+	int	planenum;
+	int	children[2];		// negative numbers are contents
+} dclipnode2_t;
 
 typedef struct
 {
@@ -238,6 +284,8 @@ typedef struct
 } dfaceinfo_t;
 
 typedef word	dmarkface_t;		// leaf marksurfaces indexes
+typedef int	dmarkface2_t;		// leaf marksurfaces indexes
+
 typedef int	dsurfedge_t;		// map surfedges
 
 // NOTE: that edge 0 is never used, because negative edge nums
@@ -246,6 +294,11 @@ typedef struct
 {
 	word	v[2];			// vertex numbers
 } dedge_t;
+
+typedef struct
+{
+	int	v[2];			// vertex numbers
+} dedge2_t;
 
 typedef struct
 {
@@ -260,5 +313,19 @@ typedef struct
 	byte	styles[LM_STYLES];
 	int	lightofs;			// start of [numstyles*surfsize] samples
 } dface_t;
+
+typedef struct
+{
+	int	planenum;
+	int	side;
+
+	int	firstedge;		// we must support > 64k edges
+	int	numedges;
+	int	texinfo;
+
+	// lighting info
+	byte	styles[LM_STYLES];
+	int	lightofs;			// start of [numstyles*surfsize] samples
+} dface2_t;
 
 #endif//BSPFILE_H

@@ -20,6 +20,145 @@ GNU General Public License for more details.
 #include "gl_local.h"
 #include "vgui_draw.h"
 
+/*
+===============
+V_CalcViewRect
+
+calc frame rectangle (Quake1 style)
+===============
+*/
+void V_CalcViewRect( void )
+{
+	qboolean	full = false;
+	int	sb_lines;
+	float	size;
+
+	// intermission is always full screen	
+	if( cl.intermission ) size = 120.0f;
+	else size = scr_viewsize->value;
+
+	if( size >= 120.0f )
+		sb_lines = 0;		// no status bar at all
+	else if( size >= 110.0f )
+		sb_lines = 24;		// no inventory
+	else sb_lines = 48;
+
+	if( scr_viewsize->value >= 100.0 )
+	{
+		full = true;
+		size = 100.0f;
+	}
+	else size = scr_viewsize->value;
+
+	if( cl.intermission )
+	{
+		size = 100.0f;
+		sb_lines = 0;
+		full = true;
+	}
+	size /= 100.0;
+
+	clgame.viewport[2] = glState.width * size;
+	clgame.viewport[3] = glState.height * size;
+
+	if( clgame.viewport[3] > glState.height - sb_lines )
+		clgame.viewport[3] = glState.height - sb_lines;
+	if( clgame.viewport[3] > glState.height )
+		clgame.viewport[3] = glState.height;
+
+	clgame.viewport[0] = ( glState.width - clgame.viewport[2] ) / 2;
+	if( full ) clgame.viewport[1] = 0;
+	else clgame.viewport[1] = ( glState.height - sb_lines - clgame.viewport[3] ) / 2;
+
+}
+
+/*
+===============
+V_SetupViewModel
+===============
+*/
+void V_SetupViewModel( void )
+{
+	cl_entity_t	*view = &clgame.viewent;
+	player_info_t	*info = &cl.players[cl.playernum];
+
+	if( !cl.local.weaponstarttime )
+		cl.local.weaponstarttime = cl.time;
+
+	// setup the viewent variables
+	view->curstate.colormap = (info->topcolor & 0xFFFF)|((info->bottomcolor << 8) & 0xFFFF);
+	view->curstate.number = cl.playernum + 1;
+	view->index = cl.playernum + 1;
+	view->model = Mod_Handle( cl.local.viewmodel );
+	view->curstate.modelindex = cl.local.viewmodel;
+	view->curstate.sequence = cl.local.weaponsequence;
+	view->curstate.rendermode = kRenderNormal;	// EXPERIMENTAL!!!
+
+	// alias models has another animation methods
+	if( view->model && view->model->type == mod_studio )
+	{
+		view->curstate.animtime = cl.local.weaponstarttime;
+		view->curstate.frame = 0.0f;
+	}
+}
+
+/*
+===============
+V_SetRefParams
+===============
+*/
+void V_SetRefParams( ref_params_t *fd )
+{
+	memset( fd, 0, sizeof( ref_params_t ));
+
+	// probably this is not needs
+	VectorCopy( RI.vieworg, fd->vieworg );
+	VectorCopy( RI.viewangles, fd->viewangles );
+
+	fd->frametime = host.frametime;
+	fd->time = cl.time;
+
+	fd->intermission = cl.intermission;
+	fd->paused = (cl.paused != 0);
+	fd->spectator = (cls.spectator != 0);
+	fd->onground = (cl.local.onground != -1);
+	fd->waterlevel = cl.local.waterlevel;
+
+	VectorCopy( cl.simvel, fd->simvel );
+	VectorCopy( cl.simorg, fd->simorg );
+
+	VectorCopy( cl.viewheight, fd->viewheight );
+	fd->idealpitch = cl.local.idealpitch;
+
+	VectorCopy( cl.viewangles, fd->cl_viewangles );
+	fd->health = cl.local.health;
+	VectorCopy( cl.crosshairangle, fd->crosshairangle );
+	fd->viewsize = scr_viewsize->value;
+
+	VectorCopy( cl.punchangle, fd->punchangle );
+	fd->maxclients = cl.maxclients;
+	fd->viewentity = cl.viewentity;
+	fd->playernum = cl.playernum;
+	fd->max_entities = clgame.maxEntities;
+	fd->demoplayback = cls.demoplayback;
+	fd->hardware = 1; // OpenGL
+
+	if( cl.first_frame ) fd->smoothing = true;	// NOTE: currently this used to prevent ugly un-duck effect while level is changed
+	else fd->smoothing = cl.local.pushmsec;		// enable smoothing in multiplayer by server request (AMX uses)
+
+	// get pointers to movement vars and user cmd
+	fd->movevars = &clgame.movevars;
+	fd->cmd = cl.cmd;
+
+	// setup viewport
+	fd->viewport[0] = clgame.viewport[0];
+	fd->viewport[1] = clgame.viewport[1];
+	fd->viewport[2] = clgame.viewport[2];
+	fd->viewport[3] = clgame.viewport[3];
+
+	fd->onlyClientDraw = 0;	// reset clientdraw
+	fd->nextView = 0;		// reset nextview
+}
 
 /*
 ===============
@@ -28,14 +167,15 @@ V_MergeOverviewRefdef
 merge refdef with overview settings
 ===============
 */
-void V_MergeOverviewRefdef( void )
+void V_RefApplyOverview( ref_viewpass_t *rvp )
 {
 	ref_overview_t	*ov = &clgame.overView;
 	float		aspect;
 	float		size_x, size_y;
 	vec2_t		mins, maxs;
 
-	if( !gl_overview->integer ) return;
+	if( !CL_IsDevOverviewMode( ))
+		return;
 
 	// NOTE: Xash3D may use 16:9 or 16:10 aspects
 	aspect = (float)glState.width / (float)glState.height;
@@ -46,143 +186,77 @@ void V_MergeOverviewRefdef( void )
 	// compute rectangle
 	ov->xLeft = -(size_x / 2);
 	ov->xRight = (size_x / 2);
-	ov->xTop = -(size_y / 2);
-	ov->xBottom = (size_y / 2);
+	ov->yTop = -(size_y / 2);
+	ov->yBottom = (size_y / 2);
 
-	if( gl_overview->integer == 1 )
+	if( CL_IsDevOverviewMode() == 1 )
 	{
 		Con_NPrintf( 0, " Overview: Zoom %.2f, Map Origin (%.2f, %.2f, %.2f), Z Min %.2f, Z Max %.2f, Rotated %i\n",
 		ov->flZoom, ov->origin[0], ov->origin[1], ov->origin[2], ov->zNear, ov->zFar, ov->rotated );
 	}
 
-	VectorCopy( ov->origin, cl.refdef.vieworg );
-	cl.refdef.vieworg[2] = ov->zFar + ov->zNear;
-	Vector2Copy( cl.refdef.vieworg, mins );
-	Vector2Copy( cl.refdef.vieworg, maxs );
+	VectorCopy( ov->origin, rvp->vieworigin );
+	rvp->vieworigin[2] = ov->zFar + ov->zNear;
+	Vector2Copy( rvp->vieworigin, mins );
+	Vector2Copy( rvp->vieworigin, maxs );
 
 	mins[!ov->rotated] += ov->xLeft;
 	maxs[!ov->rotated] += ov->xRight;
-	mins[ov->rotated] += ov->xTop;
-	maxs[ov->rotated] += ov->xBottom;
+	mins[ov->rotated] += ov->yTop;
+	maxs[ov->rotated] += ov->yBottom;
 
-	cl.refdef.viewangles[0] = 90.0f;
-	cl.refdef.viewangles[1] = 90.0f;
-	cl.refdef.viewangles[2] = (ov->rotated) ? (ov->flZoom < 0.0f) ? 180.0f : 0.0f : (ov->flZoom < 0.0f) ? -90.0f : 90.0f;
+	rvp->viewangles[0] = 90.0f;
+	rvp->viewangles[1] = 90.0f;
+	rvp->viewangles[2] = (ov->rotated) ? (ov->flZoom < 0.0f) ? 180.0f : 0.0f : (ov->flZoom < 0.0f) ? -90.0f : 90.0f;
+
+	SetBits( rvp->flags, RF_DRAW_OVERVIEW );
 
 	Mod_SetOrthoBounds( mins, maxs );
 }
 
 /*
-===============
-V_CalcViewRect
-
-calc frame rectangle (Quake1 style)
-===============
+=============
+V_GetRefParams
+=============
 */
-void V_CalcViewRect( void )
+void V_GetRefParams( ref_params_t *fd, ref_viewpass_t *rvp )
 {
-	int	size, sb_lines;
+	// part1: deniable updates
+	VectorCopy( fd->simvel, cl.simvel );
+	VectorCopy( fd->simorg, cl.simorg );
+	VectorCopy( fd->punchangle, cl.punchangle );
+	VectorCopy( fd->viewheight, cl.viewheight );
 
-	if( scr_viewsize->integer >= 120 )
-		sb_lines = 0;		// no status bar at all
-	else if( scr_viewsize->integer >= 110 )
-		sb_lines = 24;		// no inventory
-	else sb_lines = 48;
+	// part2: really used updates
+	VectorCopy( fd->crosshairangle, cl.crosshairangle );
+	VectorCopy( fd->cl_viewangles, cl.viewangles );
 
-	size = Q_min( scr_viewsize->integer, 100 );
+	// setup ref_viewpass
+	rvp->viewport[0] = fd->viewport[0];
+	rvp->viewport[1] = fd->viewport[1];
+	rvp->viewport[2] = fd->viewport[2];
+	rvp->viewport[3] = fd->viewport[3];
 
-	cl.refdef.viewport[2] = scr_width->integer * size / 100;
-	cl.refdef.viewport[3] = scr_height->integer * size / 100;
+	VectorCopy( fd->vieworg, rvp->vieworigin );
+	VectorCopy( fd->viewangles, rvp->viewangles );
 
-	if( cl.refdef.viewport[3] > scr_height->integer - sb_lines )
-		cl.refdef.viewport[3] = scr_height->integer - sb_lines;
-	if( cl.refdef.viewport[3] > scr_height->integer )
-		cl.refdef.viewport[3] = scr_height->integer;
-
-	cl.refdef.viewport[0] = ( scr_width->integer - cl.refdef.viewport[2] ) / 2;
-	cl.refdef.viewport[1] = ( scr_height->integer - sb_lines - cl.refdef.viewport[3] ) / 2;
-
-}
-
-/*
-===============
-V_SetupRefDef
-
-update refdef values each frame
-===============
-*/
-void V_SetupRefDef( void )
-{
-	cl_entity_t	*clent;
-
-	// compute viewport rectangle
-	V_CalcViewRect();
-
-	clent = CL_GetLocalPlayer ();
-
-	clgame.entities->curstate.scale = clgame.movevars.waveHeight;
-
-	cl.refdef.movevars = &clgame.movevars;
-	cl.refdef.health = cl.frame.client.health;
-	cl.refdef.playernum = cl.playernum;
-	cl.refdef.max_entities = clgame.maxEntities;
-	cl.refdef.maxclients = cl.maxclients;
-	cl.refdef.time = cl.time;
-	cl.refdef.frametime = cl.time - cl.oldtime;
-	cl.refdef.demoplayback = cls.demoplayback;
-	cl.refdef.viewsize = scr_viewsize->integer;
-	cl.refdef.onlyClientDraw = 0;	// reset clientdraw
-	cl.refdef.hardware = true;	// always true
-	cl.refdef.spectator = (clent->curstate.spectator != 0);
-	cl.refdef.smoothing = cl.first_frame; // NOTE: currently this used to prevent ugly un-duck effect while level is changed
-	cl.scr_fov = bound( 1.0f, cl.scr_fov, 179.0f );
-	cl.refdef.nextView = 0;
+	rvp->viewentity = fd->viewentity;
 
 	// calc FOV
-	cl.refdef.fov_x = cl.scr_fov; // this is a final fov value
-	cl.refdef.fov_y = V_CalcFov( &cl.refdef.fov_x, cl.refdef.viewport[2], cl.refdef.viewport[3] );
+	rvp->fov_x = bound( 10.0f, cl.local.scr_fov, 150.0f ); // this is a final fov value
+
+	// first we need to compute FOV and other things that needs for frustum properly work
+	rvp->fov_y = V_CalcFov( &rvp->fov_x, clgame.viewport[2], clgame.viewport[3] );
 
 	// adjust FOV for widescreen
-	if( glState.wideScreen && r_adjust_fov->integer )
-		V_AdjustFov( &cl.refdef.fov_x, &cl.refdef.fov_y, cl.refdef.viewport[2], cl.refdef.viewport[3], false );
+	if( glState.wideScreen && r_adjust_fov->value )
+		V_AdjustFov( &rvp->fov_x, &rvp->fov_y, clgame.viewport[2], clgame.viewport[3], false );
 
-	if( CL_IsPredicted( ) && !cl.first_frame )
-	{
-		VectorCopy( cl.predicted.origin, cl.refdef.simorg );
-		VectorCopy( cl.predicted.velocity, cl.refdef.simvel );
-		VectorCopy( cl.predicted.viewofs, cl.refdef.viewheight );
-		VectorCopy( cl.predicted.punchangle, cl.refdef.punchangle );
-		cl.refdef.onground = ( cl.predicted.onground == -1 ) ? false : true;
-		cl.refdef.waterlevel = cl.predicted.waterlevel;
-	}
-	else
-	{
-		VectorCopy( cl.frame.client.origin, cl.refdef.simorg );
-		VectorCopy( cl.frame.client.view_ofs, cl.refdef.viewheight );
-		VectorCopy( cl.frame.client.velocity, cl.refdef.simvel );
-		VectorCopy( cl.frame.client.punchangle, cl.refdef.punchangle );
-		cl.refdef.onground = (cl.frame.client.flags & FL_ONGROUND) ? 1 : 0;
-		cl.refdef.waterlevel = cl.frame.client.waterlevel;
-	}
+	rvp->flags = 0;
 
-	// setup the viewent variables
-	if( cl_lw->value ) clgame.viewent.curstate.modelindex = cl.predicted.viewmodel;
-	else clgame.viewent.curstate.modelindex = cl.frame.client.viewmodel;
-	clgame.viewent.model = Mod_Handle( clgame.viewent.curstate.modelindex );
-	clgame.viewent.curstate.number = cl.playernum + 1;
-	clgame.viewent.curstate.entityType = ET_NORMAL;
-	clgame.viewent.index = cl.playernum + 1;
-
-	// calc refdef first so viewent can get an actual
-	// player position, angles etc
-	if( FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
-	{
-		clgame.dllFuncs.pfnCalcRefdef( &cl.refdef );
-		V_MergeOverviewRefdef();
-
-		R_ClearScene ();
-		CL_AddEntities ();
-	}
+	if( fd->onlyClientDraw )
+		SetBits( rvp->flags, RF_ONLY_CLIENTDRAW );
+	SetBits( rvp->flags, RF_DRAW_WORLD );
 }
 
 /*
@@ -214,7 +288,7 @@ qboolean V_PreRender( void )
 		return false;
 	}
 	
-	R_BeginFrame( !cl.refdef.paused );
+	R_BeginFrame( !cl.paused );
 
 	return true;
 }
@@ -229,41 +303,40 @@ V_RenderView
 */
 void V_RenderView( void )
 {
+	ref_params_t	rp;
+	ref_viewpass_t	rvp;
+	int		viewnum = 0;
+
 	if( !cl.video_prepped || ( UI_IsVisible() && !cl.background ))
 		return; // still loading
 
-	if( !FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
-	{
-		if( cl.frame.valid && ( cl.force_refdef || !cl.refdef.paused ))
-		{
-			cl.force_refdef = false;
-
-			R_ClearScene ();
-			CL_AddEntities ();
-			V_SetupRefDef ();
-		}
-	}
-
+	V_CalcViewRect ();	// compute viewport rectangle
+	V_SetRefParams( &rp );
+	V_SetupViewModel ();
 	R_Set2DMode( false );
-	SCR_AddDirtyPoint( 0, 0 );
-	SCR_AddDirtyPoint( scr_width->integer - 1, scr_height->integer - 1 );
+	SCR_DirtyScreen();
+	GL_BackendStartFrame ();
 
-	tr.framecount++;	// g-cont. keep actual frame for all viewpasses
-
-	if( !FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
+	do
 	{
-		do
+		clgame.dllFuncs.pfnCalcRefdef( &rp );
+		V_GetRefParams( &rp, &rvp );
+		V_RefApplyOverview( &rvp );
+
+		if( viewnum == 0 && FBitSet( rvp.flags, RF_ONLY_CLIENTDRAW ))
 		{
-			clgame.dllFuncs.pfnCalcRefdef( &cl.refdef );
-			V_MergeOverviewRefdef();
-			R_RenderFrame( &cl.refdef, true );
-			cl.refdef.onlyClientDraw = false;
-		} while( cl.refdef.nextView );
-	}
-	else R_RenderFrame( &cl.refdef, true );
+			pglClearColor( 0.0f, 0.0f, 0.0f, 0.0f );
+			pglClear( GL_COLOR_BUFFER_BIT );
+		}
+
+		R_RenderFrame( &rvp );
+		viewnum++;
+
+	} while( rp.nextView );
 
 	// draw debug triangles on a server
 	SV_DrawDebugTriangles ();
+	GL_BackendEndFrame ();
 }
 
 /*
@@ -277,6 +350,7 @@ void V_PostRender( void )
 	static double	oldtime;
 	qboolean		draw_2d = false;
 
+	R_AllowFog( false );
 	R_Set2DMode( true );
 
 	if( cls.state == ca_active && cls.scrshot_action != scrshot_mapshot )
@@ -309,20 +383,10 @@ void V_PostRender( void )
 		Con_DrawVersion();
 		Con_DrawDebug(); // must be last
 
-		if( !FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
-			S_ExtraUpdate();
-	}
-
-	if( FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
-	{
-		// don't update sound too fast
-		if(( host.realtime - oldtime ) >= HOST_FRAMETIME )
-		{
-			oldtime = host.realtime;
-			CL_ExtraUpdate();
-		}
+		S_ExtraUpdate();
 	}
 
 	SCR_MakeScreenShot();
+	R_AllowFog( true );
 	R_EndFrame();
 }

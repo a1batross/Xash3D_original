@@ -18,6 +18,9 @@ GNU General Public License for more details.
 #include "net_buffer.h"
 #include "mathlib.h"
 
+//#define DEBUG_NET_MESSAGES_SEND
+//#define DEBUG_NET_MESSAGES_READ
+
 // precalculated bit masks for WriteUBitLong.
 // Using these tables instead of doing the calculations
 // gives a 33% speedup in WriteUBitLong.
@@ -282,6 +285,33 @@ void MSG_WriteBitFloat( sizebuf_t *sb, float val )
 	MSG_WriteUBitLong( sb, intVal, 32 );
 }
 
+void MSG_WriteCmdExt( sizebuf_t *sb, int cmd, netsrc_t type, const char *name )
+{
+#ifdef DEBUG_NET_MESSAGES_SEND
+	if( name != NULL )
+	{
+		// get custom name
+		Msg( "^1sv^7 write: %s\n", name );
+	}
+	else if( type == NS_SERVER )
+	{
+		if( cmd >= 0 && cmd <= svc_lastmsg )
+		{
+			// get engine message name
+			Msg( "^1sv^7 write: %s\n", svc_strings[cmd] );
+		}
+	}
+	else if( type == NS_CLIENT )
+	{
+		if( cmd >= 0 && cmd <= clc_lastmsg )
+		{
+			Msg( "^1cl^7 write: %s\n", clc_strings[cmd] );
+		}
+	}
+#endif
+	MSG_WriteUBitLong( sb, cmd, sizeof( byte ) << 3 );
+}
+
 void MSG_WriteChar( sizebuf_t *sb, int val )
 {
 	MSG_WriteSBitLong( sb, val, sizeof( char ) << 3 );
@@ -499,6 +529,23 @@ uint MSG_ReadBitLong( sizebuf_t *sb, int numbits, qboolean bSigned )
 	return MSG_ReadUBitLong( sb, numbits );
 }
 
+int MSG_ReadCmd( sizebuf_t *sb, netsrc_t type )
+{
+	int	cmd = MSG_ReadUBitLong( sb, sizeof( byte ) << 3 );
+
+#ifdef DEBUG_NET_MESSAGES_READ
+	if( type == NS_SERVER )
+	{
+		Msg( "^1cl^7 read: %s\n", CL_MsgInfo( cmd ));
+	}
+	else if( cmd >= 0 && cmd <= clc_lastmsg )
+	{
+		Msg( "^1sv^7 read: %s\n", clc_strings[cmd] );
+	}
+#endif
+	return cmd;
+}
+
 int MSG_ReadChar( sizebuf_t *sb )
 {
 	return MSG_ReadSBitLong( sb, sizeof( char ) << 3 );
@@ -562,7 +609,7 @@ qboolean MSG_ReadBytes( sizebuf_t *sb, void *pOut, int nBytes )
 
 char *MSG_ReadStringExt( sizebuf_t *sb, qboolean bLine )
 {
-	static char	string[MAX_SYSPATH];
+	static char	string[2048];
 	int		l = 0, c;
 	
 	do

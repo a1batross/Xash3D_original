@@ -28,7 +28,6 @@ GNU General Public License for more details.
 #define FLOW_AVG			( 2.0 / 3.0 )	// how fast to converge flow estimates
 #define FLOW_INTERVAL		0.1		// don't compute more often than this    
 #define MAX_RELIABLE_PAYLOAD		1200		// biggest packet that has frag and or reliable data
-#define MAX_RESEND_PAYLOAD		1400		// biggest packet on a resend
 
 // forward declarations
 void Netchan_FlushIncoming( netchan_t *chan, int stream );
@@ -87,15 +86,12 @@ unacknowledged reliable
 */
 convar_t	*net_showpackets;
 convar_t	*net_chokeloopback;
-convar_t	*net_drawslider;
-convar_t	*net_blocksize;
 convar_t	*net_showdrop;
 convar_t	*net_speeds;
 convar_t	*net_qport;
 
 int	net_drop;
 netadr_t	net_from;
-netadr_t	net_local;
 sizebuf_t	net_message;
 byte	*net_mempool;
 byte	net_message_buffer[NET_MAX_PAYLOAD];
@@ -110,15 +106,13 @@ void Netchan_Init( void )
 	int	port;
 
 	// pick a port value that should be nice and random
-	port = Com_RandomLong( 1, 65535 );
+	port = COM_RandomLong( 1, 65535 );
 
 	net_showpackets = Cvar_Get ("net_showpackets", "0", 0, "show network packets" );
 	net_chokeloopback = Cvar_Get( "net_chokeloop", "0", 0, "apply bandwidth choke to loopback packets" );
-	net_drawslider = Cvar_Get( "net_drawslider", "0", CVAR_ARCHIVE, "draw completion slider during signon" );
-	net_blocksize = Cvar_Get( "net_blocksize", "1024", 0, "network file fragmentation block size" );
 	net_showdrop = Cvar_Get( "net_showdrop", "0", 0, "show packets that are dropped" );
-	net_speeds = Cvar_Get( "net_speeds", "0", CVAR_ARCHIVE, "show network packets" );
-	net_qport = Cvar_Get( "net_qport", va( "%i", port ), CVAR_INIT, "current quake netport" );
+	net_speeds = Cvar_Get( "net_speeds", "0", FCVAR_ARCHIVE, "show network packets" );
+	net_qport = Cvar_Get( "net_qport", va( "%i", port ), FCVAR_READ_ONLY, "current quake netport" );
 
 	net_mempool = Mem_AllocPool( "Network Pool" );
 
@@ -135,6 +129,9 @@ void Netchan_ReportFlow( netchan_t *chan )
 	char	incoming[CS_SIZE];
 	char	outgoing[CS_SIZE];
 
+	if( CL_IsPlaybackDemo( ))
+		return;
+
 	ASSERT( chan != NULL );
 
 	Q_strcpy( incoming, Q_pretifymem((float)chan->flow[FLOW_INCOMING].totalbytes, 3 ));
@@ -145,12 +142,26 @@ void Netchan_ReportFlow( netchan_t *chan )
 
 /*
 ==============
+Netchan_IsLocal
+
+detect a loopback message
+==============
+*/
+qboolean Netchan_IsLocal( netchan_t *chan )
+{
+	if( !NET_IsActive() || NET_IsLocalAddress( chan->remote_address ))
+		return true;
+	return false;
+}
+
+/*
+==============
 Netchan_Setup
 
 called to open a channel to a remote system
 ==============
 */
-void Netchan_Setup( netsrc_t sock, netchan_t *chan, netadr_t adr, int qport )
+void Netchan_Setup( netsrc_t sock, netchan_t *chan, netadr_t adr, int qport, void *client, int (*pfnBlockSize)(void * ))
 {
 	Netchan_Clear( chan );
 
@@ -164,6 +175,8 @@ void Netchan_Setup( netsrc_t sock, netchan_t *chan, netadr_t adr, int qport )
 	chan->outgoing_sequence = 1;
 	chan->rate = DEFAULT_RATE;
 	chan->qport = qport;
+	chan->client = client;
+	chan->pfnBlockSize = pfnBlockSize;
 
 	MSG_Init( &chan->message, "NetData", chan->message_buf, sizeof( chan->message_buf ));
 }
@@ -181,10 +194,9 @@ qboolean Netchan_IncomingReady( netchan_t *chan )
 	for( i = 0; i < MAX_STREAMS; i++ )
 	{
 		if( chan->incomingready[i] )
-		{
 			return true;
-		}
 	}
+
 	return false;
 }
 
@@ -198,17 +210,13 @@ Returns true if the bandwidth choke isn't active
 qboolean Netchan_CanPacket( netchan_t *chan )
 {
 	// never choke loopback packets.
-	if( !net_chokeloopback->integer && NET_IsLocalAddress( chan->remote_address ))
+	if( !net_chokeloopback->value && NET_IsLocalAddress( chan->remote_address ))
 	{
 		chan->cleartime = host.realtime;
 		return true;
 	}
 
-	if( chan->cleartime < host.realtime )
-	{
-		return true;
-	}
-	return false;
+	return chan->cleartime < host.realtime ? true : false;
 }
 
 /*
@@ -223,7 +231,7 @@ void Netchan_UnlinkFragment( fragbuf_t *buf, fragbuf_t **list )
 
 	if( !list )
 	{
-		MsgDev( D_WARN, "Netchan_UnlinkFragment: Asked to unlink fragment from empty list, ignored\n" );
+		MsgDev( D_ERROR, "Netchan_UnlinkFragment: Asked to unlink fragment from empty list, ignored\n" );
 		return;
 	}
 
@@ -287,7 +295,7 @@ Netchan_ClearFragments
 */
 void Netchan_ClearFragments( netchan_t *chan )
 {
-	fragbufwaiting_t	*wait;
+	fragbufwaiting_t	*wait, *next;
 	int		i;
 
 	for( i = 0; i < MAX_STREAMS; i++ )
@@ -296,8 +304,10 @@ void Netchan_ClearFragments( netchan_t *chan )
 
 		while( wait )
 		{
+			next = wait->next;
 			Netchan_ClearFragbufs( &wait->fragbufs );
-			wait = wait->next;
+			Mem_Free( wait );
+			wait = next;
 		}
 		chan->waitlist[i] = NULL;
 
@@ -330,6 +340,13 @@ void Netchan_Clear( netchan_t *chan )
 		chan->frag_length[i] = 0;
 		chan->incomingready[i] = false;
 	}
+
+	if( chan->tempbuffer )
+	{
+		Mem_Free( chan->tempbuffer );
+		chan->tempbuffer = NULL;
+	}
+	chan->tempbuffersize = 0;
 
 	memset( chan->flow, 0, sizeof( chan->flow ));
 }
@@ -368,11 +385,11 @@ Sends a text message in an out-of-band datagram
 */
 void Netchan_OutOfBandPrint( int net_socket, netadr_t adr, char *format, ... )
 {
-	va_list	argptr;
-	char	string[MAX_SYSPATH];
+	static char	string[MAX_PRINT_MSG];
+	va_list		argptr;
 
 	va_start( argptr, format );
-	Q_vsprintf( string, format, argptr );
+	Q_vsnprintf( string, sizeof( string ) - 1, format, argptr );
 	va_end( argptr );
 
 	Netchan_OutOfBand( net_socket, adr, Q_strlen( string ), string );
@@ -406,20 +423,15 @@ void Netchan_AddFragbufToTail( fragbufwaiting_t *wait, fragbuf_t *buf )
 
 	buf->next = NULL;
 	wait->fragbufcount++;
-
-	if( !wait->fragbufs )
-	{
-		wait->fragbufs = buf;
-		return;
-	}
-
 	p = wait->fragbufs;
-	while( p->next )
-	{
-		p = p->next;
-	}
 
-	p->next = buf;
+	if( p )
+	{
+		while( p->next )
+			p = p->next;
+		p->next = buf;
+	}
+	else wait->fragbufs = buf;
 }
 
 /*
@@ -430,49 +442,34 @@ Netchan_UpdateFlow
 */
 void Netchan_UpdateFlow( netchan_t *chan )
 {
-	int		flow, start;
-	int		i, bytes = 0;
-	float		faccumulatedtime = 0.0;
-	flowstats_t	*pstat, *pprev;
-	flow_t		*pflow;
+	float	faccumulatedtime = 0.0;
+	int	i, bytes = 0;
+	int	flow, start;
 
 	if( !chan ) return;
 
 	for( flow = 0; flow < 2; flow++ )
 	{
-		pflow = &chan->flow[flow];
+		flow_t	*pflow = &chan->flow[flow];
 
 		if(( host.realtime - pflow->nextcompute ) < FLOW_INTERVAL )
 			continue;
 
 		pflow->nextcompute = host.realtime + FLOW_INTERVAL;
-
 		start = pflow->current - 1;
 
-		pprev = &pflow->stats[start & ( MAX_LATENT - 1 )];
-
 		// compute data flow rate
-		for( i = 1; i < MAX_LATENT / 2; i++ )
+		for( i = 0; i < MASK_LATENT; i++ )
 		{
-			// Most recent message then backward from there
-			pstat = &pflow->stats[( start - i ) & ( MAX_LATENT - 1 )];
+			flowstats_t *pprev = &pflow->stats[(start - i) & MASK_LATENT];
+			flowstats_t *pstat = &pflow->stats[(start - i - 1) & MASK_LATENT];
 
-			bytes += ( pstat->size );
 			faccumulatedtime += ( pprev->time - pstat->time );
-			pprev = pstat;
+			bytes += pstat->size;
 		}
 
-		if( !faccumulatedtime )
-		{
-			pflow->kbytespersec = 0.0;
-		}
-		else
-		{
-			pflow->kbytespersec = (float)bytes / faccumulatedtime;
-			pflow->kbytespersec /= 1024.0;
-		}
-
-		pflow->avgkbytespersec = ( FLOW_AVG ) * pflow->avgkbytespersec + ( 1.0 - FLOW_AVG ) * pflow->kbytespersec;
+		pflow->kbytespersec = (faccumulatedtime == 0.0f) ? 0.0f : bytes / faccumulatedtime / 1024.0f;
+		pflow->avgkbytespersec = pflow->avgkbytespersec * FLOW_AVG + pflow->kbytespersec * (1.0 - FLOW_AVG);
 	}
 }
 
@@ -493,19 +490,14 @@ void Netchan_FragSend( netchan_t *chan )
 	for( i = 0; i < MAX_STREAMS; i++ )
 	{
 		// already something queued up, just leave in waitlist
-		if( chan->fragbufs[i] )
-		{
-			continue;
-		}
-
-		// nothing to queue?
-		if( !chan->waitlist[i] )
-		{
-			continue;
-		}
+		if( chan->fragbufs[i] ) continue;
 
 		wait = chan->waitlist[i] ;
-		chan->waitlist[i] = chan->waitlist[i]->next;
+
+		// nothing to queue?
+		if( !wait ) continue;
+
+		chan->waitlist[i] = wait->next;
 
 		wait->next = NULL;
 
@@ -569,39 +561,53 @@ Netchan_CreateFragments_
 
 ==============================
 */
-void Netchan_CreateFragments_( qboolean server, netchan_t *chan, sizebuf_t *msg )
+static void Netchan_CreateFragments_( netchan_t *chan, sizebuf_t *msg )
 {
 	fragbuf_t		*buf;
 	int		chunksize;
-	int		send, pos;
 	int		remaining;
+	int		bits, pos;
 	int		bufferid = 1;
 	fragbufwaiting_t	*wait, *p;
 	
 	if( MSG_GetNumBytesWritten( msg ) == 0 )
 		return;
 
-	chunksize = bound( 16, net_blocksize->integer, 1400 );
+	if( chan->pfnBlockSize != NULL )
+		chunksize = chan->pfnBlockSize( chan->client );
+	else chunksize = (FRAGMENT_MAX_SIZE >> 1);
+
+	if( Netchan_IsLocal( chan ))
+		chunksize = NET_MAX_PAYLOAD;
 
 	wait = (fragbufwaiting_t *)Mem_Alloc( net_mempool, sizeof( fragbufwaiting_t ));
 
-	remaining = MSG_GetNumBytesWritten( msg );
-	pos = 0;
+	remaining = MSG_GetNumBitsWritten( msg );
+	chunksize <<= 3; // convert bytes to bits
+	pos = 0;	// current position in bits
 
 	while( remaining > 0 )
 	{
-		send = min( remaining, chunksize );
-		remaining -= send;
+		byte	buffer[NET_MAX_PAYLOAD];
+		sizebuf_t	temp;
+
+		bits = Q_min( remaining, chunksize );
+		remaining -= bits;
 	
 		buf = Netchan_AllocFragbuf();
 		buf->bufferid = bufferid++;
 
 		// Copy in data
 		MSG_Clear( &buf->frag_message );
-		MSG_WriteBits( &buf->frag_message, msg->pData + pos, send << 3 );
-		pos += send;
+
+		MSG_StartReading( &temp, MSG_GetData( msg ), MSG_GetMaxBytes( msg ), MSG_GetNumBitsWritten( msg ), -1 );
+		MSG_SeekToBit( &temp, pos );
+		MSG_ReadBits( &temp, buffer, bits );
+
+		MSG_WriteBits( &buf->frag_message, buffer, bits );
 
 		Netchan_AddFragbufToTail( wait, buf );
+		pos += bits;
 	}
 
 	// now add waiting list item to end of buffer queue
@@ -614,10 +620,7 @@ void Netchan_CreateFragments_( qboolean server, netchan_t *chan, sizebuf_t *msg 
 		p = chan->waitlist[FRAG_NORMAL_STREAM];
 
 		while( p->next )
-		{
 			p = p->next;
-		}
-
 		p->next = wait;
 	}
 }
@@ -628,16 +631,16 @@ Netchan_CreateFragments
 
 ==============================
 */
-void Netchan_CreateFragments( qboolean server, netchan_t *chan, sizebuf_t *msg )
+void Netchan_CreateFragments( netchan_t *chan, sizebuf_t *msg )
 {
 	// always queue any pending reliable data ahead of the fragmentation buffer
 	if( MSG_GetNumBytesWritten( &chan->message ) > 0 )
 	{
-		Netchan_CreateFragments_( server, chan, &chan->message );
+		Netchan_CreateFragments_( chan, &chan->message );
 		MSG_Clear( &chan->message );
 	}
 
-	Netchan_CreateFragments_( server, chan, msg );
+	Netchan_CreateFragments_( chan, msg );
 }
 
 /*
@@ -719,7 +722,7 @@ Netchan_CreateFileFragmentsFromBuffer
 
 ==============================
 */
-void Netchan_CreateFileFragmentsFromBuffer( qboolean server, netchan_t *chan, char *filename, byte *pbuf, int size )
+void Netchan_CreateFileFragmentsFromBuffer( netchan_t *chan, char *filename, byte *pbuf, int size )
 {
 	int		chunksize;
 	int		send, pos;
@@ -731,14 +734,16 @@ void Netchan_CreateFileFragmentsFromBuffer( qboolean server, netchan_t *chan, ch
 
 	if( !size ) return;
 
-	chunksize = bound( 16, net_blocksize->integer, 512 );
+	if( chan->pfnBlockSize != NULL )
+		chunksize = chan->pfnBlockSize( chan->client );
+	else chunksize = (FRAGMENT_MAX_SIZE >> 1);
 	wait = ( fragbufwaiting_t * )Mem_Alloc( net_mempool, sizeof( fragbufwaiting_t ));
 	remaining = size;
 	pos = 0;
 
 	while( remaining > 0 )
 	{
-		send = min( remaining, chunksize );
+		send = Q_min( remaining, chunksize );
 
 		buf = Netchan_AllocFragbuf();
 		buf->bufferid = bufferid++;
@@ -793,7 +798,7 @@ Netchan_CreateFileFragments
 
 ==============================
 */
-int Netchan_CreateFileFragments( qboolean server, netchan_t *chan, const char *filename )
+int Netchan_CreateFileFragments( netchan_t *chan, const char *filename )
 {
 	int		chunksize;
 	int		send, pos;
@@ -804,7 +809,9 @@ int Netchan_CreateFileFragments( qboolean server, netchan_t *chan, const char *f
 	fragbufwaiting_t	*wait, *p;
 	fragbuf_t		*buf;
 	
-	chunksize = bound( 16, net_blocksize->integer, 512 );
+	if( chan->pfnBlockSize != NULL )
+		chunksize = chan->pfnBlockSize( chan->client );
+	else chunksize = (FRAGMENT_MAX_SIZE >> 1);
 	filesize = FS_FileSize( filename, false );
 
 	if( filesize <= 0 )
@@ -819,7 +826,7 @@ int Netchan_CreateFileFragments( qboolean server, netchan_t *chan, const char *f
 
 	while( remaining > 0 )
 	{
-		send = min( remaining, chunksize );
+		send = Q_min( remaining, chunksize );
 
 		buf = Netchan_AllocFragbuf();
 		buf->bufferid = bufferid++;
@@ -897,8 +904,9 @@ Netchan_CopyNormalFragments
 
 ==============================
 */
-qboolean Netchan_CopyNormalFragments( netchan_t *chan, sizebuf_t *msg )
+qboolean Netchan_CopyNormalFragments( netchan_t *chan, sizebuf_t *msg, size_t *length )
 {
+	size_t	frag_num_bits = 0;
 	fragbuf_t	*p, *n;
 
 	if( !chan->incomingready[FRAG_NORMAL_STREAM] )
@@ -921,6 +929,7 @@ qboolean Netchan_CopyNormalFragments( netchan_t *chan, sizebuf_t *msg )
 		
 		// copy it in
 		MSG_WriteBits( msg, MSG_GetData( &p->frag_message ), MSG_GetNumBitsWritten( &p->frag_message ));
+		frag_num_bits += MSG_GetNumBitsWritten( &p->frag_message );
 
 		Mem_Free( p );
 		p = n;
@@ -930,6 +939,9 @@ qboolean Netchan_CopyNormalFragments( netchan_t *chan, sizebuf_t *msg )
 
 	// reset flag
 	chan->incomingready[FRAG_NORMAL_STREAM] = false;
+
+	// tell about message size
+	if( length ) *length = BitByte( frag_num_bits );
 
 	return true;
 }
@@ -1053,6 +1065,54 @@ qboolean Netchan_CopyFileFragments( netchan_t *chan, sizebuf_t *msg )
 	return true;
 }
 
+qboolean Netchan_Validate( netchan_t *chan, sizebuf_t *sb, qboolean *frag_message, uint *fragid, int *frag_offset, int *frag_length )
+{
+	int	i, j, frag_end;
+	int	chunksize;
+
+	for( i = 0; i < MAX_STREAMS; i++ )
+	{
+		if( !frag_message[i] )
+			continue;
+
+		// total fragments should be <= MAX_FRAGMENTS and current fragment can't be > total fragments
+		if( i == FRAG_NORMAL_STREAM && FRAG_GETCOUNT( fragid[i] ) > MAX_NORMAL_FRAGMENTS )
+			return false;
+
+		if( i == FRAG_FILE_STREAM && FRAG_GETCOUNT( fragid[i] ) > MAX_FILE_FRAGMENTS )
+			return false;
+
+		if( FRAG_GETID( fragid[i] ) > FRAG_GETCOUNT( fragid[i] ))
+			return false;
+
+		if( !frag_length[i] )
+			return false;
+
+		chunksize = FRAGMENT_MAX_SIZE;
+
+		if( i == FRAG_NORMAL_STREAM && Netchan_IsLocal( chan ))
+			chunksize = NET_MAX_PAYLOAD;
+
+		if( BitByte( frag_length[i] ) > chunksize || BitByte( frag_offset[i] ) > ( NET_MAX_PAYLOAD - 1 ))
+			return false;
+
+		frag_end = frag_offset[i] + frag_length[i];
+
+		// end of fragment is out of the packet
+		if( frag_end + MSG_GetNumBitsRead( sb ) > MSG_GetMaxBits( sb ))
+			return false;
+
+		// fragment overlaps next stream's fragment or placed after it
+		for( j = i + 1; j < MAX_STREAMS; j++ )
+		{
+			if( frag_end > frag_offset[j] && frag_message[j] ) // don't add msg_readcount for comparison
+				return false;
+		}
+	}
+
+	return TRUE;
+}
+
 /*
 ==============================
 Netchan_UpdateProgress
@@ -1066,19 +1126,9 @@ void Netchan_UpdateProgress( netchan_t *chan )
 	int	total = 0;
 	float	bestpercent = 0.0;
 
-	if( scr_download->integer != -1 )
-	{
-		Cvar_SetFloat( "scr_download", -1 );
-	}
-
-	if ( net_drawslider->integer != 1 )
-	{
-		// do show slider for file downloads.
-		if( !chan->incomingbufs[FRAG_FILE_STREAM] )
-		{
-			return;
-		}
-	}
+	// do show slider for file downloads.
+	if( !chan->incomingbufs[FRAG_FILE_STREAM] )
+		return;
 
 	for( i = MAX_STREAMS - 1; i >= 0; i-- )
 	{
@@ -1097,14 +1147,10 @@ void Netchan_UpdateProgress( netchan_t *chan )
 
 			if( total )
 			{
-				float	percent;
-
-				percent = 100.0f * ( float )c / ( float )total;
+				float	percent = 100.0f * ( float )c / ( float )total;
 
 				if( percent > bestpercent )
-				{
 					bestpercent = percent;
-				}
 			}
 
 			p = chan->incomingbufs[i];
@@ -1132,20 +1178,16 @@ void Netchan_UpdateProgress( netchan_t *chan )
 		{
 			if( chan->fragbufcount[i] )
 			{
-				float	percent;
-				
-				percent = 100.0f * (float)chan->fragbufs[i]->bufferid / (float)chan->fragbufcount[i];
+				float	percent = 100.0f * (float)chan->fragbufs[i]->bufferid / (float)chan->fragbufcount[i];
 
 				if( percent > bestpercent )
-				{
 					bestpercent = percent;
-				}
 			}
 		}
 
 	}
 
-	Cvar_SetFloat( "scr_download", bestpercent );
+	Cvar_SetValue( "scr_download", bestpercent );
 }
 
 /*
@@ -1161,6 +1203,7 @@ A 0 length will still generate a packet and deal with the reliable messages.
 void Netchan_TransmitBits( netchan_t *chan, int length, byte *data )
 {
 	sizebuf_t	send;
+	int	max_send_size, statId;
 	byte	send_buf[NET_MAX_MESSAGE];
 	qboolean	send_reliable_fragment;
 	qboolean	send_resending = false;
@@ -1169,7 +1212,6 @@ void Netchan_TransmitBits( netchan_t *chan, int length, byte *data )
 	int	i, j;
 	float	fRate;
 
-	// check for message overflow
 	// check for message overflow
 	if( MSG_CheckOverflow( &chan->message ))
 	{
@@ -1200,6 +1242,16 @@ void Netchan_TransmitBits( netchan_t *chan, int length, byte *data )
 		// will be true if we are active and should let chan->message get some bandwidth
 		int	send_from_frag[MAX_STREAMS] = { 0, 0 };
 		int	send_from_regular = false;
+		int	frag_size = MAX_MSGLEN;
+
+		if( Netchan_IsLocal( chan ))
+			frag_size = (NET_MAX_PAYLOAD - MAX_MSGLEN);
+
+		if( MSG_GetNumBytesWritten( &chan->message ) > frag_size )
+		{
+			Netchan_CreateFragments_( chan, &chan->message );
+			MSG_Clear( &chan->message );
+		}
 
 		// if we have data in the waiting list(s) and we have cleared the current queue(s), then 
 		// push the waitlist(s) into the current queue(s)
@@ -1212,9 +1264,7 @@ void Netchan_TransmitBits( netchan_t *chan, int length, byte *data )
 		for( i = 0; i < MAX_STREAMS; i++ )
 		{
 			if( chan->fragbufs[i] )
-			{
 				send_from_frag[i] = 1;
-			}
 		}
 
 		// stall reliable payloads if sending from frag buffer
@@ -1225,7 +1275,7 @@ void Netchan_TransmitBits( netchan_t *chan, int length, byte *data )
 			// if the reliable buffer has gotten too big, queue it at the end of everything and clear out buffer
 			if( MSG_GetNumBytesWritten( &chan->message ) > MAX_RELIABLE_PAYLOAD )
 			{
-				Netchan_CreateFragments(( chan->sock == NS_SERVER ), chan, &chan->message );
+				Netchan_CreateFragments_( chan, &chan->message );
 				MSG_Clear( &chan->message );
 			}
 		}
@@ -1260,15 +1310,12 @@ void Netchan_TransmitBits( netchan_t *chan, int length, byte *data )
 
 			// if we send fragments, this is where they'll start
 			for( i = 0; i < MAX_STREAMS; i++ )
-			{
 				chan->frag_startpos[i] = chan->reliable_length;
-			}
 		}
 
 		for( i = 0; i < MAX_STREAMS; i++ )
 		{
 			int	fragment_size;
-			int	newpayloadsize;
 
 			// is there someting in the fragbuf?
 			pbuf = chan->fragbufs[i];
@@ -1285,10 +1332,8 @@ void Netchan_TransmitBits( netchan_t *chan, int length, byte *data )
 				}
 			}
 
-			newpayloadsize = (( chan->reliable_length + ( fragment_size << 3 )) + 7 ) >> 3;
-
 			// make sure we have enought space left
-			if( send_from_frag[i] && pbuf && ( newpayloadsize < MAX_RELIABLE_PAYLOAD ))
+			if( send_from_frag[i] && pbuf && (( chan->reliable_length + fragment_size ) < MAX_RELIABLE_PAYLOAD ))
 			{
 				sizebuf_t	temp;
 
@@ -1298,22 +1343,20 @@ void Netchan_TransmitBits( netchan_t *chan, int length, byte *data )
 				// if it's not in-memory, then we'll need to copy it in frame the file handle.
 				if( pbuf->isfile && !pbuf->isbuffer )
 				{
-					byte	filebuffer[2048];
-					file_t	*hfile;
+					byte	filebuffer[NET_MAX_PAYLOAD];
+					file_t	*file;
 
-					hfile = FS_Open( pbuf->filename, "rb", false );
-					FS_Seek( hfile, pbuf->foffset, SEEK_SET );
-					FS_Read( hfile, filebuffer, pbuf->size );
+					file = FS_Open( pbuf->filename, "rb", false );
+					FS_Seek( file, pbuf->foffset, SEEK_SET );
+					FS_Read( file, filebuffer, pbuf->size );
 
 					MSG_WriteBits( &pbuf->frag_message, filebuffer, pbuf->size << 3 );
-					FS_Close( hfile );
+					FS_Close( file );
 				}
 
 				// copy frag stuff on top of current buffer
 				MSG_StartWriting( &temp, chan->reliable_buf, sizeof( chan->reliable_buf ), chan->reliable_length, -1 );
-       
 				MSG_WriteBits( &temp, MSG_GetData( &pbuf->frag_message ), MSG_GetNumBitsWritten( &pbuf->frag_message ));
-
 				chan->reliable_length += MSG_GetNumBitsWritten( &pbuf->frag_message );
 				chan->frag_length[i] = MSG_GetNumBitsWritten( &pbuf->frag_message );
 
@@ -1324,9 +1367,7 @@ void Netchan_TransmitBits( netchan_t *chan, int length, byte *data )
 
 				// offset the rest of the starting positions
 				for( j = i + 1; j < MAX_STREAMS; j++ )
-				{
 					chan->frag_startpos[j] += chan->frag_length[i];
-				}
 			}
 		}
 	}
@@ -1352,7 +1393,6 @@ void Netchan_TransmitBits( netchan_t *chan, int length, byte *data )
 		SetBits( w1, BIT( 30 ));
 
 	chan->outgoing_sequence++;
-	chan->last_sent = host.realtime;
 
 	MSG_WriteLong( &send, w1 );
 	MSG_WriteLong( &send, w2 );
@@ -1389,7 +1429,11 @@ void Netchan_TransmitBits( netchan_t *chan, int length, byte *data )
 	}
 
 	// is there room for the unreliable payload?
-	if( MSG_GetNumBitsLeft( &send ) >= length )
+	max_send_size = (FRAGMENT_MAX_SIZE << 3);
+	if( !send_resending || Netchan_IsLocal( chan ))
+		max_send_size = MSG_GetMaxBits( &send );
+
+	if(( max_send_size - MSG_GetNumBitsWritten( &send )) >= length )
 		MSG_WriteBits( &send, data, length );
 	else MsgDev( D_WARN, "Netchan_Transmit: unreliable message overflow\n" );
 
@@ -1406,9 +1450,10 @@ void Netchan_TransmitBits( netchan_t *chan, int length, byte *data )
 		}
 	}
 
-	chan->flow[FLOW_OUTGOING].stats[chan->flow[FLOW_OUTGOING].current & ( MAX_LATENT-1 )].size = MSG_GetNumBytesWritten( &send ) + UDP_HEADER_SIZE;
-	chan->flow[FLOW_OUTGOING].stats[chan->flow[FLOW_OUTGOING].current & ( MAX_LATENT-1 )].time = host.realtime;
-	chan->flow[FLOW_OUTGOING].totalbytes += ( MSG_GetNumBytesWritten( &send ) + UDP_HEADER_SIZE );
+	statId = chan->flow[FLOW_OUTGOING].current & MASK_LATENT;
+	chan->flow[FLOW_OUTGOING].stats[statId].size = MSG_GetNumBytesWritten( &send ) + UDP_HEADER_SIZE;
+	chan->flow[FLOW_OUTGOING].stats[statId].time = host.realtime;
+	chan->flow[FLOW_OUTGOING].totalbytes += chan->flow[FLOW_OUTGOING].stats[statId].size;
 	chan->flow[FLOW_OUTGOING].current++;
 
 	Netchan_UpdateFlow( chan );
@@ -1424,26 +1469,23 @@ void Netchan_TransmitBits( netchan_t *chan, int length, byte *data )
 	fRate = 1.0f / chan->rate;
 
 	if( chan->cleartime < host.realtime )
-	{
 		chan->cleartime = host.realtime;
-	}
 
 	chan->cleartime += ( MSG_GetNumBytesWritten( &send ) + UDP_HEADER_SIZE ) * fRate;
 
-	if( net_showpackets->integer == 1 )
+	if( net_showpackets->value == 1.0f )
 	{
 		char	c;
-		int	mask = 63;
-	
+
 		c = ( chan->sock == NS_CLIENT ) ? 'c' : 's';
 
 		Msg( " %c --> sz=%i seq=%i ack=%i rel=%i tm=%f\n"
 			, c
 			, MSG_GetNumBytesWritten( &send )
-			, ( chan->outgoing_sequence - 1 ) & mask
-			, chan->incoming_sequence & mask
+			, ( chan->outgoing_sequence - 1 )
+			, chan->incoming_sequence
 			, send_reliable ? 1 : 0
-			, (float)Sys_DoubleTime( ));
+			, (float)host.realtime );
 	}
 }
 
@@ -1479,10 +1521,12 @@ qboolean Netchan_Process( netchan_t *chan, sizebuf_t *msg )
 	int	frag_offset[MAX_STREAMS] = { 0, 0 };
 	int	frag_length[MAX_STREAMS] = { 0, 0 };
 	qboolean	message_contains_fragments;
-	int	i, qport;
+	int	i, qport, statId;
 
 	if( !CL_IsPlaybackDemo() && !NET_CompareAdr( net_from, chan->remote_address ))
 		return false;
+
+	chan->last_received = host.realtime;
 
 	// get sequence numbers
 	MSG_Clear( msg );
@@ -1491,9 +1535,7 @@ qboolean Netchan_Process( netchan_t *chan, sizebuf_t *msg )
 
 	// read the qport if we are a server
 	if( chan->sock == NS_SERVER )
-	{
 		qport = MSG_ReadShort( msg );
-	}
 
 	reliable_message = sequence >> 31;
 	reliable_ack = sequence_ack >> 31;
@@ -1508,17 +1550,21 @@ qboolean Netchan_Process( netchan_t *chan, sizebuf_t *msg )
 			{
 				frag_message[i] = true;
 				fragid[i] = MSG_ReadLong( msg );
-				frag_offset[i] = (int)MSG_ReadLong( msg );
-				frag_length[i] = (int)MSG_ReadLong( msg );
+				frag_offset[i] = MSG_ReadLong( msg );
+				frag_length[i] = MSG_ReadLong( msg );
 			}
 		}
+
+		if( !Netchan_Validate( chan, msg, frag_message, fragid, frag_offset, frag_length ))
+			return false;
 	}
 
 	sequence &= ~BIT( 31 );
 	sequence &= ~BIT( 30 );
+	sequence_ack &= ~BIT( 30 );
 	sequence_ack &= ~BIT( 31 );
 
-	if( net_showpackets->integer == 2 )
+	if( net_showpackets->value == 2.0f )
 	{
 		char	c;
 		
@@ -1527,56 +1573,37 @@ qboolean Netchan_Process( netchan_t *chan, sizebuf_t *msg )
 		Msg( " %c <-- sz=%i seq=%i ack=%i rel=%i tm=%f\n"
 			, c
 			, MSG_GetMaxBytes( msg )
-			, sequence & 63
-			, sequence_ack & 63 
+			, sequence
+			, sequence_ack 
 			, reliable_message
-			, (float)Sys_DoubleTime( ));
+			, host.realtime );
 	}
 
 	// discard stale or duplicated packets
 	if( sequence <= (uint)chan->incoming_sequence )
 	{
-		if( net_showdrop->integer )
+		if( net_showdrop->value )
 		{
+			const char *adr = NET_AdrToString( chan->remote_address );
+
 			if( sequence == (uint)chan->incoming_sequence )
-			{
-				Msg( "%s:duplicate packet %i at %i\n"
-					, NET_AdrToString( chan->remote_address )
-					,  sequence
-					, chan->incoming_sequence );
-			}
-			else
-			{
-				Msg( "%s:out of order packet %i at %i\n"
-					, NET_AdrToString( chan->remote_address )
-					,  sequence
-					, chan->incoming_sequence );
-			}
+				Msg( "%s:duplicate packet %i at %i\n", adr, sequence, chan->incoming_sequence );
+			else Msg( "%s:out of order packet %i at %i\n", adr, sequence, chan->incoming_sequence );
 		}
 		return false;
 	}
 
 	// dropped packets don't keep the message from being used
 	net_drop = sequence - ( chan->incoming_sequence + 1 );
-	if( net_drop > 0 )
-	{
-		chan->drop_count += 1;
-				
-		if( net_showdrop->integer )
-		{
-			Msg( "%s:Dropped %i packets at %i\n"
-			, NET_AdrToString( chan->remote_address )
-			, sequence - (chan->incoming_sequence + 1)
-			, sequence );
-		}
-	}
+	if( net_drop > 0 && net_showdrop->value )
+		Msg( "%s:Dropped %i packets at %i\n", NET_AdrToString( chan->remote_address ), sequence - (chan->incoming_sequence + 1), sequence );
 
 	// if the current outgoing reliable message has been acknowledged
 	// clear the buffer to make way for the next
 	if( reliable_ack == (uint)chan->reliable_sequence )
 	{
 		// make sure we actually could have ack'd this message
-		if( chan->incoming_acknowledged + 1 >= chan->last_reliable_sequence )
+		if( sequence_ack >= (uint)chan->last_reliable_sequence )
 		{
 			chan->reliable_length = 0;	// it has been received
 		}
@@ -1591,18 +1618,16 @@ qboolean Netchan_Process( netchan_t *chan, sizebuf_t *msg )
 		chan->incoming_reliable_sequence ^= 1;
 	}
 
-	chan->last_received = host.realtime;
-
 	// Update data flow stats
-	chan->flow[FLOW_INCOMING].stats[chan->flow[FLOW_INCOMING].current & ( MAX_LATENT-1 )].size = MSG_GetMaxBytes( msg ) + UDP_HEADER_SIZE;
-	chan->flow[FLOW_INCOMING].stats[chan->flow[FLOW_INCOMING].current & ( MAX_LATENT-1 )].time = host.realtime;
-	chan->flow[FLOW_INCOMING].totalbytes += ( MSG_GetMaxBytes( msg ) + UDP_HEADER_SIZE );
+	statId = chan->flow[FLOW_INCOMING].current & MASK_LATENT;
+	chan->flow[FLOW_INCOMING].stats[statId].size = MSG_GetMaxBytes( msg ) + UDP_HEADER_SIZE;
+	chan->flow[FLOW_INCOMING].stats[statId].time = host.realtime;
+	chan->flow[FLOW_INCOMING].totalbytes += chan->flow[FLOW_INCOMING].stats[statId].size;
 	chan->flow[FLOW_INCOMING].current++;
 
 	Netchan_UpdateFlow( chan );
 
 	chan->total_received += MSG_GetMaxBytes( msg );
-	chan->good_count += 1;
 
 	if( message_contains_fragments )
 	{
@@ -1626,9 +1651,9 @@ qboolean Netchan_Process( netchan_t *chan, sizebuf_t *msg )
 
 				if( pbuf )
 				{
-					int	bits;
+					byte	buffer[NET_MAX_PAYLOAD];
 					sizebuf_t	temp;
-					byte	buffer[2048];
+					int	bits;
 
 					bits = frag_length[i];
 				
@@ -1636,12 +1661,12 @@ qboolean Netchan_Process( netchan_t *chan, sizebuf_t *msg )
 					MSG_Clear( &pbuf->frag_message );
 
 					MSG_StartReading( &temp, msg->pData, MSG_GetMaxBytes( msg ), MSG_GetNumBitsRead( msg ) + frag_offset[i], -1 );
-					MSG_ReadBits( msg, buffer, bits );
+					MSG_ReadBits( &temp, buffer, bits );
 					MSG_WriteBits( &pbuf->frag_message, buffer, bits );
 				}
 				else
 				{
-					MsgDev( D_ERROR, "Netchan_Process: Couldn't allocate or find buffer %i\n", inbufferid );
+					MsgDev( D_ERROR, "Netchan_Process: Couldn't find buffer %i\n", inbufferid );
 				}
 
 				// count # of incoming bufs we've queued? are we done?
@@ -1668,5 +1693,6 @@ qboolean Netchan_Process( netchan_t *chan, sizebuf_t *msg )
 			return false;
 		}
 	}
+
 	return true;
 }

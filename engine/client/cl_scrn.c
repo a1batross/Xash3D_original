@@ -22,8 +22,6 @@ GNU General Public License for more details.
 convar_t *scr_centertime;
 convar_t *scr_loading;
 convar_t *scr_download;
-convar_t *scr_width;
-convar_t *scr_height;
 convar_t *scr_viewsize;
 convar_t *cl_testlights;
 convar_t *cl_allow_levelshots;
@@ -57,7 +55,7 @@ void SCR_DrawFPS( int height )
 	char		fpsstring[64];
 	int		offset;
 
-	if( cls.state != ca_active || !cl_showfps->integer || cl.background )
+	if( cls.state != ca_active || !cl_showfps->value || cl.background )
 		return; 
 
 	switch( cls.scrshot_action )
@@ -93,14 +91,14 @@ void SCR_DrawFPS( int height )
 		if( curfps < minfps ) minfps = curfps;
 		if( curfps > maxfps ) maxfps = curfps;
 
-		if( cl_showfps->integer == 2 )
+		if( cl_showfps->value == 2 )
 			Q_snprintf( fpsstring, sizeof( fpsstring ), "fps: ^1%4i min, ^3%4i cur, ^2%4i max", minfps, curfps, maxfps );
 		else Q_snprintf( fpsstring, sizeof( fpsstring ), "%4i fps", curfps );
 		MakeRGBA( color, 255, 255, 255, 255 );
           }
 
 	Con_DrawStringLen( fpsstring, &offset, NULL );
-	Con_DrawString( scr_width->integer - offset - 4, height, fpsstring, color );
+	Con_DrawString( glState.width - offset - 4, height, fpsstring, color );
 }
 
 /*
@@ -124,27 +122,32 @@ void SCR_NetSpeeds( void )
 	int		cur_clfps = 0;
 	rgba_t		color;
 
-	if( !net_speeds->integer || cls.demoplayback || cls.state != ca_active )
+	if( !host.developer )
 		return;
 
-	if( cl_serverframetime() != 0 )
+	if( !net_speeds->value || cls.demoplayback || cls.state != ca_active )
+		return;
+
+	// prevent to get too big values at max
+	if( cl_serverframetime() > 0.0001f )
 	{
 		cur_svfps = Q_rint( 1.0f / cl_serverframetime( ));
 		if( cur_svfps < min_svfps ) min_svfps = cur_svfps;
 		if( cur_svfps > max_svfps ) max_svfps = cur_svfps;
 	}
 
-	if( cl_clientframetime() != 0 )
+	// prevent to get too big values at max
+	if( cl_clientframetime() > 0.0001f )
 	{
 		cur_clfps = Q_rint( 1.0f / cl_clientframetime( ));
 		if( cur_clfps < min_clfps ) min_clfps = cur_clfps;
 		if( cur_clfps > max_clfps ) max_clfps = cur_clfps;
 	}
 
-	Q_snprintf( msg, sizeof( msg ), "sv fps: ^1%4i min, ^3%4i cur, ^2%4i max\ncl fps: ^1%4i min, ^3%4i cur, ^2%4i max\nGame Time: %02d:%02d\nTotal sended to server: %s\nTotal received from server: %s\n",
-	min_svfps, cur_svfps, max_svfps, min_clfps, cur_clfps, max_clfps, (int)(time / 60.0f ), (int)fmod( time, 60.0f ), Q_memprint( cls.netchan.total_sended ), Q_memprint( cls.netchan.total_received ));
+	Q_snprintf( msg, sizeof( msg ), "sv fps: ^1%4i min, ^3%4i cur, ^2%4i max\ncl fps: ^1%4i min, ^3%4i cur, ^2%4i max\nGame Time: %02d:%02d\nTotal received from server: %s\nTotal sent to server: %s\n",
+	min_svfps, cur_svfps, max_svfps, min_clfps, cur_clfps, max_clfps, (int)(time / 60.0f ), (int)fmod( time, 60.0f ), Q_memprint( cls.netchan.total_received ), Q_memprint( cls.netchan.total_sended ));
 
-	x = scr_width->integer - 320;
+	x = glState.width - 320;
 	y = 384;
 
 	Con_DrawStringLen( NULL, NULL, &height );
@@ -174,13 +177,16 @@ void SCR_RSpeeds( void )
 {
 	char	msg[MAX_SYSPATH];
 
+	if( !host.developer )
+		return;
+
 	if( R_SpeedsMessage( msg, sizeof( msg )))
 	{
 		int	x, y, height;
 		char	*p, *start, *end;
 		rgba_t	color;
 
-		x = scr_width->integer - 340;
+		x = glState.width - 340;
 		y = 64;
 
 		Con_DrawStringLen( NULL, NULL, &height );
@@ -201,6 +207,13 @@ void SCR_RSpeeds( void )
 	}
 }
 
+/*
+================
+SCR_MakeLevelShot
+
+creates levelshot at next frame
+================
+*/
 void SCR_MakeLevelShot( void )
 {
 	if( cls.scrshot_request != scrshot_plaque )
@@ -210,6 +223,13 @@ void SCR_MakeLevelShot( void )
 	Cbuf_AddText( "levelshot\n" );
 }
 
+/*
+================
+SCR_MakeScreenShot
+
+create a requested screenshot type
+================
+*/
 void SCR_MakeScreenShot( void )
 {
 	qboolean	iRet = false;
@@ -217,7 +237,7 @@ void SCR_MakeScreenShot( void )
 
 	if( cls.envshot_viewsize > 0 )
 		viewsize = cls.envshot_viewsize;
-	else viewsize = cl_envshot_size->integer;
+	else viewsize = cl_envshot_size->value;
 
 	switch( cls.scrshot_action )
 	{
@@ -263,15 +283,18 @@ void SCR_MakeScreenShot( void )
 	cls.shotname[0] = '\0';
 }
 
+/*
+================
+SCR_DrawPlaque
+================
+*/
 void SCR_DrawPlaque( void )
 {
-	int	levelshot;
-
-	if(( cl_allow_levelshots->integer && !cls.changelevel ) || cl.background )
+	if(( cl_allow_levelshots->value && !cls.changelevel ) || cl.background )
 	{
-		levelshot = GL_LoadTexture( cl_levelshot_name->string, NULL, 0, TF_IMAGE, NULL );
+		int levelshot = GL_LoadTexture( cl_levelshot_name->string, NULL, 0, TF_IMAGE, NULL );
 		GL_SetRenderMode( kRenderNormal );
-		R_DrawStretchPic( 0, 0, scr_width->integer, scr_height->integer, 0, 0, 1, 1, levelshot );
+		R_DrawStretchPic( 0, 0, glState.width, glState.height, 0, 0, 1, 1, levelshot );
 		if( !cl.background ) CL_DrawHUD( CL_LOADING );
 	}
 }
@@ -283,8 +306,15 @@ SCR_BeginLoadingPlaque
 */
 void SCR_BeginLoadingPlaque( qboolean is_background )
 {
-	S_StopAllSounds();
+	S_StopAllSounds( true );
 	cl.audio_prepped = false;			// don't play ambients
+
+	if( CL_IsInMenu( ) && !cls.changedemo && !is_background )
+	{
+		UI_SetActiveMenu( false );
+		if( cls.state == ca_disconnected )
+			SCR_UpdateScreen();
+	}
 
 	if( cls.disable_screen ) return;		// already set
 	if( cls.state == ca_disconnected ) return;	// if at console, don't bring up the plaque
@@ -329,7 +359,7 @@ SCR_DirtyScreen
 void SCR_DirtyScreen( void )
 {
 	SCR_AddDirtyPoint( 0, 0 );
-	SCR_AddDirtyPoint( scr_width->integer - 1, scr_height->integer - 1 );
+	SCR_AddDirtyPoint( glState.width - 1, glState.height - 1 );
 }
 
 /*
@@ -342,7 +372,7 @@ void SCR_TileClear( void )
 	int	i, top, bottom, left, right;
 	dirty_t	clear;
 
-	if( scr_viewsize->integer >= 120 )
+	if( scr_viewsize->value >= 120 )
 		return; // full screen rendering
 
 	// erase rect will be the union of the past three frames
@@ -372,10 +402,10 @@ void SCR_TileClear( void )
 	if( clear.y2 <= clear.y1 )
 		return; // nothing disturbed
 
-	top = cl.refdef.viewport[1];
-	bottom = top + cl.refdef.viewport[3] - 1;
-	left = cl.refdef.viewport[0];
-	right = left + cl.refdef.viewport[2] - 1;
+	top = RI.viewport[1];
+	bottom = top + RI.viewport[3] - 1;
+	left = RI.viewport[0];
+	right = left + RI.viewport[2] - 1;
 
 	if( clear.y1 < top )
 	{	
@@ -444,44 +474,84 @@ void SCR_UpdateScreen( void )
 	V_PostRender();
 }
 
-void SCR_LoadCreditsFont( void )
+qboolean SCR_LoadFixedWidthFont( const char *fontname )
 {
-	int	fontWidth;
+	int	i, fontWidth;
 
-	if( cls.creditsFont.valid ) return; // already loaded
+	if( cls.creditsFont.valid )
+		return true; // already loaded
 
-	cls.creditsFont.hFontTexture = GL_LoadTexture( "gfx.wad/creditsfont.fnt", NULL, 0, TF_IMAGE, NULL );
+	if( !FS_FileExists( fontname, false ))
+		return false;
+
+	cls.creditsFont.hFontTexture = GL_LoadTexture( fontname, NULL, 0, TF_IMAGE|TF_KEEP_SOURCE, NULL );
+	R_GetTextureParms( &fontWidth, NULL, cls.creditsFont.hFontTexture );
+	cls.creditsFont.charHeight = clgame.scrInfo.iCharHeight = fontWidth / 16;
+	cls.creditsFont.type = FONT_FIXED;
+	cls.creditsFont.valid = true;
+
+	// build fixed rectangles
+	for( i = 0; i < 256; i++ )
+	{
+		cls.creditsFont.fontRc[i].left = (i * (fontWidth / 16)) % fontWidth;
+		cls.creditsFont.fontRc[i].right = cls.creditsFont.fontRc[i].left + fontWidth / 16;
+		cls.creditsFont.fontRc[i].top = (i / 16) * (fontWidth / 16);
+		cls.creditsFont.fontRc[i].bottom = cls.creditsFont.fontRc[i].top + fontWidth / 16;
+		cls.creditsFont.charWidths[i] = clgame.scrInfo.charWidths[i] = fontWidth / 16;
+	}
+
+	return true;
+}
+
+qboolean SCR_LoadVariableWidthFont( const char *fontname )
+{
+	int	i, fontWidth;
+	byte	*buffer;
+	size_t	length;
+	qfont_t	*src;
+
+	if( cls.creditsFont.valid )
+		return true; // already loaded
+
+	if( !FS_FileExists( fontname, false ))
+		return false;
+
+	cls.creditsFont.hFontTexture = GL_LoadTexture( fontname, NULL, 0, TF_IMAGE, NULL );
 	R_GetTextureParms( &fontWidth, NULL, cls.creditsFont.hFontTexture );
 
-	// setup creditsfont
-	if( FS_FileExists( "gfx/creditsfont.fnt", false ))
+	// half-life font with variable chars witdh
+	buffer = FS_LoadFile( fontname, &length, false );
+
+	// setup creditsfont	
+	if( buffer && length >= sizeof( qfont_t ))
 	{
-		byte	*buffer;
-		size_t	length;
-		qfont_t	*src;
+		src = (qfont_t *)buffer;
+		cls.creditsFont.charHeight = clgame.scrInfo.iCharHeight = src->rowheight;
+		cls.creditsFont.type = FONT_VARIABLE;
 
-		// half-life font with variable chars witdh
-		buffer = FS_LoadFile( "gfx/creditsfont.fnt", &length, false );
-	
-		if( buffer && length >= sizeof( qfont_t ))
+		// build rectangles
+		for( i = 0; i < 256; i++ )
 		{
-			int	i;
-	
-			src = (qfont_t *)buffer;
-			cls.creditsFont.charHeight = clgame.scrInfo.iCharHeight = src->rowheight;
-
-			// build rectangles
-			for( i = 0; i < 256; i++ )
-			{
-				cls.creditsFont.fontRc[i].left = (word)src->fontinfo[i].startoffset % fontWidth;
-				cls.creditsFont.fontRc[i].right = cls.creditsFont.fontRc[i].left + src->fontinfo[i].charwidth;
-				cls.creditsFont.fontRc[i].top = (word)src->fontinfo[i].startoffset / fontWidth;
-				cls.creditsFont.fontRc[i].bottom = cls.creditsFont.fontRc[i].top + src->rowheight;
-				cls.creditsFont.charWidths[i] = clgame.scrInfo.charWidths[i] = src->fontinfo[i].charwidth;
-			}
-			cls.creditsFont.valid = true;
+			cls.creditsFont.fontRc[i].left = (word)src->fontinfo[i].startoffset % fontWidth;
+			cls.creditsFont.fontRc[i].right = cls.creditsFont.fontRc[i].left + src->fontinfo[i].charwidth;
+			cls.creditsFont.fontRc[i].top = (word)src->fontinfo[i].startoffset / fontWidth;
+			cls.creditsFont.fontRc[i].bottom = cls.creditsFont.fontRc[i].top + src->rowheight;
+			cls.creditsFont.charWidths[i] = clgame.scrInfo.charWidths[i] = src->fontinfo[i].charwidth;
 		}
-		if( buffer ) Mem_Free( buffer );
+		cls.creditsFont.valid = true;
+	}
+	if( buffer ) Mem_Free( buffer );
+
+	return true;
+}
+
+
+void SCR_LoadCreditsFont( void )
+{
+	if( !SCR_LoadVariableWidthFont( "gfx.wad/creditsfont.fnt" ))
+	{
+		if( !SCR_LoadFixedWidthFont( "gfx/conchars" ))
+			MsgDev( D_ERROR, "failed to load HUD font\n" );
 	}
 }
 
@@ -495,15 +565,15 @@ void SCR_InstallParticlePalette( void )
 	if( !pic ) pic = FS_LoadImage( "gfx/palette.pal", NULL, 0 );
 
 	// NOTE: imagelib required this fakebuffer for loading internal palette
-	if( !pic ) pic = FS_LoadImage( "#valve.pal", ((byte *)&i), 768 );
+	if( !pic ) pic = FS_LoadImage( "#valve.pal", (byte *)&i, 768 );
 
 	if( pic )
 	{
 		for( i = 0; i < 256; i++ )
 		{
-			clgame.palette[i][0] = pic->palette[i*4+0];
-			clgame.palette[i][1] = pic->palette[i*4+1];
-			clgame.palette[i][2] = pic->palette[i*4+2];
+			clgame.palette[i].r = pic->palette[i*4+0];
+			clgame.palette[i].g = pic->palette[i*4+1];
+			clgame.palette[i].b = pic->palette[i*4+2];
 		}
 		FS_FreeImage( pic );
 	}
@@ -511,9 +581,9 @@ void SCR_InstallParticlePalette( void )
 	{
 		for( i = 0; i < 256; i++ )
 		{
-			clgame.palette[i][0] = i;
-			clgame.palette[i][1] = i;
-			clgame.palette[i][2] = i;
+			clgame.palette[i].r = i;
+			clgame.palette[i].g = i;
+			clgame.palette[i].b = i;
 		}
 		MsgDev( D_WARN, "CL_InstallParticlePalette: failed. Force to grayscale\n" );
 	}
@@ -521,16 +591,27 @@ void SCR_InstallParticlePalette( void )
 
 void SCR_RegisterTextures( void )
 {
-	cls.fillImage = GL_LoadTexture( "*white", NULL, 0, TF_IMAGE, NULL ); // used for FillRGBA
-	cls.particleImage = GL_LoadTexture( "*particle", NULL, 0, TF_IMAGE, NULL );
-
 	// register gfx.wad images
-	cls.pauseIcon = GL_LoadTexture( "gfx.wad/paused.lmp", NULL, 0, TF_IMAGE, NULL );
-	if( cl_allow_levelshots->integer )
-		cls.loadingBar = GL_LoadTexture( "gfx.wad/lambda.lmp", NULL, 0, TF_IMAGE|TF_LUMINANCE, NULL );
-	else cls.loadingBar = GL_LoadTexture( "gfx.wad/lambda.lmp", NULL, 0, TF_IMAGE, NULL ); 
-	cls.tileImage = GL_LoadTexture( "gfx.wad/backtile.lmp", NULL, 0, TF_UNCOMPRESSED|TF_NOPICMIP|TF_NOMIPMAP, NULL );
-	cls.hChromeSprite = pfnSPR_Load( "sprites/shellchrome.spr" );
+
+	if( FS_FileExists( "gfx/paused.lmp", false ))
+		cls.pauseIcon = GL_LoadTexture( "gfx/paused.lmp", NULL, 0, TF_IMAGE, NULL );
+	else if( FS_FileExists( "gfx/pause.lmp", false ))
+		cls.pauseIcon = GL_LoadTexture( "gfx/pause.lmp", NULL, 0, TF_IMAGE, NULL );
+
+	if( FS_FileExists( "gfx/lambda.lmp", false ))
+	{
+		if( cl_allow_levelshots->value )
+			cls.loadingBar = GL_LoadTexture( "gfx/lambda.lmp", NULL, 0, TF_IMAGE|TF_LUMINANCE, NULL );
+		else cls.loadingBar = GL_LoadTexture( "gfx/lambda.lmp", NULL, 0, TF_IMAGE, NULL ); 
+	}
+	else if( FS_FileExists( "gfx/loading.lmp", false ))
+	{
+		if( cl_allow_levelshots->value )
+			cls.loadingBar = GL_LoadTexture( "gfx/loading.lmp", NULL, 0, TF_IMAGE|TF_LUMINANCE, NULL );
+		else cls.loadingBar = GL_LoadTexture( "gfx/loading.lmp", NULL, 0, TF_IMAGE, NULL ); 
+	}
+	
+	cls.tileImage = GL_LoadTexture( "gfx/backtile.lmp", NULL, 0, TF_NOMIPMAP, NULL );
 }
 
 /*
@@ -542,7 +623,7 @@ Keybinding command
 */
 void SCR_SizeUp_f( void )
 {
-	Cvar_SetFloat( "viewsize", min( scr_viewsize->value + 10, 120 ));
+	Cvar_SetValue( "viewsize", Q_min( scr_viewsize->value + 10, 120 ));
 }
 
 
@@ -555,7 +636,7 @@ Keybinding command
 */
 void SCR_SizeDown_f( void )
 {
-	Cvar_SetFloat( "viewsize", max( scr_viewsize->value - 10, 30 ));
+	Cvar_SetValue( "viewsize", Q_max( scr_viewsize->value - 10, 30 ));
 }
 
 /*
@@ -570,10 +651,9 @@ void SCR_VidInit( void )
 	memset( &clgame.centerPrint, 0, sizeof( clgame.centerPrint ));
 
 	// update screen sizes for menu
-	gameui.globals->scrWidth = scr_width->integer;
-	gameui.globals->scrHeight = scr_height->integer;
+	gameui.globals->scrWidth = glState.width;
+	gameui.globals->scrHeight = glState.height;
 
-	SCR_RebuildGammaTable();
 	VGui_Startup ();
 
 	clgame.load_sequence++; // now all hud sprites are invalid
@@ -598,13 +678,13 @@ void SCR_Init( void )
 	MsgDev( D_NOTE, "SCR_Init()\n" );
 	scr_centertime = Cvar_Get( "scr_centertime", "2.5", 0, "centerprint hold time" );
 	cl_levelshot_name = Cvar_Get( "cl_levelshot_name", "*black", 0, "contains path to current levelshot" );
-	cl_allow_levelshots = Cvar_Get( "allow_levelshots", "0", CVAR_ARCHIVE, "allow engine to use indivdual levelshots instead of 'loading' image" );
+	cl_allow_levelshots = Cvar_Get( "allow_levelshots", "0", FCVAR_ARCHIVE, "allow engine to use indivdual levelshots instead of 'loading' image" );
 	scr_loading = Cvar_Get( "scr_loading", "0", 0, "loading bar progress" );
 	scr_download = Cvar_Get( "scr_download", "0", 0, "downloading bar progress" );
 	cl_testlights = Cvar_Get( "cl_testlights", "0", 0, "test dynamic lights" );
-	cl_envshot_size = Cvar_Get( "cl_envshot_size", "256", CVAR_ARCHIVE, "envshot size of cube side" );
+	cl_envshot_size = Cvar_Get( "cl_envshot_size", "256", FCVAR_ARCHIVE, "envshot size of cube side" );
 	scr_dark = Cvar_Get( "v_dark", "0", 0, "starts level from dark screen" );
-	scr_viewsize = Cvar_Get( "viewsize", "120", CVAR_ARCHIVE, "screen size" );
+	scr_viewsize = Cvar_Get( "viewsize", "120", FCVAR_ARCHIVE, "screen size" );
 	
 	// register our commands
 	Cmd_AddCommand( "timerefresh", SCR_TimeRefresh_f, "turn quickly and print rendering statistcs" );

@@ -274,15 +274,15 @@ typedef struct cl_enginefuncs_s
 	void		*(*pfnSequenceGet)( const char *fileName, const char *entryName );
 	void		(*pfnSPR_DrawGeneric)( int frame, int x, int y, const wrect_t *prc, int blendsrc, int blenddst, int width, int height );
 	void		*(*pfnSequencePickSentence)( const char *groupName, int pickMethod, int *entryPicked );
-	int		(*pfnDrawString)( int x, int y, const char *str, int r, int g, int b );
-	int		(*pfnDrawStringReverse)( int x, int y, const char *str, int r, int g, int b );
+	int		(*pfnVGUI2_DrawString)( int x, int y, const char *str, int r, int g, int b );
+	int		(*pfnVGUI2_DrawStringReverse)( int x, int y, const char *str, int r, int g, int b );
 	const char	*(*LocalPlayerInfo_ValueForKey)( const char* key );
-	int		(*pfnVGUI2DrawCharacter)( int x, int y, int ch, unsigned int font );
-	int		(*pfnVGUI2DrawCharacterAdditive)( int x, int y, int ch, int r, int g, int b, unsigned int font );
+	int		(*pfnVGUI2_DrawCharacter)( int x, int y, int ch, unsigned int font );
+	int		(*pfnVGUI2_DrawCharacterAdditive)( int x, int y, int ch, int r, int g, int b, unsigned int font );
 	unsigned int	(*pfnGetApproxWavePlayLen)( char *filename );
-	void*		(*GetCareerGameUI)( void );	// g-cont. !!!! potential crash-point!
+	void*		(*pfnVGUI2_GetCareerGameUI)( void );	// g-cont. !!!! potential crash-point!
 	void		(*Cvar_Set)( char *name, char *value );
-	int		(*pfnIsPlayingCareerMatch)( void );
+	int		(*pfnVGUI2_IsPlayingCareerMatch)( void );
 	void		(*pfnPlaySoundVoiceByName)( char *szSound, float volume, int pitch );
 	void		(*pfnPrimeMusicStream)( char *filename, int looping );
 	double		(*pfnSys_FloatTime)( void );
@@ -296,7 +296,7 @@ typedef struct cl_enginefuncs_s
 	void		(*pfnFillRGBABlend)( int x, int y, int width, int height, int r, int g, int b, int a );
 	int		(*pfnGetAppID)( void );
 	cmdalias_t	*(*pfnGetAliases)( void );
-	void		(*pfnVguiWrap2_GetMouseDelta)( int *x, int *y );
+	void		(*pfnVGUI2_GetMouseDelta)( int *x, int *y );
 } cl_enginefunc_t;
 
 #define CLDLL_INTERFACE_VERSION	7

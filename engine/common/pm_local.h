@@ -21,14 +21,22 @@ GNU General Public License for more details.
 typedef int (*pfnIgnore)( physent_t *pe );	// custom trace filter
 
 //
+// pm_debug.c
+//
+void PM_ParticleLine( const vec3_t start, const vec3_t end, int pcolor, float life, float zvel );
+void PM_DrawBBox( const vec3_t mins, const vec3_t maxs, const vec3_t origin, int pcolor, float life );
+
+//
 // pm_trace.c
 //
 void Pmove_Init( void );
 void PM_InitBoxHull( void );
 hull_t *PM_HullForBsp( physent_t *pe, playermove_t *pmove, float *offset );
+qboolean PM_RecursiveHullCheck( hull_t *hull, int num, float p1f, float p2f, vec3_t p1, vec3_t p2, pmtrace_t *trace );
 pmtrace_t PM_PlayerTraceExt( playermove_t *pm, vec3_t p1, vec3_t p2, int flags, int numents, physent_t *ents, int ignore_pe, pfnIgnore pmFilter );
 int PM_TestPlayerPosition( playermove_t *pmove, vec3_t pos, pmtrace_t *ptrace, pfnIgnore pmFilter );
 int PM_HullPointContents( hull_t *hull, int num, const vec3_t p );
+void PM_ConvertTrace( trace_t *out, pmtrace_t *in, edict_t *ent );
 
 //
 // pm_surface.c

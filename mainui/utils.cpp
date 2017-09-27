@@ -348,7 +348,7 @@ void UI_ScrollList_Init( menuScrollList_s *sl )
 	if(!(sl->generic.flags & (QMF_LEFT_JUSTIFY|QMF_CENTER_JUSTIFY|QMF_RIGHT_JUSTIFY)))
 		sl->generic.flags |= QMF_LEFT_JUSTIFY;
 
-	if( !sl->generic.color ) sl->generic.color = uiPromptTextColor;
+	if( !sl->generic.color ) sl->generic.color = uiInputTextColor;
 	if( !sl->generic.focusColor ) sl->generic.focusColor = uiPromptFocusColor;
 	if( !sl->upArrow ) sl->upArrow = UI_UPARROW;
 	if( !sl->upArrowFocus ) sl->upArrowFocus = UI_UPARROWFOCUS;

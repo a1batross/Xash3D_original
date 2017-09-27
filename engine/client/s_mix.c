@@ -286,11 +286,21 @@ void S_PaintStereoFrom16( portable_samplepair_t *pbuf, int *volume, short *pData
 	}
 }
 
-void S_Mix8Mono( portable_samplepair_t *pbuf, int *volume, byte *pData, int inputOffset, uint rateScale, int outCount )
+void S_Mix8MonoTimeCompress( portable_samplepair_t *pbuf, int *volume, byte *pData, int inputOffset, uint rateScale, int outCount, int timecompress )
+{
+}
+
+void S_Mix8Mono( portable_samplepair_t *pbuf, int *volume, byte *pData, int inputOffset, uint rateScale, int outCount, int timecompress )
 {
 	int	i, sampleIndex = 0;
 	uint	sampleFrac = inputOffset;
 	int	*lscale, *rscale;
+
+	if( timecompress != 0 )
+	{
+		S_Mix8MonoTimeCompress( pbuf, volume, pData, inputOffset, rateScale, outCount, timecompress );
+//		return;
+	}
 
 	// Not using pitch shift?
 	if( rateScale == FIX( 1 ))
@@ -382,7 +392,7 @@ void S_Mix16Stereo( portable_samplepair_t *pbuf, int *volume, short *pData, int 
 	}
 }
 
-void S_MixChannel( channel_t *pChannel, void *pData, int outputOffset, int inputOffset, uint fracRate, int outCount )
+void S_MixChannel( channel_t *pChannel, void *pData, int outputOffset, int inputOffset, uint fracRate, int outCount, int timecompress )
 {
 	int			pvol[CCHANVOLUMES];
 	paintbuffer_t		*ppaint = MIX_GetCurrentPaintbufferPtr();
@@ -398,7 +408,7 @@ void S_MixChannel( channel_t *pChannel, void *pData, int outputOffset, int input
 	if( pSource->channels == 1 )
 	{
 		if( pSource->width == 1 )
-			S_Mix8Mono( pbuf, pvol, (char *)pData, inputOffset, fracRate, outCount );
+			S_Mix8Mono( pbuf, pvol, (char *)pData, inputOffset, fracRate, outCount, timecompress );
 		else S_Mix16Mono( pbuf, pvol, (short *)pData, inputOffset, fracRate, outCount );
 	}
 	else
@@ -409,12 +419,12 @@ void S_MixChannel( channel_t *pChannel, void *pData, int outputOffset, int input
 	}
 }
 
-int S_MixDataToDevice( channel_t *pChannel, int sampleCount, int outputRate, int outputOffset )
+int S_MixDataToDevice( channel_t *pChannel, int sampleCount, int outRate, int outOffset, int timeCompress )
 {
 	// save this to compute total output
-	int	startingOffset = outputOffset;
+	int	startingOffset = outOffset;
 	float	inputRate = ( pChannel->pitch * pChannel->sfx->cache->rate );
-	float	rate = inputRate / outputRate;
+	float	rate = inputRate / outRate;
 		
 	// shouldn't be playing this if finished, but return if we are
 	if( pChannel->pMixer.finished )
@@ -437,11 +447,11 @@ int S_MixDataToDevice( channel_t *pChannel, int sampleCount, int outputRate, int
 
 	while( sampleCount > 0 )
 	{
-		double	sampleFraction;
-		int	availableSamples, outputSampleCount;
+		int	availableSamples, outSampleCount;
 		wavdata_t	*pSource = pChannel->sfx->cache;
 		qboolean	use_loop = pChannel->use_loop;
 		char	*pData = NULL;
+		double	sampleFrac;
 		int	i, j;
 
 		// compute number of input samples required
@@ -453,20 +463,20 @@ int S_MixDataToDevice( channel_t *pChannel, int sampleCount, int outputRate, int
 		// none available, bail out
 		if( !availableSamples ) break;
 
-		sampleFraction = pChannel->pMixer.sample - floor( pChannel->pMixer.sample );
+		sampleFrac = pChannel->pMixer.sample - floor( pChannel->pMixer.sample );
 
 		if( availableSamples < inputSampleCount )
 		{
 			// how many samples are there given the number of input samples and the rate.
-			outputSampleCount = (int)ceil(( availableSamples - sampleFraction ) / rate );
+			outSampleCount = (int)ceil(( availableSamples - sampleFrac ) / rate );
 		}
 		else
 		{
-			outputSampleCount = sampleCount;
+			outSampleCount = sampleCount;
 		}
 
 		// Verify that we won't get a buffer overrun.
-		ASSERT( floor( sampleFraction + rate * ( outputSampleCount - 1 )) <= availableSamples );
+		ASSERT( floor( sampleFrac + rate * ( outSampleCount - 1 )) <= availableSamples );
 
 		// save current paintbuffer
 		j = MIX_GetCurrentPaintbufferIndex();
@@ -479,14 +489,14 @@ int S_MixDataToDevice( channel_t *pChannel, int sampleCount, int outputRate, int
 			// mix chan into all active paintbuffers
 			MIX_SetCurrentPaintbuffer( i );
 
-			S_MixChannel( pChannel, pData, outputOffset, FIX_FLOAT( sampleFraction ), FIX_FLOAT( rate ), outputSampleCount );
+			S_MixChannel( pChannel, pData, outOffset, FIX_FLOAT( sampleFrac ), FIX_FLOAT( rate ), outSampleCount, timeCompress );
 		}
 
 		MIX_SetCurrentPaintbuffer( j );
 
-		pChannel->pMixer.sample += outputSampleCount * rate;
-		outputOffset += outputSampleCount;
-		sampleCount -= outputSampleCount;
+		pChannel->pMixer.sample += outSampleCount * rate;
+		outOffset += outSampleCount;
+		sampleCount -= outSampleCount;
 	}
 
 	// Did we run out of samples? if so, mark finished
@@ -496,7 +506,7 @@ int S_MixDataToDevice( channel_t *pChannel, int sampleCount, int outputRate, int
 	}
 
 	// total number of samples mixed !!! at the output clock rate !!!
-	return outputOffset - startingOffset;
+	return outOffset - startingOffset;
 }
 
 qboolean S_ShouldContinueMixing( channel_t *ch )
@@ -574,7 +584,8 @@ void MIX_MixChannelsToPaintbuffer( int endtime, int rate, int outputRate )
  
 		if( !bZeroVolume )
 		{
-			if( ch->leftvol <= 5 && ch->rightvol <= 5 )
+			// this values matched with GoldSrc
+			if( ch->leftvol < 8 && ch->rightvol < 8 )
 				bZeroVolume = true;
 		}
 
@@ -619,7 +630,7 @@ void MIX_MixChannelsToPaintbuffer( int endtime, int rate, int outputRate )
 		// NOTE: must be called once per channel only - consecutive calls retrieve additional data.
 		if( ch->isSentence )
 			VOX_MixDataToDevice( ch, sampleCount, outputRate, 0 );
-		else S_MixDataToDevice( ch, sampleCount, outputRate, 0 );
+		else S_MixDataToDevice( ch, sampleCount, outputRate, 0, 0 );
 
 		if( !S_ShouldContinueMixing( ch ))
 		{
@@ -781,7 +792,7 @@ void S_MixBufferUpsample2x( int count, portable_samplepair_t *pbuffer, portable_
 		pbuffer[i-1] = pbuffer[j];
 	}
 
-	if( !s_lerping->integer ) return;
+	if( !s_lerping->value ) return;
 	
 	// pass forward through buffer, interpolate all even slots
 	switch( filtertype )

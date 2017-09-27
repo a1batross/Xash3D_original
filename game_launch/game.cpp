@@ -20,6 +20,7 @@ GNU General Public License for more details.
 #ifdef WIN32
 // enable NVIDIA High Performance Graphics while using Integrated Graphics.
 __declspec(dllexport) DWORD NvOptimusEnablement = 0x00000001;
+__declspec(dllexport) DWORD AmdPowerXpressRequestHighPerformance = 1;
 #endif
 
 typedef void (*pfnChangeGame)( const char *progname );

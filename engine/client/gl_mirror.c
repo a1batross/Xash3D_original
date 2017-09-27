@@ -30,11 +30,9 @@ void R_BeginDrawMirror( msurface_t *fa )
 {
 	matrix4x4		m1, m2, matrix;
 	GLfloat		genVector[4][4];
-	mextrasurf_t	*es;
 	int		i;
 
-	es = SURF_INFO( fa, RI.currentmodel );
-	Matrix4x4_Copy( matrix, es->mirrormatrix );
+	Matrix4x4_Copy( matrix, fa->info->mirrormatrix );
 
 	Matrix4x4_LoadIdentity( m1 );
 	Matrix4x4_ConcatScale( m1, 0.5f );
@@ -205,7 +203,7 @@ void R_DrawMirrors( void )
 			RI.currententity = e = tr.mirror_entities[i].ent;
 			RI.currentmodel = m = RI.currententity->model;
 
-			surf = INFO_SURF( es, m );
+			surf = es->surf;
 
 			ASSERT( RI.currententity != NULL );
 			ASSERT( RI.currentmodel != NULL );
@@ -218,7 +216,7 @@ void R_DrawMirrors( void )
 			{
 				for( tmp = mirrorchain; tmp != es; tmp = tmp->mirrorchain )
 				{
-					surf2 = INFO_SURF( tmp, m );
+					surf2 = tmp->surf;
 
 					if( !tmp->mirrortexturenum )
 						continue;	// not filled?
@@ -263,18 +261,14 @@ void R_DrawMirrors( void )
 			angles[ROLL] = -angles[ROLL];
 
 			RI.params = RP_MIRRORVIEW|RP_CLIPPLANE|RP_OLDVIEWLEAF;
-
 			RI.clipPlane = plane;
-			RI.clipFlags |= ( 1<<5 );
 
-			RI.frustum[5] = plane;
-			RI.frustum[5].signbits = SignbitsForPlane( RI.frustum[5].normal );
-			RI.frustum[5].type = PLANE_NONAXIAL;
+			GL_FrustumSetPlane( &RI.frustum, FRUSTUM_NEAR, plane.normal, plane.dist );
 
-			RI.refdef.viewangles[0] = anglemod( angles[0] );
-			RI.refdef.viewangles[1] = anglemod( angles[1] );
-			RI.refdef.viewangles[2] = anglemod( angles[2] );
-			VectorCopy( origin, RI.refdef.vieworg );
+			RI.viewangles[0] = anglemod( angles[0] );
+			RI.viewangles[1] = anglemod( angles[1] );
+			RI.viewangles[2] = anglemod( angles[2] );
+			VectorCopy( origin, RI.vieworg );
 			VectorCopy( origin, RI.cullorigin );
 
 			// put pvsorigin before the mirror plane to avoid get full visibility on world mirrors
@@ -304,8 +298,7 @@ void R_DrawMirrors( void )
 				RI.viewport[3] = bound( 64, RI.viewport[3], 512 );
 			}
 
-			tr.framecount++;
-			R_RenderScene( &RI.refdef );
+			R_RenderScene();
 			r_stats.c_mirror_passes++;
 
 			es->mirrortexturenum = R_AllocateMirrorTexture();
@@ -336,7 +329,7 @@ void R_DrawMirrors( void )
 		tr.mirror_entities[i].ent = NULL;
 	}
 
-	tr.framecount = oldframecount;	// restore real framecount
+	RI.viewleaf = NULL;		// force markleafs next frame
 	tr.num_mirror_entities = 0;
 	tr.num_mirrors_used = 0;
 }
@@ -348,8 +341,6 @@ R_RecursiveMirrorNode
 */
 void R_RecursiveMirrorNode( mnode_t *node, uint clipflags )
 {
-	mextrasurf_t	*extrasurf;
-	const mplane_t	*clipplane;
 	int		i, clipped;
 	msurface_t	*surf, **mark;
 	mleaf_t		*pleaf;
@@ -364,14 +355,16 @@ void R_RecursiveMirrorNode( mnode_t *node, uint clipflags )
 
 	if( clipflags )
 	{
-		for( i = 0, clipplane = RI.frustum; i < 6; i++, clipplane++ )
+		for( i = 0; i < 6; i++ )
 		{
-			if(!( clipflags & ( 1<<i )))
+			const mplane_t	*p = &RI.frustum.planes[i];
+
+			if( !FBitSet( clipflags, BIT( i )))
 				continue;
 
-			clipped = BoxOnPlaneSide( node->minmaxs, node->minmaxs + 3, clipplane );
+			clipped = BoxOnPlaneSide( node->minmaxs, node->minmaxs + 3, p );
 			if( clipped == 2 ) return;
-			if( clipped == 1 ) clipflags &= ~(1<<i);
+			if( clipped == 1 ) ClearBits( clipflags, BIT( i ));
 		}
 	}
 
@@ -406,15 +399,14 @@ void R_RecursiveMirrorNode( mnode_t *node, uint clipflags )
 	// draw stuff
 	for( c = node->numsurfaces, surf = cl.worldmodel->surfaces + node->firstsurface; c; c--, surf++ )
 	{
-		if(!( surf->flags & SURF_REFLECT ))
+		if( !FBitSet( surf->flags, SURF_REFLECT ))
 			continue;
 
-		if( R_CullSurface( surf, clipflags ))
+		if( R_CullSurface( surf, &RI.frustum, clipflags ))
 			continue;
 
-		extrasurf = SURF_INFO( surf, RI.currentmodel );
-		extrasurf->mirrorchain = tr.mirror_entities[0].chain;
-		tr.mirror_entities[0].chain = extrasurf;
+		surf->info->mirrorchain = tr.mirror_entities[0].chain;
+		tr.mirror_entities[0].chain = surf->info;
 	}
 
 	// recurse down the back side
@@ -430,24 +422,28 @@ Check all bmodel surfaces and make personal mirror chain
 */
 void R_FindBmodelMirrors( cl_entity_t *e, qboolean static_entity )
 {
-	mextrasurf_t	*extrasurf;
 	vec3_t		mins, maxs;
 	msurface_t	*psurf;
 	model_t		*clmodel;
 	qboolean		rotated;
-	int		i, clipFlags;
+	gl_frustum_t	*frustum = NULL;
+	int		i;
 
 	clmodel = e->model;
+
+	// don't draw any water reflections if we underwater
+	if( cl.local.waterlevel >= 3 && FBitSet( clmodel->flags, MODEL_LIQUID ))
+		return;
 
 	if( static_entity )
 	{
 		Matrix4x4_LoadIdentity( RI.objectMatrix );
 
-		if( R_CullBox( clmodel->mins, clmodel->maxs, RI.clipFlags ))
+		if( R_CullBox( clmodel->mins, clmodel->maxs ))
 			return;
 
 		VectorCopy( RI.cullorigin, tr.modelorg );
-		clipFlags = RI.clipFlags;
+		frustum = &RI.frustum;
 	}
 	else
 	{
@@ -467,7 +463,7 @@ void R_FindBmodelMirrors( cl_entity_t *e, qboolean static_entity )
 			rotated = false;
 		}
 
-		if( R_CullBox( mins, maxs, RI.clipFlags ))
+		if( R_CullBox( mins, maxs ))
 			return;
 
 		if( !VectorIsNull( e->origin ) || !VectorIsNull( e->angles ))
@@ -481,22 +477,19 @@ void R_FindBmodelMirrors( cl_entity_t *e, qboolean static_entity )
 
 		if( rotated ) Matrix4x4_VectorITransform( RI.objectMatrix, RI.cullorigin, tr.modelorg );
 		else VectorSubtract( RI.cullorigin, e->origin, tr.modelorg );
-
-		clipFlags = 0;
 	}
 
 	psurf = &clmodel->surfaces[clmodel->firstmodelsurface];
 	for( i = 0; i < clmodel->nummodelsurfaces; i++, psurf++ )
 	{
-		if(!( psurf->flags & SURF_REFLECT ))
+		if( !FBitSet( psurf->flags, SURF_REFLECT ))
 			continue;
 
-		if( R_CullSurface( psurf, clipFlags ))
+		if( R_CullSurface( psurf, frustum, 0 ))
 			continue;
 
-		extrasurf = SURF_INFO( psurf, RI.currentmodel );
-		extrasurf->mirrorchain = tr.mirror_entities[tr.num_mirror_entities].chain;
-		tr.mirror_entities[tr.num_mirror_entities].chain = extrasurf;
+		psurf->info->mirrorchain = tr.mirror_entities[tr.num_mirror_entities].chain;
+		tr.mirror_entities[tr.num_mirror_entities].chain = psurf->info;
 	}
 
 	// store new mirror entity
@@ -584,58 +577,27 @@ R_FindMirrors
 Build mirror chains for this frame
 ================
 */
-void R_FindMirrors( const ref_params_t *fd )
+void R_FindMirrors( void )
 {
-	vec3_t	viewOrg, viewAng;
-
-	if( !world.has_mirrors || RI.drawOrtho || !RI.drawWorld || RI.refdef.onlyClientDraw || !cl.worldmodel )
+	if( !world.has_mirrors || RI.drawOrtho || !RI.drawWorld || RI.onlyClientDraw || !cl.worldmodel )
 		return;
 
-	RI.refdef = *fd;
+	// NOTE: we already has initial params at this point like vieworg, viewangles
+	// all other will be sets into R_SetupFrustum
+	R_FindViewLeaf ();
 
-	// build the transformation matrix for the given view angles
-	if( cl.thirdperson )
-	{
-		vec3_t	cam_ofs, vpn;
+	// player is outside world. Don't update mirrors for speedup reasons
+	if(( RI.viewleaf - cl.worldmodel->leafs - 1 ) == -1 )
+		return;
 
-		clgame.dllFuncs.CL_CameraOffset( cam_ofs );
-
-		viewAng[PITCH] = cam_ofs[PITCH];
-		viewAng[YAW] = cam_ofs[YAW];
-		viewAng[ROLL] = 0;
-
-		AngleVectors( viewAng, vpn, NULL, NULL );
-		VectorMA( RI.refdef.vieworg, -cam_ofs[ROLL], vpn, viewOrg );
-	}
-	else
-	{
-		VectorCopy( RI.refdef.vieworg, viewOrg );
-		VectorCopy( RI.refdef.viewangles, viewAng );
-	}
-
-	// build the transformation matrix for the given view angles
-	VectorCopy( viewOrg, RI.vieworg );
-	AngleVectors( viewAng, RI.vforward, RI.vright, RI.vup );
-
-	VectorCopy( RI.vieworg, RI.pvsorigin );
-
-	if( !r_lockcull->integer )
-	{
-		VectorCopy( RI.vieworg, RI.cullorigin );
-		VectorCopy( RI.vforward, RI.cull_vforward );
-		VectorCopy( RI.vright, RI.cull_vright );
-		VectorCopy( RI.vup, RI.cull_vup );
-	}
-
-	R_FindViewLeaf();
-	R_SetupFrustum();
+	R_SetupFrustum ();
 	R_MarkLeaves ();
 
 	VectorCopy( RI.cullorigin, tr.modelorg );
 	RI.currententity = clgame.entities;
 	RI.currentmodel = RI.currententity->model;
 
-	R_RecursiveMirrorNode( cl.worldmodel->nodes, RI.clipFlags );
+	R_RecursiveMirrorNode( cl.worldmodel->nodes, RI.frustum.clipFlags );
 
 	R_CheckEntitiesOnList();
 }

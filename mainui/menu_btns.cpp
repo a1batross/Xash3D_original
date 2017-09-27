@@ -109,7 +109,7 @@ void UI_LoadBmpButtons( void )
 {
 	memset( uiStatic.buttonsPics, 0, sizeof( uiStatic.buttonsPics ));
 
-	int bmp_filesize;
+	int bmp_filesize, palette_sz = 0;
 	byte *bmp_buffer = LOAD_FILE( ART_BUTTONS_MAIN, &bmp_filesize );
 
 	if( !bmp_buffer || !bmp_filesize )
@@ -131,7 +131,21 @@ void UI_LoadBmpButtons( void )
 	memcpy( &NewInfoHdr, pInfoHdr, sizeof( BITMAPINFOHEADER ));
 
 	byte *palette = bmp_buffer + sizeof( BITMAPFILEHEADER ) + sizeof( BITMAPINFOHEADER );
-	int palette_sz = pInfoHdr->biClrUsed * sizeof( RGBQUAD );
+	if( pInfoHdr->biBitCount <= 8 )
+	{
+		// figure out how many entries are actually in the table
+		if( pInfoHdr->biClrUsed == 0 )
+		{
+			pInfoHdr->biClrUsed = 256;
+			palette_sz = (1 << pInfoHdr->biBitCount) * sizeof( RGBQUAD );
+		}
+		else palette_sz = pInfoHdr->biClrUsed * sizeof( RGBQUAD );
+	}
+#if 0
+	// HACKHACK: reset the first color to completely black value
+	if( palette_sz > 0 && palette[0] < 8 && palette[1] < 8 && palette[2] < 8 )
+		palette[0] = palette[1] = palette[2] = 0;
+#endif
 	uiStatic.buttons_width = pInfoHdr->biWidth;
 	uiStatic.buttons_height = 78;	// fixed height
 

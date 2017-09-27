@@ -146,7 +146,7 @@ typedef struct
 	qboolean		finished;
 } mixer_t;
 
-typedef struct
+typedef struct rawchan_s
 {
 	int			entnum;
 	int			master_vol;
@@ -188,6 +188,8 @@ typedef struct channel_s
 	float		ob_gain_inc;	// crossfade increment
 	qboolean		bTraced;		// true if channel was already checked this frame for obscuring
 	float		radius;		// radius of this sound effect
+	vec3_t		absmin, absmax;	// filled in CL_GetEntitySpatialization
+	int		movetype;		// to determine point entities
 
 	// sentence mixer
 	int		wordIndex;
@@ -239,8 +241,8 @@ void SNDDMA_Submit( void );
 
 //====================================================================
 
-#define MAX_DYNAMIC_CHANNELS	(28 + NUM_AMBIENTS)
-#define MAX_CHANNELS	(128 + MAX_DYNAMIC_CHANNELS)	// Scourge Of Armagon has too many static sounds on hip2m4.bsp
+#define MAX_DYNAMIC_CHANNELS	(60 + NUM_AMBIENTS)
+#define MAX_CHANNELS	(256 + MAX_DYNAMIC_CHANNELS)	// Scourge Of Armagon has too many static sounds on hip2m4.bsp
 #define MAX_RAW_CHANNELS	16
 #define MAX_RAW_SAMPLES	8192
 
@@ -277,7 +279,7 @@ void S_FreeChannel( channel_t *ch );
 //
 // s_mix.c
 //
-int S_MixDataToDevice( channel_t *pChannel, int sampleCount, int outputRate, int outputOffset );
+int S_MixDataToDevice( channel_t *pChannel, int sampleCount, int outputRate, int outputOffset, int timeCompress );
 void MIX_ClearAllPaintBuffers( int SampleCount, qboolean clearFilters );
 void MIX_InitAllPaintbuffers( void );
 void MIX_FreeAllPaintbuffers( void );
@@ -291,8 +293,8 @@ sound_t S_RegisterSound( const char *name );
 void S_FreeSound( sfx_t *sfx );
 
 // s_dsp.c
-qboolean AllocDsps( void );
-void FreeDsps( void );
+void SX_Init( void );
+void SX_Free( void );
 void CheckNewDspPresets( void );
 void DSP_Process( int idsp, portable_samplepair_t *pbfront, int sampleCount );
 float DSP_GetGain( int idsp );
@@ -304,8 +306,8 @@ void S_Activate( qboolean active, void *hInst );
 void S_SoundList_f( void );
 void S_SoundInfo_f( void );
 
-channel_t *SND_PickDynamicChannel( int entnum, int channel, sfx_t *sfx );
-channel_t *SND_PickStaticChannel( int entnum, sfx_t *sfx, const vec3_t pos );
+channel_t *SND_PickDynamicChannel( int entnum, int channel, sfx_t *sfx, qboolean *ignore );
+channel_t *SND_PickStaticChannel( const vec3_t pos, sfx_t *sfx );
 int S_GetCurrentStaticSounds( soundlist_t *pout, int size );
 int S_GetCurrentDynamicSounds( soundlist_t *pout, int size );
 sfx_t *S_GetSfxByHandle( sound_t handle );
@@ -314,7 +316,7 @@ void S_RawSamples( uint samples, uint rate, word width, word channels, const byt
 void S_StopSound( int entnum, int channel, const char *soundname );
 uint S_GetRawSamplesLength( int entnum );
 void S_ClearRawChannel( int entnum );
-void S_StopAllSounds( void );
+void S_StopAllSounds( qboolean ambient );
 void S_FreeSounds( void );
 
 //
@@ -342,7 +344,6 @@ int S_ZeroCrossingBefore( wavdata_t *pWaveData, int sample );
 int S_GetOutputData( wavdata_t *pSource, void **pData, int samplePosition, int sampleCount, qboolean use_loop );
 void S_SetSampleStart( channel_t *pChan, wavdata_t *pSource, int newPosition );
 void S_SetSampleEnd( channel_t *pChan, wavdata_t *pSource, int newEndPosition );
-float S_SimpleSpline( float value );
 
 //
 // s_vox.c

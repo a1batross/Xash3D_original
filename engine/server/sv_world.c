@@ -40,7 +40,7 @@ HULL BOXES
 */
 
 static hull_t	box_hull;
-static dclipnode_t	box_clipnodes[6];
+static mclipnode_t	box_clipnodes[6];
 static mplane_t	box_planes[6];
 
 /*
@@ -108,6 +108,48 @@ void SV_StudioPlayerBlend( mstudioseqdesc_t *pseqdesc, int *pBlend, float *pPitc
 }
 
 /*
+====================
+SV_CheckSphereIntersection
+
+check clients only
+====================
+*/
+qboolean SV_CheckSphereIntersection( edict_t *ent, const vec3_t start, const vec3_t end )
+{
+	int		i, sequence;
+	float		radiusSquared;
+	vec3_t		traceOrg, traceDir;
+	studiohdr_t	*pstudiohdr;
+	mstudioseqdesc_t	*pseqdesc;
+	model_t		*mod;
+
+	if( !FBitSet( ent->v.flags, FL_CLIENT|FL_FAKECLIENT ))
+		return true;
+
+	if(( mod = Mod_Handle( ent->v.modelindex )) == NULL )
+		return true;
+
+	if(( pstudiohdr = (studiohdr_t *)Mod_StudioExtradata( mod )) == NULL )
+		return true;
+
+	sequence = ent->v.sequence;
+	if( sequence < 0 || sequence >= pstudiohdr->numseq )
+		sequence = 0;
+
+	pseqdesc = (mstudioseqdesc_t *)((byte *)pstudiohdr + pstudiohdr->seqindex) + sequence;
+
+	VectorCopy( start, traceOrg );
+	VectorSubtract( end, start, traceDir );
+	radiusSquared = 0.0f;
+
+	for ( i = 0; i < 3; i++ )
+		radiusSquared += Q_max( fabs( pseqdesc->bbmin[i] ), fabs( pseqdesc->bbmax[i] ));
+
+	return SphereIntersect( ent->v.origin, radiusSquared, traceOrg, traceDir );
+}
+
+
+/*
 ===================
 SV_HullForBox
 
@@ -139,12 +181,14 @@ hull_t *SV_HullAutoSelect( model_t *model, const vec3_t mins, const vec3_t maxs,
 	float	curdiff;
 	float	lastdiff = 999;
 	int	i, hullNumber = 0;	// assume we fail
+	vec3_t	clip_size;
 	hull_t	*hull;
 
-	// select the hull automatically
+	// NOTE: this is not matched with hardcoded values in some cases...
 	for( i = 0; i < MAX_MAP_HULLS; i++ )
 	{
-		curdiff = floor( VectorAvg( size )) - floor( VectorAvg( world.hull_sizes[i] ));
+		VectorSubtract( model->hulls[i].clip_maxs, model->hulls[i].clip_mins, clip_size );
+		curdiff = floor( VectorAvg( size )) - floor( VectorAvg( clip_size ));
 		curdiff = fabs( curdiff );
 
 		if( curdiff < lastdiff )
@@ -172,12 +216,18 @@ SV_HullForBsp
 forcing to select BSP hull
 ==================
 */
-hull_t *SV_HullForBsp( edict_t *ent, const vec3_t mins, const vec3_t maxs, float *offset )
+hull_t *SV_HullForBsp( edict_t *ent, const vec3_t mins, const vec3_t maxs, vec3_t offset )
 {
 	hull_t		*hull;
 	model_t		*model;
 	vec3_t		size;
-			
+
+	if( svgame.physFuncs.SV_HullForBsp != NULL )
+	{
+		hull = svgame.physFuncs.SV_HullForBsp( ent, mins, maxs, offset );
+		if( hull ) return hull;
+	}
+
 	// decide which clipping hull to use, based on the size
 	model = Mod_Handle( ent->v.modelindex );
 
@@ -188,12 +238,12 @@ hull_t *SV_HullForBsp( edict_t *ent, const vec3_t mins, const vec3_t maxs, float
 
 #ifdef RANDOM_HULL_NULLIZATION
 	// author: The FiEctro
-	hull = &model->hulls[Com_RandomLong( 0, 0 )];
+	hull = &model->hulls[COM_RandomLong( 0, 0 )];
 #endif
-	if( sv_quakehulls->integer == 1 )
+	if( world.sky_sphere || world.version == Q1BSP_VERSION || world.version == QBSP2_VERSION )
 	{
-		// Using quake-style hull select for my Quake remake
-		if( size[0] < 3.0f || ( model->flags & MODEL_LIQUID && ent->v.solid != SOLID_TRIGGER ))
+		// alternate hull select for quake maps
+		if( size[0] < 3.0f )
 			hull = &model->hulls[0];
 		else if( size[0] <= 32.0f )
 			hull = &model->hulls[1];
@@ -201,14 +251,9 @@ hull_t *SV_HullForBsp( edict_t *ent, const vec3_t mins, const vec3_t maxs, float
 
 		VectorSubtract( hull->clip_mins, mins, offset );
 	}
-	else if( sv_quakehulls->integer == 2 )
-	{
-		// undocumented feature: auto hull select
-		hull = SV_HullAutoSelect( model, mins, maxs, size, offset );
-	}
 	else
 	{
-		if( size[0] <= 8.0f || ( model->flags & MODEL_LIQUID && ent->v.solid != SOLID_TRIGGER ))
+		if( size[0] <= 8.0f )
 		{
 			hull = &model->hulls[0];
 			VectorCopy( hull->clip_mins, offset ); 
@@ -274,7 +319,7 @@ SV_HullForStudioModel
 */
 hull_t *SV_HullForStudioModel( edict_t *ent, vec3_t mins, vec3_t maxs, vec3_t offset, int *numhitboxes )
 {
-	int		isPointTrace;
+	qboolean		useComplexHull;
 	float		scale = 0.5f;
 	hull_t		*hull = NULL;
 	vec3_t		size;
@@ -287,34 +332,34 @@ hull_t *SV_HullForStudioModel( edict_t *ent, vec3_t mins, vec3_t maxs, vec3_t of
 	}
 
 	VectorSubtract( maxs, mins, size );
-	isPointTrace = false;
+	useComplexHull = false;
 
-	if( VectorIsNull( size ) && !( svgame.globals->trace_flags & FTRACE_SIMPLEBOX ))
+	if( VectorIsNull( size ) && !FBitSet( svgame.globals->trace_flags, FTRACE_SIMPLEBOX ))
 	{
-		isPointTrace = true;
+		useComplexHull = true;
 
-		if( ent->v.flags & ( FL_CLIENT|FL_FAKECLIENT ))
+		if( FBitSet( ent->v.flags, FL_CLIENT|FL_FAKECLIENT ))
 		{
-			if( sv_clienttrace->value == 0.0f )
+			if( sv_clienttrace.value == 0.0f )
 			{
 				// so no way to trace studiomodels by hitboxes
 				// use bbox instead
-				isPointTrace = false;
+				useComplexHull = false;
 			}
 			else
 			{
-				scale = sv_clienttrace->value * 0.5f;
+				scale = sv_clienttrace.value * 0.5f;
 				VectorSet( size, 1.0f, 1.0f, 1.0f );
 			}
 		}
 	}
 
-	if( mod->flags & STUDIO_TRACE_HITBOX || isPointTrace )
+	if( FBitSet( mod->flags, STUDIO_TRACE_HITBOX ) || useComplexHull )
 	{
 		VectorScale( size, scale, size );
 		VectorClear( offset );
 
-		if( ent->v.flags & ( FL_CLIENT|FL_FAKECLIENT ))
+		if( FBitSet( ent->v.flags, FL_CLIENT|FL_FAKECLIENT ))
 		{
 			studiohdr_t	*pstudio;
 			mstudioseqdesc_t	*pseqdesc;
@@ -323,7 +368,7 @@ hull_t *SV_HullForStudioModel( edict_t *ent, vec3_t mins, vec3_t maxs, vec3_t of
 			vec3_t		angles;
 			int		iBlend;
 
-			pstudio = Mod_Extradata( mod );
+			pstudio = Mod_StudioExtradata( mod );
 			pseqdesc = (mstudioseqdesc_t *)((byte *)pstudio + pstudio->seqindex) + ent->v.sequence;
 			VectorCopy( ent->v.angles, angles );
 
@@ -377,7 +422,6 @@ areanode_t *SV_CreateAreaNode( int depth, vec3_t mins, vec3_t maxs )
 
 	ClearLink( &anode->trigger_edicts );
 	ClearLink( &anode->solid_edicts );
-	ClearLink( &anode->water_edicts );
 	
 	if( depth == AREA_DEPTH )
 	{
@@ -632,8 +676,6 @@ void SV_LinkEdict( edict_t *ent, qboolean touch_triggers )
 	// link it in	
 	if( ent->v.solid == SOLID_TRIGGER )
 		InsertLinkBefore( &ent->area, &node->trigger_edicts );
-	else if( ent->v.solid == SOLID_NOT && ent->v.skin < CONTENTS_EMPTY )
-		InsertLinkBefore( &ent->area, &node->water_edicts );
 	else InsertLinkBefore( &ent->area, &node->solid_edicts );
 
 	if( touch_triggers && !iTouchLinkSemaphore )
@@ -660,7 +702,7 @@ void SV_WaterLinks( const vec3_t origin, int *pCont, areanode_t *node )
 	model_t	*mod;
 
 	// get water edicts
-	for( l = node->water_edicts.next; l != &node->water_edicts; l = next )
+	for( l = node->solid_edicts.next; l != &node->solid_edicts; l = next )
 	{
 		next = l->next;
 		touch = EDICT_FROM_AREA( l );
@@ -767,16 +809,17 @@ returns true if the entity is in solid currently
 qboolean SV_TestEntityPosition( edict_t *ent, edict_t *blocker )
 {
 	trace_t	trace;
+	qboolean	monsterClip = FBitSet( ent->v.flags, FL_MONSTERCLIP ) ? true : false;
 
 	if( ent->v.flags & (FL_CLIENT|FL_FAKECLIENT))
 	{
 		// to avoid falling through tracktrain update client mins\maxs here
 		if( ent->v.flags & FL_DUCKING ) 
-			SV_SetMinMaxSize( ent, svgame.pmove->player_mins[1], svgame.pmove->player_maxs[1] );
-		else SV_SetMinMaxSize( ent, svgame.pmove->player_mins[0], svgame.pmove->player_maxs[0] );
+			SV_SetMinMaxSize( ent, svgame.pmove->player_mins[1], svgame.pmove->player_maxs[1], true );
+		else SV_SetMinMaxSize( ent, svgame.pmove->player_mins[0], svgame.pmove->player_maxs[0], true );
 	}
 
-	trace = SV_Move( ent->v.origin, ent->v.mins, ent->v.maxs, ent->v.origin, MOVE_NORMAL|FMOVE_SIMPLEBOX, ent );
+	trace = SV_Move( ent->v.origin, ent->v.mins, ent->v.maxs, ent->v.origin, MOVE_NORMAL|FMOVE_SIMPLEBOX, ent, monsterClip );
 
 	if( SV_IsValidEdict( blocker ) && SV_IsValidEdict( trace.ent ))
 	{
@@ -794,121 +837,6 @@ LINE TESTING IN HULLS
 
 ===============================================================================
 */
-/*
-==================
-SV_RecursiveHullCheck
-
-==================
-*/
-qboolean SV_RecursiveHullCheck( hull_t *hull, int num, float p1f, float p2f, vec3_t p1, vec3_t p2, trace_t *trace )
-{
-	dclipnode_t	*node;
-	mplane_t		*plane;
-	float		t1, t2;
-	float		frac, midf;
-	int		side;
-	vec3_t		mid;
-
-	// check for empty
-	if( num < 0 )
-	{
-		if( num != CONTENTS_SOLID )
-		{
-			trace->allsolid = false;
-			if( num == CONTENTS_EMPTY )
-				trace->inopen = true;
-			else trace->inwater = true;
-		}
-		else trace->startsolid = true;
-
-		return true; // empty
-	}
-
-	if( num < hull->firstclipnode || num > hull->lastclipnode )
-		Host_Error( "SV_RecursiveHullCheck: bad node number\n" );
-
-	// find the point distances
-	node = hull->clipnodes + num;
-	plane = hull->planes + node->planenum;
-
-	if( plane->type < 3 )
-	{
-		t1 = p1[plane->type] - plane->dist;
-		t2 = p2[plane->type] - plane->dist;
-	}
-	else
-	{
-		t1 = DotProduct( plane->normal, p1 ) - plane->dist;
-		t2 = DotProduct( plane->normal, p2 ) - plane->dist;
-	}
-	
-	if( t1 >= 0 && t2 >= 0 )
-		return SV_RecursiveHullCheck( hull, node->children[0], p1f, p2f, p1, p2, trace );
-	if( t1 < 0 && t2 < 0 )
-		return SV_RecursiveHullCheck( hull, node->children[1], p1f, p2f, p1, p2, trace );
-
-	// put the crosspoint DIST_EPSILON pixels on the near side
-	if( t1 < 0 ) frac = ( t1 + DIST_EPSILON ) / ( t1 - t2 );
-	else frac = ( t1 - DIST_EPSILON ) / ( t1 - t2 );
-
-	if( frac < 0.0f ) frac = 0.0f;
-	if( frac > 1.0f ) frac = 1.0f;
-		
-	midf = p1f + ( p2f - p1f ) * frac;
-	VectorLerp( p1, frac, p2, mid );
-
-	side = (t1 < 0);
-
-	// move up to the node
-	if( !SV_RecursiveHullCheck( hull, node->children[side], p1f, midf, p1, mid, trace ))
-		return false;
-
-	if( PM_HullPointContents( hull, node->children[side^1], mid ) != CONTENTS_SOLID )
-	{
-		// go past the node
-		return SV_RecursiveHullCheck (hull, node->children[side^1], midf, p2f, mid, p2, trace);
-	}	
-
-	if( trace->allsolid )
-		return false; // never got out of the solid area
-		
-	//==================
-	// the other side of the node is solid, this is the impact point
-	//==================
-	if( !side )
-	{
-		VectorCopy( plane->normal, trace->plane.normal );
-		trace->plane.dist = plane->dist;
-	}
-	else
-	{
-		VectorNegate( plane->normal, trace->plane.normal );
-		trace->plane.dist = -plane->dist;
-	}
-
-	while( PM_HullPointContents( hull, hull->firstclipnode, mid ) == CONTENTS_SOLID )
-	{
-		// shouldn't really happen, but does occasionally
-		frac -= 0.1f;
-
-		if( frac < 0.0f )
-		{
-			trace->fraction = midf;
-			VectorCopy( mid, trace->endpos );
-			MsgDev( D_WARN, "trace backed up past 0.0\n" );
-			return false;
-		}
-
-		midf = p1f + (p2f - p1f) * frac;
-		VectorLerp( p1, frac, p2, mid );
-	}
-
-	trace->fraction = midf;
-	VectorCopy( mid, trace->endpos );
-
-	return false;
-}
-
 /*
 ==================
 SV_ClipMoveToEntity
@@ -951,7 +879,7 @@ void SV_ClipMoveToEntity( edict_t *ent, const vec3_t start, vec3_t mins, vec3_t 
 		rotated = true;
 	else rotated = false;
 
-	if( host.features & ENGINE_TRANSFORM_TRACE_AABB )
+	if( FBitSet( host.features, ENGINE_PHYSICS_PUSHER_EXT ))
 	{
 		// keep untransformed bbox less than 45 degress or train on subtransit.bsp will stop working
 		if(( check_angles( ent->v.angles[0] ) || check_angles( ent->v.angles[2] )) && !VectorIsNull( mins ))
@@ -995,7 +923,7 @@ void SV_ClipMoveToEntity( edict_t *ent, const vec3_t start, vec3_t mins, vec3_t 
 
 	if( hullcount == 1 )
 	{
-		SV_RecursiveHullCheck( hull, hull->firstclipnode, 0.0f, 1.0f, start_l, end_l, trace );
+		PM_RecursiveHullCheck( hull, hull->firstclipnode, 0.0f, 1.0f, start_l, end_l, (pmtrace_t *)trace );
 	}
 	else
 	{
@@ -1008,7 +936,7 @@ void SV_ClipMoveToEntity( edict_t *ent, const vec3_t start, vec3_t mins, vec3_t 
 			trace_hitbox.fraction = 1.0;
 			trace_hitbox.allsolid = 1;
 
-			SV_RecursiveHullCheck( &hull[i], hull[i].firstclipnode, 0.0f, 1.0f, start_l, end_l, &trace_hitbox );
+			PM_RecursiveHullCheck( &hull[i], hull[i].firstclipnode, 0.0f, 1.0f, start_l, end_l, (pmtrace_t *)&trace_hitbox );
 
 			if( i == 0 || trace_hitbox.allsolid || trace_hitbox.startsolid || trace_hitbox.fraction < trace->fraction )
 			{
@@ -1117,10 +1045,10 @@ static void SV_ClipToLinks( areanode_t *node, moveclip_t *clip )
 		// monsterclip filter (solid custom is a static or dynamic bodies)
 		if( touch->v.solid == SOLID_BSP || touch->v.solid == SOLID_CUSTOM )
 		{
-			if( touch->v.flags & FL_MONSTERCLIP )
+			if( FBitSet( touch->v.flags, FL_MONSTERCLIP ))
 			{
 				// func_monsterclip works only with monsters that have same flag!
-				if( !SV_IsValidEdict( clip->passedict ) || !( clip->passedict->v.flags & FL_MONSTERCLIP ))
+				if( !FBitSet( clip->flags, FMOVE_MONSTERCLIP ))
 					continue;
 			}
 		}
@@ -1134,11 +1062,15 @@ static void SV_ClipToLinks( areanode_t *node, moveclip_t *clip )
 		if( Mod_GetType( touch->v.modelindex ) == mod_brush && clip->flags & FMOVE_IGNORE_GLASS )
 		{
 			// we ignore brushes with rendermode != kRenderNormal and without FL_WORLDBRUSH set
-			if( touch->v.rendermode != kRenderNormal && !( touch->v.flags & FL_WORLDBRUSH ))
+			if( touch->v.rendermode != kRenderNormal && !FBitSet( touch->v.flags, FL_WORLDBRUSH ))
 				continue;
 		}
 
 		if( !BoundsIntersect( clip->boxmins, clip->boxmaxs, touch->v.absmin, touch->v.absmax ))
+			continue;
+
+		// aditional check to intersects clients with sphere
+		if( touch->v.solid != SOLID_SLIDEBOX && !SV_CheckSphereIntersection( touch, clip->start, clip->end ))
 			continue;
 
 		// Xash3D extension
@@ -1231,7 +1163,7 @@ void SV_ClipToWorldBrush( areanode_t *node, moveclip_t *clip )
 SV_Move
 ==================
 */
-trace_t SV_Move( const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end, int type, edict_t *e )
+trace_t SV_Move( const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end, int type, edict_t *e, qboolean monsterclip )
 {
 	moveclip_t	clip;
 	vec3_t		trace_endpos;
@@ -1252,6 +1184,9 @@ trace_t SV_Move( const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end,
 		clip.passedict = (e) ? e : EDICT_NUM( 0 );
 		clip.mins = mins;
 		clip.maxs = maxs;
+
+		if( monsterclip && !FBitSet( host.features, ENGINE_QUAKE_COMPATIBLE ))
+			SetBits( clip.flags, FMOVE_MONSTERCLIP );
 
 		if( clip.type == MOVE_MISSILE )
 		{
@@ -1274,6 +1209,11 @@ trace_t SV_Move( const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end,
 	SV_CopyTraceToGlobal( &clip.trace );
 
 	return clip.trace;
+}
+
+trace_t SV_MoveNormal( const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end, int type, edict_t *e )
+{
+	return SV_Move( start, mins, maxs, end, type, e, false );
 }
 
 /*
@@ -1401,7 +1341,7 @@ trace_t SV_MoveToss( edict_t *tossent, edict_t *ignore )
 		VectorMA( tossent->v.angles, 0.05f, tossent->v.avelocity, tossent->v.angles );
 		VectorScale( tossent->v.velocity, 0.05f, move );
 		VectorAdd( tossent->v.origin, move, end );
-		trace = SV_Move( tossent->v.origin, tossent->v.mins, tossent->v.maxs, end, MOVE_NORMAL, tossent );
+		trace = SV_Move( tossent->v.origin, tossent->v.mins, tossent->v.maxs, end, MOVE_NORMAL, tossent, false );
 		VectorCopy( trace.endpos, tossent->v.origin );
 		if( trace.fraction < 1.0f ) break;
 	}
@@ -1475,7 +1415,6 @@ static qboolean SV_RecursiveLightPoint( model_t *model, mnode_t *node, const vec
 
 	// check for impact on this node
 	surf = model->surfaces + node->firstsurface;
-	sample_size = Mod_SampleSizeForFace( surf );
 
 	for( i = 0; i < node->numsurfaces; i++, surf++ )
 	{
@@ -1490,11 +1429,12 @@ static qboolean SV_RecursiveLightPoint( model_t *model, mnode_t *node, const vec
 		if(( s < 0.0f || s > surf->extents[0] ) || ( t < 0.0f || t > surf->extents[1] ))
 			continue;
 
-		s /= sample_size;
-		t /= sample_size;
-
 		if( !surf->samples )
 			return true;
+
+		sample_size = Mod_SampleSizeForFace( surf );
+		s /= sample_size;
+		t /= sample_size;
 
 		VectorClear( sv_pointColor );
 
@@ -1561,7 +1501,7 @@ void SV_SetLightStyle( int style, const char* s, float f )
 	if( sv.state != ss_active ) return;
 
 	// tell the clients about changed lightstyle
-	MSG_WriteByte( &sv.reliable_datagram, svc_lightstyle );
+	MSG_BeginServerCmd( &sv.reliable_datagram, svc_lightstyle );
 	MSG_WriteByte( &sv.reliable_datagram, style );
 	MSG_WriteString( &sv.reliable_datagram, sv.lightstyles[style].pattern );
 	MSG_WriteFloat( &sv.reliable_datagram, sv.lightstyles[style].time );

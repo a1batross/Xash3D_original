@@ -70,7 +70,7 @@ UI_Audio_GetConfig
 static void UI_Audio_GetConfig( void )
 {
 	uiAudio.soundVolume.curValue = CVAR_GET_FLOAT( "volume" );
-	uiAudio.musicVolume.curValue = CVAR_GET_FLOAT( "musicvolume" );
+	uiAudio.musicVolume.curValue = CVAR_GET_FLOAT( "MP3Volume" );
 	uiAudio.suitVolume.curValue = CVAR_GET_FLOAT( "suitvolume" );
 
 	if( CVAR_GET_FLOAT( "s_lerping" ))
@@ -93,7 +93,7 @@ UI_Audio_SetConfig
 static void UI_Audio_SetConfig( void )
 {
 	CVAR_SET_FLOAT( "volume", uiAudio.soundVolume.curValue );
-	CVAR_SET_FLOAT( "musicvolume", uiAudio.musicVolume.curValue );
+	CVAR_SET_FLOAT( "MP3Volume", uiAudio.musicVolume.curValue );
 	CVAR_SET_FLOAT( "suitvolume", uiAudio.suitVolume.curValue );
 	CVAR_SET_FLOAT( "s_lerping", uiAudio.lerping.enabled );
 	CVAR_SET_FLOAT( "dsp_off", uiAudio.noDSP.enabled );
@@ -107,7 +107,7 @@ UI_Audio_UpdateConfig
 static void UI_Audio_UpdateConfig( void )
 {
 	CVAR_SET_FLOAT( "volume", uiAudio.soundVolume.curValue );
-	CVAR_SET_FLOAT( "musicvolume", uiAudio.musicVolume.curValue );
+	CVAR_SET_FLOAT( "MP3Volume", uiAudio.musicVolume.curValue );
 	CVAR_SET_FLOAT( "suitvolume", uiAudio.suitVolume.curValue );
 	CVAR_SET_FLOAT( "s_lerping", uiAudio.lerping.enabled );
 	CVAR_SET_FLOAT( "dsp_off", uiAudio.noDSP.enabled );

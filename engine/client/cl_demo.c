@@ -15,6 +15,7 @@ GNU General Public License for more details.
 
 #include "common.h"
 #include "client.h"
+#include "gl_local.h"
 #include "net_encode.h"
 
 #define dem_unknown		0	// unknown command
@@ -48,6 +49,7 @@ typedef struct
 	int		id;		// should be IDEM
 	int		dem_protocol;	// should be DEMO_PROTOCOL
 	int		net_protocol;	// should be PROTOCOL_VERSION
+	double		host_fps;		// fps for demo playing
 	char		mapname[64];	// name of map
 	char		comment[64];	// comment for demo
 	char		gamedir[64];	// name of game directory (FS_Gamedir())
@@ -158,6 +160,18 @@ overwrite host.realtime
 float CL_GetDemoPlaybackClock( void ) 
 {
 	return host.realtime + host.frametime;
+}
+
+/*
+====================
+CL_GetDemoFramerate
+
+overwrite host.frametime
+====================
+*/
+double CL_GetDemoFramerate( void )
+{
+	return bound( MIN_FPS, demo.header.host_fps, MAX_FPS );
 }
 
 /*
@@ -345,6 +359,7 @@ void CL_WriteDemoHeader( const char *name )
 	demo.header.id = IDEMOHEADER;
 	demo.header.dem_protocol = DEMO_PROTOCOL;
 	demo.header.net_protocol = PROTOCOL_VERSION;
+	demo.header.host_fps = bound( MIN_FPS, host_maxfps->value, MAX_FPS );
 	Q_strncpy( demo.header.mapname, clgame.mapname, sizeof( demo.header.mapname ));
 	Q_strncpy( demo.header.comment, clgame.maptitle, sizeof( demo.header.comment ));
 	Q_strncpy( demo.header.gamedir, FS_Gamedir(), sizeof( demo.header.gamedir ));
@@ -445,9 +460,10 @@ void CL_StopRecord( void )
 	cls.demorecording = false;
 	cls.demoname[0] = '\0';
 	gameui.globals->demoname[0] = '\0';
+	demo.header.host_fps = 0.0;
 
 	Msg( "Completed demo\n" );
-	MsgDev( D_INFO, "Recording time: %02d:%02d", (int)(cls.demotime / 60.0f ), (int)fmod( cls.demotime, 60.0f ));
+	MsgDev( D_INFO, "Recording time: %02d:%02d\n", (int)(cls.demotime / 60.0f ), (int)fmod( cls.demotime, 60.0f ));
 	cls.demotime = 0.0;
 }
 
@@ -471,7 +487,7 @@ void CL_DrawDemoRecording( void )
 	Q_memprint( pos ), (int)(cls.demotime / 60.0f ), (int)fmod( cls.demotime, 60.0f ));
 
 	Con_DrawStringLen( string, &len, NULL );
-	Con_DrawString(( scr_width->integer - len) >> 1, scr_height->integer >> 2, string, color );
+	Con_DrawString(( glState.width - len ) >> 1, glState.height >> 2, string, color );
 }
 
 /*
@@ -537,9 +553,9 @@ void CL_ReadDemoUserCmd( qboolean discard )
 		pcmd->sendsize = 1;
 
 		// always delta'ing from null
-		cl.refdef.cmd = &pcmd->cmd;
+		cl.cmd = &pcmd->cmd;
 
-		MSG_ReadDeltaUsercmd( &buf, &nullcmd, cl.refdef.cmd );
+		MSG_ReadDeltaUsercmd( &buf, &nullcmd, cl.cmd );
 
 		// make sure what interp info contain angles from different frames
 		// or lerping will stop working
@@ -551,7 +567,7 @@ void CL_ReadDemoUserCmd( qboolean discard )
 
 			// record update
 			a->starttime = demo.timestamp;
-			VectorCopy( cl.refdef.cmd->viewangles, a->viewangles );
+			VectorCopy( cl.cmd->viewangles, a->viewangles );
 			demo.lasttime = demo.timestamp;
 		}
 
@@ -611,6 +627,8 @@ void CL_DemoCompleted( void )
 
 	if( !CL_NextDemo() && host.developer <= 2 )
 		UI_SetActiveMenu( true );
+
+	Cvar_SetValue( "v_dark", 0.0f );
 }
 
 /*
@@ -659,11 +677,6 @@ qboolean CL_ReadRawNetworkData( byte *buffer, size_t *length )
 		CL_DemoCompleted();
 		return false;
 	}
-	
-	if( msglen < 8 )
-	{
-		MsgDev( D_NOTE, "read runt demo message\n" );
-	}
 
 	if( msglen > NET_MAX_PAYLOAD )
 	{
@@ -699,7 +712,7 @@ reads demo data and write it to client
 */
 qboolean CL_DemoReadMessage( byte *buffer, size_t *length )
 {
-	long	curpos = 0;
+	size_t	curpos = 0, lastpos = 0;
 	float	fElapsedTime = 0.0f;
 	qboolean	swallowmessages = true;
 	byte	*userbuf = NULL;
@@ -716,7 +729,7 @@ qboolean CL_DemoReadMessage( byte *buffer, size_t *length )
 	// HACKHACK: changedemo issues
 	if( !cls.netchan.remote_address.type ) cls.netchan.remote_address.type = NA_LOOPBACK;
 
-	if(( !cl.background && ( cl.refdef.paused || cls.key_dest != key_game )) || cls.key_dest == key_console )
+	if(( !cl.background && ( cl.paused || cls.key_dest != key_game )) || cls.key_dest == key_console )
 	{
 		demo.starttime += host.frametime;
 		return false; // paused
@@ -750,15 +763,23 @@ qboolean CL_DemoReadMessage( byte *buffer, size_t *length )
 			}
 		}
 
+		// we already have the usercmd_t for this frame
+		// don't read next usercmd_t so predicting will work properly
+		if( cmd == dem_usercmd && lastpos != 0 && demo.framecount != 0 )
+		{
+			FS_Seek( cls.demofile, lastpos, SEEK_SET );
+			return false; // not time yet.
+		}
+
 		// COMMAND HANDLERS
 		switch( cmd )
 		{
 		case dem_jumptime:
 			demo.starttime = CL_GetDemoPlaybackClock();
-			break;
+			return false; // time is changed, skip frame
 		case dem_stop:
 			CL_DemoMoveToNextSection();
-			break;
+			return false; // header is ended, skip frame
 		case dem_userdata:
 			FS_Read( cls.demofile, &size, sizeof( int ));
 			userbuf = Mem_Alloc( cls.mempool, size );
@@ -771,6 +792,7 @@ qboolean CL_DemoReadMessage( byte *buffer, size_t *length )
 			break;
 		case dem_usercmd:
 			CL_ReadDemoUserCmd( false );
+			lastpos = FS_Tell( cls.demofile );
 			break;
 		default:
 			swallowmessages = false;
@@ -867,9 +889,9 @@ void CL_DemoInterpolateAngles( void )
 		AngleQuaternion( next->viewangles, q1, false );
 		AngleQuaternion( prev->viewangles, q2, false );
 		QuaternionSlerp( q2, q1, frac, q );
-		QuaternionAngle( q, cl.refdef.cl_viewangles );
+		QuaternionAngle( q, cl.viewangles );
 	}
-	else VectorCopy( cl.refdef.cmd->viewangles, cl.refdef.cl_viewangles );
+	else VectorCopy( cl.cmd->viewangles, cl.viewangles );
 }
 
 /*
@@ -889,10 +911,11 @@ void CL_StopPlayback( void )
 	demo.framecount = 0;
 	cls.demofile = NULL;
 
-	cls.olddemonum = max( -1, cls.demonum - 1 );
+	cls.olddemonum = Q_max( -1, cls.demonum - 1 );
 	Mem_Free( demo.directory.entries );
 	demo.directory.numentries = 0;
 	demo.directory.entries = NULL;
+	demo.header.host_fps = 0.0;
 	demo.entry = NULL;
 
 	cls.demoname[0] = '\0';	// clear demoname too
@@ -900,16 +923,17 @@ void CL_StopPlayback( void )
 
 	if( cls.changedemo )
 	{
-		S_StopAllSounds();
+		S_StopAllSounds( true );
 		S_StopBackgroundTrack();
 	}
 	else
 	{
 		// let game known about demo state	
-		Cvar_FullSet( "cl_background", "0", CVAR_READ_ONLY );
+		Cvar_FullSet( "cl_background", "0", FCVAR_READ_ONLY );
 		cls.state = ca_disconnected;
 		cls.connect_time = 0;
 		cls.demonum = -1;
+		cls.signon = 0;
 
 		// and finally clear the state
 		CL_ClearState ();
@@ -997,7 +1021,7 @@ qboolean CL_NextDemo( void )
 
 	if( cls.demonum == -1 )
 		return false; // don't play demos
-	S_StopAllSounds();
+	S_StopAllSounds( true );
 
 	if( !cls.demos[cls.demonum][0] || cls.demonum == MAX_DEMOS )
 	{
@@ -1162,6 +1186,7 @@ void CL_PlayDemo_f( void )
 	if( !FS_FileExists( filename, true ))
 	{
 		MsgDev( D_ERROR, "couldn't open %s\n", filename );
+		Cvar_SetValue( "v_dark", 0.0f );
 		cls.demonum = -1; // stop demo loop
 		return;
 	}
@@ -1176,9 +1201,7 @@ void CL_PlayDemo_f( void )
 	if( demo.header.id != IDEMOHEADER )
 	{
 		MsgDev( D_ERROR, "%s is not a demo file\n", filename );
-		FS_Close( cls.demofile );
-		cls.demofile = NULL;
-		cls.demonum = -1; // stop demo loop
+		CL_DemoCompleted();
 		return;
 	}
 
@@ -1189,10 +1212,7 @@ void CL_PlayDemo_f( void )
 
 		if( demo.header.net_protocol != PROTOCOL_VERSION )
 			MsgDev( D_ERROR, "playdemo: net protocol outdated (%i should be %i)\n", demo.header.net_protocol, PROTOCOL_VERSION );
-
-		FS_Close( cls.demofile );
-		cls.demofile = NULL;
-		cls.demonum = -1; // stop demo loop
+		CL_DemoCompleted();
 		return;
 	}
 
@@ -1203,16 +1223,13 @@ void CL_PlayDemo_f( void )
 	if( demo.directory.numentries < 1 || demo.directory.numentries > 1024 )
 	{
 		MsgDev( D_ERROR, "demo had bogus # of directory entries: %i\n", demo.directory.numentries );
-		FS_Close( cls.demofile );
-		cls.demofile = NULL;
-		cls.demonum = -1; // stop demo loop
-		cls.changedemo = false;
+		CL_DemoCompleted();
 		return;
 	}
 
 	if( cls.changedemo )
 	{
-		S_StopAllSounds();
+		S_StopAllSounds( true );
 		SCR_BeginLoadingPlaque( false );
 
 		CL_ClearState ();
@@ -1244,10 +1261,12 @@ void CL_PlayDemo_f( void )
 	cls.demoplayback = true;
 	cls.state = ca_connected;
 	cl.background = (cls.demonum != -1) ? true : false;
+	cls.spectator = false;
+	cls.signon = 0;
 
 	demo.starttime = CL_GetDemoPlaybackClock(); // for determining whether to read another message
 
-	Netchan_Setup( NS_CLIENT, &cls.netchan, net_from, Cvar_VariableValue( "net_qport" ));
+	Netchan_Setup( NS_CLIENT, &cls.netchan, net_from, Cvar_VariableValue( "net_qport" ), NULL, NULL );
 
 	memset( demo.cmds, 0, sizeof( demo.cmds ));
 	demo.angle_position = 1;
@@ -1292,7 +1311,7 @@ void CL_StartDemos_f( void )
 	if( !SV_Active() && !cls.demoplayback )
 	{
 		// run demos loop in background mode
-		Cvar_SetFloat( "v_dark", 1.0f );
+		Cvar_SetValue( "v_dark", 1.0f );
 		cls.demonum = 0;
 		CL_NextDemo ();
 	}

@@ -92,7 +92,6 @@ void UI_DrawTitleAnim()
 	LerpQuad( TitleLerpQuads[f_idx], TitleLerpQuads[s_idx], frac, &c );
 
 	PIC_Set( TransPic, 255, 255, 255, 255 );
-
 	PIC_DrawAdditive( c.x, c.y, c.lx, c.ly, &r );
 }
 

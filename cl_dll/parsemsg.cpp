@@ -138,7 +138,7 @@ char* READ_STRING( void )
 			break; // no more characters
 
 		c = READ_BYTE();
-		if (c == -1 || c == 0)
+		if (c == 0)
 			break;
 		string[l] = c;
 		l++;

@@ -51,7 +51,7 @@ typedef struct
 	int		num_models;
 	char		currentModel[CS_SIZE];
 
-	ref_params_t	refdef;
+	ref_viewpass_t	rvp;
 	cl_entity_t	*ent;
 	
 	menuFramework_s	menu;
@@ -83,11 +83,12 @@ UI_PlayerSetup_CalcFov
 assume refdef is valid
 =================
 */
-static void UI_PlayerSetup_CalcFov( ref_params_t *fd )
+static void UI_PlayerSetup_CalcFov( ref_viewpass_t *rvp )
 {
-	float x = fd->viewport[2] / tan( DEG2RAD( fd->fov_x ) * 0.5f );
-	float half_fov_y = atan( fd->viewport[3] / x );
-	fd->fov_y = RAD2DEG( half_fov_y ) * 2;
+	rvp->fov_x = 40.0f;
+	float x = rvp->viewport[2] / tan( DEG2RAD( rvp->fov_x ) * 0.5f );
+	float half_fov_y = atan( rvp->viewport[3] / x );
+	rvp->fov_y = RAD2DEG( half_fov_y ) * 2;
 }
 
 /*
@@ -238,7 +239,7 @@ static void UI_PlayerSetup_UpdateConfig( void )
 			if( stricmp( name, "player" ))
 			{
 				sprintf( lastImage, "models/player/%s/%s.bmp", name, name );
-				playerImage = PIC_Load( lastImage, PIC_KEEP_8BIT ); // if present of course
+				playerImage = PIC_Load( lastImage, PIC_KEEP_SOURCE ); // if present of course
 			}
 			else if( lastImage[0] && playerImage )
 			{
@@ -319,14 +320,12 @@ static void UI_PlayerSetup_Ownerdraw( void *self )
 	{
 		R_ClearScene ();
 
-		// update renderer timings
-		uiPlayerSetup.refdef.time = gpGlobals->time;
-		uiPlayerSetup.refdef.frametime = gpGlobals->frametime;
-		uiPlayerSetup.ent->curstate.body = 0; // clearing body each frame
+		// clearing body for each frame
+		uiPlayerSetup.ent->curstate.body = 0;
 
 		// draw the player model
 		R_AddEntity( ET_NORMAL, uiPlayerSetup.ent );
-		R_RenderFrame( &uiPlayerSetup.refdef );
+		R_RenderFrame( &uiPlayerSetup.rvp );
 	}
 }
 
@@ -479,7 +478,7 @@ static void UI_PlayerSetup_Init( void )
 		UI_AddItem( &uiPlayerSetup.menu, (void *)&uiPlayerSetup.view );
 	UI_AddItem( &uiPlayerSetup.menu, (void *)&uiPlayerSetup.name );
 
-	if( !gMenu.m_gameinfo.flags & GFL_NOMODELS )
+	if( !( gMenu.m_gameinfo.flags & GFL_NOMODELS ))
 	{
 		UI_AddItem( &uiPlayerSetup.menu, (void *)&uiPlayerSetup.model );
 		UI_AddItem( &uiPlayerSetup.menu, (void *)&uiPlayerSetup.topColor );
@@ -487,16 +486,14 @@ static void UI_PlayerSetup_Init( void )
 		UI_AddItem( &uiPlayerSetup.menu, (void *)&uiPlayerSetup.showModels );
 		UI_AddItem( &uiPlayerSetup.menu, (void *)&uiPlayerSetup.hiModels );
 	}
-	// setup render and actor
-	uiPlayerSetup.refdef.fov_x = 40;
 
 	// NOTE: must be called after UI_AddItem whan we sure what UI_ScaleCoords is done
-	uiPlayerSetup.refdef.viewport[0] = uiPlayerSetup.view.generic.x;
-	uiPlayerSetup.refdef.viewport[1] = uiPlayerSetup.view.generic.y;
-	uiPlayerSetup.refdef.viewport[2] = uiPlayerSetup.view.generic.width;
-	uiPlayerSetup.refdef.viewport[3] = uiPlayerSetup.view.generic.height;
+	uiPlayerSetup.rvp.viewport[0] = uiPlayerSetup.view.generic.x;
+	uiPlayerSetup.rvp.viewport[1] = uiPlayerSetup.view.generic.y;
+	uiPlayerSetup.rvp.viewport[2] = uiPlayerSetup.view.generic.width;
+	uiPlayerSetup.rvp.viewport[3] = uiPlayerSetup.view.generic.height;
 
-	UI_PlayerSetup_CalcFov( &uiPlayerSetup.refdef );
+	UI_PlayerSetup_CalcFov( &uiPlayerSetup.rvp );
 	uiPlayerSetup.ent = GET_MENU_EDICT ();
 
 	if( !uiPlayerSetup.ent )
@@ -518,7 +515,7 @@ static void UI_PlayerSetup_Init( void )
 	uiPlayerSetup.ent->latched.prevcontroller[1] = 127;
 	uiPlayerSetup.ent->latched.prevcontroller[2] = 127;
 	uiPlayerSetup.ent->latched.prevcontroller[3] = 127;
-	uiPlayerSetup.ent->origin[0] = uiPlayerSetup.ent->curstate.origin[0] = 45.0f / tan( DEG2RAD( uiPlayerSetup.refdef.fov_y / 2.0f ));
+	uiPlayerSetup.ent->origin[0] = uiPlayerSetup.ent->curstate.origin[0] = 45.0f / tan( DEG2RAD( uiPlayerSetup.rvp.fov_y / 2.0f ));
 	uiPlayerSetup.ent->origin[2] = uiPlayerSetup.ent->curstate.origin[2] = 2.0f;
 	uiPlayerSetup.ent->angles[1] = uiPlayerSetup.ent->curstate.angles[1] = 180.0f;
 	uiPlayerSetup.ent->player = true; // yes, draw me as playermodel

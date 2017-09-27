@@ -35,7 +35,7 @@ void SV_ClientPrintf( sv_client_t *cl, int level, char *fmt, ... )
 	Q_vsprintf( string, fmt, argptr );
 	va_end( argptr );
 	
-	MSG_WriteByte( &cl->netchan.message, svc_print );
+	MSG_BeginServerCmd( &cl->netchan.message, svc_print );
 	MSG_WriteByte( &cl->netchan.message, level );
 	MSG_WriteString( &cl->netchan.message, string );
 }
@@ -64,7 +64,7 @@ void SV_BroadcastPrintf( sv_client_t *ignore, int level, char *fmt, ... )
 	// echo to console
 	if( host.type == HOST_DEDICATED ) Msg( "%s", string );
 
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 	{
 		if( level < cl->messagelevel || FBitSet( cl->flags, FCL_FAKECLIENT ))
 			continue;
@@ -72,7 +72,7 @@ void SV_BroadcastPrintf( sv_client_t *ignore, int level, char *fmt, ... )
 		if( cl == ignore || cl->state != cs_spawned )
 			continue;
 
-		MSG_WriteByte( &cl->netchan.message, svc_print );
+		MSG_BeginServerCmd( &cl->netchan.message, svc_print );
 		MSG_WriteByte( &cl->netchan.message, level );
 		MSG_WriteString( &cl->netchan.message, string );
 	}
@@ -85,7 +85,7 @@ SV_BroadcastCommand
 Sends text to all active clients
 =================
 */
-void SV_BroadcastCommand( char *fmt, ... )
+void SV_BroadcastCommand( const char *fmt, ... )
 {
 	char	string[MAX_SYSPATH];
 	va_list	argptr;	
@@ -97,7 +97,7 @@ void SV_BroadcastCommand( char *fmt, ... )
 	Q_vsprintf( string, fmt, argptr );
 	va_end( argptr );
 
-	MSG_WriteByte( &sv.reliable_datagram, svc_stufftext );
+	MSG_BeginServerCmd( &sv.reliable_datagram, svc_stufftext );
 	MSG_WriteString( &sv.reliable_datagram, string );
 }
 
@@ -120,7 +120,7 @@ qboolean SV_SetPlayer( void )
 		return false;
           }
 
-	if( sv_maxclients->integer == 1 || Cmd_Argc() < 2 )
+	if( svs.maxclients == 1 || Cmd_Argc() < 2 )
 	{
 		// special case for local client
 		svs.currentPlayer = svs.clients;
@@ -134,7 +134,7 @@ qboolean SV_SetPlayer( void )
 	if( Q_isdigit( s ) || (s[0] == '-' && Q_isdigit( s + 1 )))
 	{
 		idnum = Q_atoi( s );
-		if( idnum < 0 || idnum >= sv_maxclients->integer )
+		if( idnum < 0 || idnum >= svs.maxclients )
 		{
 			Msg( "Bad client slot: %i\n", idnum );
 			return false;
@@ -152,7 +152,7 @@ qboolean SV_SetPlayer( void )
 	}
 
 	// check for a name match
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 	{
 		if( !cl->state ) continue;
 		if( !Q_strcmp( cl->name, s ))
@@ -195,7 +195,7 @@ void SV_Map_f( void )
 	FS_StripExtension( mapname );
 	
 	// determine spawn entity classname
-	if( sv_maxclients->integer == 1 )
+	if( svs.maxclients == 1 )
 		spawn_entity = GI->sp_entity;
 	else spawn_entity = GI->mp_entity;
 
@@ -203,27 +203,24 @@ void SV_Map_f( void )
 
 	if( FBitSet( flags, MAP_INVALID_VERSION ))
 	{
-		Msg( "SV_NewMap: map %s is invalid or not supported\n", mapname );
+		MsgDev( D_ERROR, "map %s is invalid or not supported\n", mapname );
 		return;
 	}
 	
 	if( !FBitSet( flags, MAP_IS_EXIST ))
 	{
-		Msg( "SV_NewMap: map %s doesn't exist\n", mapname );
+		MsgDev( D_ERROR, "map %s doesn't exist\n", mapname );
 		return;
 	}
 
 	if( !FBitSet( flags, MAP_HAS_SPAWNPOINT ))
 	{
-		Msg( "SV_NewMap: map %s doesn't have a valid spawnpoint\n", mapname );
+		MsgDev( D_ERROR, "map %s doesn't have a valid spawnpoint\n", mapname );
 		return;
 	}
 
-	// init network stuff
-	NET_Config(( sv_maxclients->integer > 1 ));
-
 	// changing singleplayer to multiplayer or back. refresh the player count
-	if(( sv_maxclients->modified ) || ( deathmatch->modified ) || ( coop->modified ) || ( teamplay->modified ))
+	if( FBitSet( sv_maxclients->flags, FCVAR_CHANGED ))
 		Host_ShutdownServer();
 
 	SCR_BeginLoadingPlaque( false );
@@ -232,6 +229,8 @@ void SV_Map_f( void )
 	sv.background = false;
 	sv.loadgame = false; // set right state
 	SV_ClearSaveDir ();	// delete all temporary *.hl files
+
+	Cvar_DirectSet( sv_hostmap, mapname );
 
 	SV_DeactivateServer();
 	SV_SpawnServer( mapname, NULL );
@@ -259,7 +258,7 @@ void SV_MapBackground_f( void )
 
 	if( sv.state == ss_active && !sv.background )
 	{
-		Msg( "SV_NewMap: can't set background map while game is active\n" );
+		MsgDev( D_ERROR, "can't set background map while game is active\n" );
 		return;
 	}
 
@@ -271,19 +270,19 @@ void SV_MapBackground_f( void )
 
 	if( FBitSet( flags, MAP_INVALID_VERSION ))
 	{
-		Msg( "SV_NewMap: map %s is invalid or not supported\n", mapname );
+		MsgDev( D_ERROR, "map %s is invalid or not supported\n", mapname );
 		return;
 	}
 
 	if( !FBitSet( flags, MAP_IS_EXIST ))
 	{
-		Msg( "SV_NewMap: map %s doesn't exist\n", mapname );
+		MsgDev( D_ERROR, "map %s doesn't exist\n", mapname );
 		return;
 	}
 
 	// background maps allow without spawnpoints (just throw warning)
 	if( !FBitSet( flags, MAP_HAS_SPAWNPOINT ))
-		MsgDev( D_WARN, "SV_NewMap: map %s doesn't have a valid spawnpoint\n", mapname );
+		MsgDev( D_WARN, "map %s doesn't have a valid spawnpoint\n", mapname );
 		
 	Q_strncpy( host.finalmsg, "", MAX_STRING );
 	SV_Shutdown( true );
@@ -294,10 +293,9 @@ void SV_MapBackground_f( void )
 	sv.loadgame = false; // set right state
 
 	// reset all multiplayer cvars
-	Cvar_FullSet( "coop", "0",  CVAR_LATCH );
-	Cvar_FullSet( "teamplay", "0",  CVAR_LATCH );
-	Cvar_FullSet( "deathmatch", "0",  CVAR_LATCH );
-	Cvar_FullSet( "maxplayers", "1", CVAR_LATCH );
+	Cvar_FullSet( "maxplayers", "1", FCVAR_LATCH );
+	Cvar_SetValue( "deathmatch", 0 );
+	Cvar_SetValue( "coop", 0 );
 
 	SCR_BeginLoadingPlaque( true );
 
@@ -337,7 +335,13 @@ void SV_HazardCourse_f( void )
 		return;
 	}
 
-	Host_NewGame( GI->trainmap, false );
+	// special case for Gunman Chronicles: playing avi-file
+	if( FS_FileExists( va( "media/%s.avi", GI->trainmap ), false ))
+	{
+		Cbuf_AddText( va( "wait; movie %s\n", GI->trainmap ));
+		Host_EndGame( "The End" );
+	}
+	else Host_NewGame( GI->trainmap, false );
 }
 
 /*
@@ -370,12 +374,16 @@ SV_Load_f
 */
 void SV_Load_f( void )
 {
+	string	path;
+
 	if( Cmd_Argc() != 2 )
 	{
 		Msg( "Usage: load <savename>\n" );
 		return;
 	}
-	SV_LoadGame( Cmd_Argv( 1 ));
+
+	Q_snprintf( path, sizeof( path ), "save/%s.sav", Cmd_Argv( 1 ));
+	SV_LoadGame( path );
 }
 
 /*
@@ -482,7 +490,7 @@ void SV_ChangeLevel_f( void )
 	FS_StripExtension( mapname );
 
 	// determine spawn entity classname
-	if( sv_maxclients->integer == 1 )
+	if( svs.maxclients == 1 )
 		spawn_entity = GI->sp_entity;
 	else spawn_entity = GI->mp_entity;
 
@@ -490,39 +498,39 @@ void SV_ChangeLevel_f( void )
 
 	if( FBitSet( flags, MAP_INVALID_VERSION ))
 	{
-		Msg( "SV_ChangeLevel: map %s is invalid or not supported\n", mapname );
+		MsgDev( D_ERROR, "map %s is invalid or not supported\n", mapname );
 		return;
 	}
 	
 	if( !FBitSet( flags, MAP_IS_EXIST ))
 	{
-		Msg( "SV_ChangeLevel: map %s doesn't exist\n", mapname );
+		MsgDev( D_ERROR, "map %s doesn't exist\n", mapname );
 		return;
 	}
 
 	if( c >= 3 && !FBitSet( flags, MAP_HAS_LANDMARK ))
 	{
-		if( sv_validate_changelevel->integer )
+		if( sv_validate_changelevel->value )
 		{
 			// NOTE: we find valid map but specified landmark it's doesn't exist
 			// run simple changelevel like in q1, throw warning
-			MsgDev( D_INFO, "SV_ChangeLevel: map %s is exist but doesn't contain\n", mapname );
-			MsgDev( D_INFO, "landmark with name %s. Run classic quake changelevel\n", Cmd_Argv( 2 ));
+			MsgDev( D_WARN, "map %s is exist but doesn't contain landmark with name %s. smooth transition disabled\n",
+			mapname, Cmd_Argv( 2 ));
 			c = 2; // reduce args
 		}
 	}
 
 	if( c >= 3 && !Q_stricmp( sv.name, Cmd_Argv( 1 )))
 	{
-		MsgDev( D_INFO, "SV_ChangeLevel: can't changelevel with same map. Ignored.\n" );
+		MsgDev( D_ERROR, "can't changelevel with same map. Ignored.\n" );
 		return;	
 	}
 
 	if( c == 2 && !FBitSet( flags, MAP_HAS_SPAWNPOINT ))
 	{
-		if( sv_validate_changelevel->integer )
+		if( sv_validate_changelevel->value )
 		{
-			MsgDev( D_INFO, "SV_ChangeLevel: map %s doesn't have a valid spawnpoint. Ignored.\n", mapname );
+			MsgDev( D_ERROR, "map %s doesn't have a valid spawnpoint. Ignored.\n", mapname );
 			return;	
 		}
 	}
@@ -530,17 +538,16 @@ void SV_ChangeLevel_f( void )
 	// bad changelevel position invoke enables in one-way transition
 	if( sv.net_framenum < 15 )
 	{
-		if( sv_validate_changelevel->integer )
+		if( sv_validate_changelevel->value )
 		{
-			MsgDev( D_INFO, "SV_ChangeLevel: a infinite changelevel detected.\n" );
-			MsgDev( D_INFO, "Changelevel will be disabled until a next save\\restore.\n" );
+			MsgDev( D_WARN, "an infinite changelevel detected and will be disabled until a next save\\restore\n" );
 			return; // lock with svs.spawncount here
 		}
 	}
 
 	if( sv.state != ss_active )
 	{
-		MsgDev( D_INFO, "Only the server may changelevel\n" );
+		MsgDev( D_ERROR, "only the server may changelevel\n" );
 		return;
 	}
 
@@ -589,20 +596,15 @@ continue from latest savedgame
 */
 void SV_Reload_f( void )
 {
-	const char	*save;
-	string		loadname;
-	
+	const char	*savefile;
+
 	if( sv.state != ss_active || sv.background )
 		return;
 
-	save = SV_GetLatestSave();
+	savefile = SV_GetLatestSave();
 
-	if( save )
-	{
-		FS_FileBase( save, loadname );
-		Cbuf_AddText( va( "load %s\n", loadname ));
-	}
-	else Cbuf_AddText( "newgame\n" ); // begin new game
+	if( savefile ) SV_LoadGame( savefile );
+	else SV_NewGame( sv_hostmap->string, false );
 }
 
 /*
@@ -703,9 +705,9 @@ void SV_Status_f( void )
 	Msg( "num score ping    name            lastmsg address               port \n" );
 	Msg( "--- ----- ------- --------------- ------- --------------------- ------\n" );
 
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 	{
-		int	j, l, ping;
+		int	j, l;
 		char	*s;
 
 		if( !cl->state ) continue;
@@ -716,11 +718,7 @@ void SV_Status_f( void )
 		if( cl->state == cs_connected ) Msg( "Connect" );
 		else if( cl->state == cs_zombie ) Msg( "Zombie " );
 		else if( FBitSet( cl->flags, FCL_FAKECLIENT )) Msg( "Bot   " );
-		else
-		{
-			ping = cl->ping < 9999 ? cl->ping : 9999;
-			Msg( "%7i ", ping );
-		}
+		else Msg( "%7i ", SV_CalcPing( cl ));
 
 		Msg( "%s", cl->name );
 		l = 24 - Q_strlen( cl->name );
@@ -766,7 +764,7 @@ void SV_ConSay_f( void )
 
 	Q_strncat( text, p, MAX_SYSPATH );
 
-	for( i = 0, client = svs.clients; i < sv_maxclients->integer; i++, client++ )
+	for( i = 0, client = svs.clients; i < svs.maxclients; i++, client++ )
 	{
 		if( client->state != cs_spawned )
 			continue;
@@ -789,13 +787,76 @@ void SV_Heartbeat_f( void )
 ===========
 SV_ServerInfo_f
 
-Examine serverinfo string
+Examine or change the serverinfo string
 ===========
 */
 void SV_ServerInfo_f( void )
 {
-	Msg( "Server info settings:\n" );
-	Info_Print( Cvar_Serverinfo( ));
+	convar_t	*var;
+
+	if( Cmd_Argc() == 1 )
+	{
+		Msg( "Server info settings:\n" );
+		Info_Print( svs.serverinfo );
+		Msg( "Total %i symbols\n", Q_strlen( svs.serverinfo ));
+		return;
+	}
+
+	if( Cmd_Argc() != 3 )
+	{
+		Msg( "Usage: serverinfo [ <key> <value> ]\n");
+		return;
+	}
+
+	if( Cmd_Argv(1)[0] == '*' )
+	{
+		Msg( "Star variables cannot be changed.\n" );
+		return;
+	}
+
+	// if this is a cvar, change it too	
+	var = Cvar_FindVar( Cmd_Argv( 1 ));
+	if( var )
+	{
+		freestring( var->string ); // free the old value string	
+		var->string = copystring( Cmd_Argv( 2 ));
+		var->value = Q_atof( var->string );
+	}
+
+	Info_SetValueForStarKey( svs.serverinfo, Cmd_Argv( 1 ), Cmd_Argv( 2 ), MAX_SERVERINFO_STRING );
+	SV_BroadcastCommand( "fullserverinfo \"%s\"\n", SV_Serverinfo( ));
+}
+
+/*
+===========
+SV_LocalInfo_f
+
+Examine or change the localinfo string
+===========
+*/
+void SV_LocalInfo_f( void )
+{
+	if( Cmd_Argc() == 1 )
+	{
+		Msg( "Local info settings:\n" );
+		Info_Print( svs.localinfo );
+		Msg( "Total %i symbols\n", Q_strlen( svs.localinfo ));
+		return;
+	}
+
+	if( Cmd_Argc() != 3 )
+	{
+		Msg( "Usage: localinfo [ <key> <value> ]\n");
+		return;
+	}
+
+	if( Cmd_Argv(1)[0] == '*' )
+	{
+		Msg( "Star variables cannot be changed.\n" );
+		return;
+	}
+
+	Info_SetValueForStarKey( svs.localinfo, Cmd_Argv(1), Cmd_Argv(2), MAX_LOCALINFO_STRING );
 }
 
 /*
@@ -918,6 +979,29 @@ void SV_EntityInfo_f( void )
 		Msg( "\n" );
 	}
 }
+/*
+==================
+SV_InitHostCommands
+
+commands that create server
+is available always
+==================
+*/
+void SV_InitHostCommands( void )
+{
+	Cmd_AddCommand( "map", SV_Map_f, "start new level" );
+	Cmd_AddCommand( "changelevel", SV_ChangeLevel_f, "changing level" );
+
+	if( host.type == HOST_NORMAL )
+	{
+		Cmd_AddCommand( "newgame", SV_NewGame_f, "begin new game" );
+		Cmd_AddCommand( "hazardcourse", SV_HazardCourse_f, "starting a Hazard Course" );
+		Cmd_AddCommand( "map_background", SV_MapBackground_f, "set background map" );
+		Cmd_AddCommand( "load", SV_Load_f, "load a saved game file" );
+		Cmd_AddCommand( "loadquick", SV_QuickLoad_f, "load a quick-saved game file" );
+		Cmd_AddCommand( "killsave", SV_DeleteSave_f, "delete a saved game file and saveshot" );
+	}
+}
 
 /*
 ==================
@@ -930,36 +1014,28 @@ void SV_InitOperatorCommands( void )
 	Cmd_AddCommand( "kick", SV_Kick_f, "kick a player off the server by number or name" );
 	Cmd_AddCommand( "kill", SV_Kill_f, "die instantly" );
 	Cmd_AddCommand( "status", SV_Status_f, "print server status information" );
-	Cmd_AddCommand( "serverinfo", SV_ServerInfo_f, "print server settings" );
+	Cmd_AddCommand( "localinfo", SV_LocalInfo_f, "examine or change the localinfo string" );
+	Cmd_AddCommand( "serverinfo", SV_ServerInfo_f, "examine or change the serverinfo string" );
 	Cmd_AddCommand( "clientinfo", SV_ClientInfo_f, "print user infostring (player num required)" );
 	Cmd_AddCommand( "playersonly", SV_PlayersOnly_f, "freezes time, except for players" );
-
-	Cmd_AddCommand( "map", SV_Map_f, "start new level" );
-	Cmd_AddCommand( "newgame", SV_NewGame_f, "begin new game" );
-	Cmd_AddCommand( "endgame", SV_EndGame_f, "end current game" );
-	Cmd_AddCommand( "killgame", SV_KillGame_f, "end current game" );
-	Cmd_AddCommand( "hazardcourse", SV_HazardCourse_f, "starting a Hazard Course" );
-	Cmd_AddCommand( "changelevel", SV_ChangeLevel_f, "changing level" );
 	Cmd_AddCommand( "restart", SV_Restart_f, "restarting current level" );
 	Cmd_AddCommand( "reload", SV_Reload_f, "continue from latest save or restart level" );
 	Cmd_AddCommand( "entpatch", SV_EntPatch_f, "write entity patch to allow external editing" );
 	Cmd_AddCommand( "edict_usage", SV_EdictUsage_f, "show info about edicts usage" );
 	Cmd_AddCommand( "entity_info", SV_EntityInfo_f, "show more info about edicts" );
 
-	if( host.type == HOST_DEDICATED )
+	if( host.type == HOST_NORMAL )
+	{
+		Cmd_AddCommand( "endgame", SV_EndGame_f, "end current game" );
+		Cmd_AddCommand( "killgame", SV_KillGame_f, "end current game" );
+		Cmd_AddCommand( "save", SV_Save_f, "save the game to a file" );
+		Cmd_AddCommand( "savequick", SV_QuickSave_f, "save the game to the quicksave" );
+		Cmd_AddCommand( "autosave", SV_AutoSave_f, "save the game to 'autosave' file" );
+	}
+	else if( host.type == HOST_DEDICATED )
 	{
 		Cmd_AddCommand( "say", SV_ConSay_f, "send a chat message to everyone on the server" );
 		Cmd_AddCommand( "killserver", SV_KillServer_f, "shutdown current server" );
-	}
-	else
-	{
-		Cmd_AddCommand( "map_background", SV_MapBackground_f, "set background map" );
-		Cmd_AddCommand( "save", SV_Save_f, "save the game to a file" );
-		Cmd_AddCommand( "load", SV_Load_f, "load a saved game file" );
-		Cmd_AddCommand( "savequick", SV_QuickSave_f, "save the game to the quicksave" );
-		Cmd_AddCommand( "loadquick", SV_QuickLoad_f, "load a quick-saved game file" );
-		Cmd_AddCommand( "killsave", SV_DeleteSave_f, "delete a saved game file and saveshot" );
-		Cmd_AddCommand( "autosave", SV_AutoSave_f, "save the game to 'autosave' file" );
 	}
 }
 
@@ -974,35 +1050,28 @@ void SV_KillOperatorCommands( void )
 	Cmd_RemoveCommand( "kick" );
 	Cmd_RemoveCommand( "kill" );
 	Cmd_RemoveCommand( "status" );
+	Cmd_RemoveCommand( "localinfo" );
 	Cmd_RemoveCommand( "serverinfo" );
 	Cmd_RemoveCommand( "clientinfo" );
 	Cmd_RemoveCommand( "playersonly" );
-
-	Cmd_RemoveCommand( "map" );
-	Cmd_RemoveCommand( "newgame" );
-	Cmd_RemoveCommand( "endgame" );
-	Cmd_RemoveCommand( "killgame" );
-	Cmd_RemoveCommand( "hazardcourse" );
-	Cmd_RemoveCommand( "changelevel" );
 	Cmd_RemoveCommand( "restart" );
 	Cmd_RemoveCommand( "reload" );
 	Cmd_RemoveCommand( "entpatch" );
 	Cmd_RemoveCommand( "edict_usage" );
 	Cmd_RemoveCommand( "entity_info" );
 
-	if( host.type == HOST_DEDICATED )
+	if( host.type == HOST_NORMAL )
+	{
+		Cmd_RemoveCommand( "endgame" );
+		Cmd_RemoveCommand( "killgame" );
+		Cmd_RemoveCommand( "save" );
+		Cmd_RemoveCommand( "savequick" );
+		Cmd_RemoveCommand( "killsave" );
+		Cmd_RemoveCommand( "autosave" );
+	}
+	else if( host.type == HOST_DEDICATED )
 	{
 		Cmd_RemoveCommand( "say" );
 		Cmd_RemoveCommand( "killserver" );
-	}
-	else
-	{
-		Cmd_RemoveCommand( "map_background" );
-		Cmd_RemoveCommand( "save" );
-		Cmd_RemoveCommand( "load" );
-		Cmd_RemoveCommand( "savequick" );
-		Cmd_RemoveCommand( "loadquick" );
-		Cmd_RemoveCommand( "killsave" );
-		Cmd_RemoveCommand( "autosave" );
 	}
 }

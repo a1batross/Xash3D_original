@@ -58,8 +58,10 @@ int SV_ModelIndex( const char *filename )
 
 	if( sv.state != ss_loading )
 	{	
+		MsgDev( D_WARN, "late precache of %s\n", name );
+
 		// send the update to everyone
-		MSG_WriteByte( &sv.reliable_datagram, svc_modelindex );
+		MSG_BeginServerCmd( &sv.reliable_datagram, svc_modelindex );
 		MSG_WriteUBitLong( &sv.reliable_datagram, i, MAX_MODEL_BITS );
 		MSG_WriteString( &sv.reliable_datagram, name );
 	}
@@ -103,8 +105,10 @@ int SV_SoundIndex( const char *filename )
 
 	if( sv.state != ss_loading )
 	{	
+		MsgDev( D_WARN, "late precache of %s\n", name );
+
 		// send the update to everyone
-		MSG_WriteByte( &sv.reliable_datagram, svc_soundindex );
+		MSG_BeginServerCmd( &sv.reliable_datagram, svc_soundindex );
 		MSG_WriteUBitLong( &sv.reliable_datagram, i, MAX_SOUND_BITS );
 		MSG_WriteString( &sv.reliable_datagram, name );
 	}
@@ -148,7 +152,7 @@ int SV_EventIndex( const char *filename )
 	if( sv.state != ss_loading )
 	{
 		// send the update to everyone
-		MSG_WriteByte( &sv.reliable_datagram, svc_eventindex );
+		MSG_BeginServerCmd( &sv.reliable_datagram, svc_eventindex );
 		MSG_WriteUBitLong( &sv.reliable_datagram, i, MAX_EVENT_BITS );
 		MSG_WriteString( &sv.reliable_datagram, name );
 	}
@@ -303,28 +307,17 @@ void SV_ActivateServer( void )
 	if( !svs.initialized )
 		return;
 
-	// custom muzzleflashes
-	pfnPrecacheModel( "sprites/muzzleflash1.spr" );
-	pfnPrecacheModel( "sprites/muzzleflash2.spr" );
-	pfnPrecacheModel( "sprites/muzzleflash3.spr" );
-
-	// rocket flare
-	pfnPrecacheModel( "sprites/animglow01.spr" );
-
-	// ricochet sprite
-	pfnPrecacheModel( "sprites/richo1.spr" );
-
 	// Activate the DLL server code
 	svgame.dllFuncs.pfnServerActivate( svgame.edicts, svgame.numEntities, svgame.globals->maxClients );
 
 	if( sv.loadgame || svgame.globals->changelevel )
 	{
-		sv.frametime = 0.001;
+		sv.frametime = bound( 0.001, sv_changetime.value, 0.1 );
 		numFrames = 1;
 	}
-	else if( sv_maxclients->integer <= 1 )
+	else if( svs.maxclients <= 1 )
 	{
-		sv.frametime = 0.1f;
+		sv.frametime = bound( 0.1, sv_spawntime.value, 0.8 );
 		numFrames = 2;
 	}
 	else
@@ -344,7 +337,7 @@ void SV_ActivateServer( void )
 	sv.num_consistency_resources = SV_TransferConsistencyInfo();
 
 	// send serverinfo to all connected clients
-	for( i = 0; i < sv_maxclients->integer; i++ )
+	for( i = 0; i < svs.maxclients; i++ )
 	{
 		if( svs.clients[i].state >= cs_connected )
 		{
@@ -364,12 +357,9 @@ void SV_ActivateServer( void )
 	if( svgame.globals->maxClients > 1 )
 	{
 		MsgDev( D_INFO, "%i player server started\n", svgame.globals->maxClients );
-		Cvar_Reset( "clockwindow" );
 	}
 	else
 	{
-		// clear the ugly moving delay in singleplayer
-		Cvar_SetFloat( "clockwindow", 0.0f );
 		MsgDev( D_INFO, "Game started\n" );
 	}
 
@@ -378,35 +368,22 @@ void SV_ActivateServer( void )
 		Mod_FreeUnused ();
 
 	sv.state = ss_active;
-	physinfo->modified = true;
+	host.movevars_changed = true;
 	sv.changelevel = false;
 	sv.paused = false;
 
 	Host_SetServerState( sv.state );
 
-	if( sv_maxclients->integer > 1 )
+	if( svs.maxclients > 1 )
 	{
-		// listenserver is executed on every map change in multiplayer
-		if( host.type != HOST_DEDICATED )
-		{
-#if 0
-			// temporare disable because it's broken TFC multiplayer
-			char *plservercfgfile = Cvar_VariableString( "lservercfgfile" );
-			if( *plservercfgfile ) Cbuf_AddText( va( "exec %s\n", plservercfgfile ));
-#endif
-		}
+		char *mapchangecfgfile = Cvar_VariableString( "mapchangecfgfile" );
+		if( *mapchangecfgfile ) Cbuf_AddText( va( "exec %s\n", mapchangecfgfile ));
 
-		if( public_server->integer )
+		if( public_server->value )
 		{
 			MsgDev( D_INFO, "Adding your server to master server list\n" );
 			Master_Add( );
 		}
-	}
-
-	// mapchangecfgfile
-	{
-		char *mapchangecfgfile = Cvar_VariableString( "mapchangecfgfile" );
-		if( *mapchangecfgfile ) Cbuf_AddText( va( "exec %s\n", mapchangecfgfile ));
 	}
 }
 
@@ -434,10 +411,7 @@ void SV_DeactivateServer( void )
 
 	Mem_EmptyPool( svgame.stringspool );
 
-	if( sv_maxclients->integer > 32 )
-		Cvar_SetFloat( "maxplayers", 32.0f );
-
-	for( i = 0; i < sv_maxclients->integer; i++ )
+	for( i = 0; i < svs.maxclients; i++ )
 	{
 		// release client frames
 		if( svs.clients[i].frames )
@@ -446,7 +420,7 @@ void SV_DeactivateServer( void )
 	}
 
 	svgame.globals->maxEntities = GI->max_edicts;
-	svgame.globals->maxClients = sv_maxclients->integer;
+	svgame.globals->maxClients = svs.maxclients;
 	svgame.numEntities = svgame.globals->maxClients + 1; // clients + world
 	svgame.globals->startspot = 0;
 	svgame.globals->mapname = 0;
@@ -476,7 +450,7 @@ void SV_LevelInit( const char *pMapName, char const *pOldLevel, char const *pLan
 			SV_LoadAdjacentEnts( pOldLevel, pLandmarkName );
 		}
 
-		if( sv_newunit->integer )
+		if( sv_newunit.value )
 		{
 			SV_ClearSaveDir();
 		}
@@ -487,14 +461,14 @@ void SV_LevelInit( const char *pMapName, char const *pOldLevel, char const *pLan
 		SV_SpawnEntities( pMapName, SV_EntityScript( ));
 		svgame.globals->frametime = 0.0f;
 
-		if( sv_newunit->integer )
+		if( sv_newunit.value )
 		{
 			SV_ClearSaveDir();
 		}
 	}
 
 	// always clearing newunit variable
-	Cvar_SetFloat( "sv_newunit", 0 );
+	Cvar_SetValue( "sv_newunit", 0 );
 
 	// relese all intermediate entities
 	SV_FreeOldEntities ();
@@ -522,14 +496,9 @@ qboolean SV_SpawnServer( const char *mapname, const char *startspot )
 
 	if( sv.state == ss_dead )
 		SV_InitGame(); // the game is just starting
-	else if( !sv_maxclients->modified )
-		Cmd_ExecuteString( "latch\n" );
-	else MsgDev( D_ERROR, "SV_SpawnServer: while 'maxplayers' was modified.\n" );
 
-	sv_maxclients->modified = false;
-	deathmatch->modified = false;
-	teamplay->modified = false;
-	coop->modified = false;
+	NET_Config(( svs.maxclients > 1 )); // init network stuff
+	ClearBits( sv_maxclients->flags, FCVAR_CHANGED );
 
 	if( !svs.initialized )
 		return false;
@@ -560,13 +529,14 @@ qboolean SV_SpawnServer( const char *mapname, const char *startspot )
 	svgame.globals->time = sv.time;
 	
 	// initialize buffers
-	MSG_Init( &sv.reliable_datagram, "Reliable Datagram", sv.reliable_datagram_buf, sizeof( sv.reliable_datagram_buf ));
-	MSG_Init( &sv.multicast, "Multicast", sv.multicast_buf, sizeof( sv.multicast_buf ));
 	MSG_Init( &sv.signon, "Signon", sv.signon_buf, sizeof( sv.signon_buf ));
-	MSG_Init( &sv.spectator_datagram, "Spectator Datagram", sv.spectator_buf, sizeof( sv.spectator_buf ));
+	MSG_Init( &sv.multicast, "Multicast", sv.multicast_buf, sizeof( sv.multicast_buf ));
+	MSG_Init( &sv.datagram, "Datagram", sv.datagram_buf, sizeof( sv.datagram_buf ));
+	MSG_Init( &sv.reliable_datagram, "Reliable Datagram", sv.reliable_datagram_buf, sizeof( sv.reliable_datagram_buf ));
+	MSG_Init( &sv.spec_datagram, "Spectator Datagram", sv.spectator_buf, sizeof( sv.spectator_buf ));
 
 	// leave slots at start for clients only
-	for( i = 0; i < sv_maxclients->integer; i++ )
+	for( i = 0; i < svs.maxclients; i++ )
 	{
 		// needs to reconnect
 		if( svs.clients[i].state > cs_connected )
@@ -574,22 +544,22 @@ qboolean SV_SpawnServer( const char *mapname, const char *startspot )
 	}
 
 	// make cvars consistant
-	if( Cvar_VariableInteger( "coop" )) Cvar_SetFloat( "deathmatch", 0 );
-	current_skill = (int)(Cvar_VariableValue( "skill" ) + 0.5f);
+	if( coop.value ) Cvar_SetValue( "deathmatch", 0 );
+	current_skill = Q_rint( skill.value );
 	current_skill = bound( 0, current_skill, 3 );
 
-	Cvar_SetFloat( "skill", (float)current_skill );
+	Cvar_SetValue( "skill", (float)current_skill );
 
 	if( sv.background )
 	{
 		// tell the game parts about background state
-		Cvar_FullSet( "sv_background", "1", CVAR_READ_ONLY );
-		Cvar_FullSet( "cl_background", "1", CVAR_READ_ONLY );
+		Cvar_FullSet( "sv_background", "1", FCVAR_READ_ONLY );
+		Cvar_FullSet( "cl_background", "1", FCVAR_READ_ONLY );
 	}
 	else
 	{
-		Cvar_FullSet( "sv_background", "0", CVAR_READ_ONLY );
-		Cvar_FullSet( "cl_background", "0", CVAR_READ_ONLY );
+		Cvar_FullSet( "sv_background", "0", FCVAR_READ_ONLY );
+		Cvar_FullSet( "cl_background", "0", FCVAR_READ_ONLY );
 	}
 
 	// make sure what server name doesn't contain path and extension
@@ -600,7 +570,7 @@ qboolean SV_SpawnServer( const char *mapname, const char *startspot )
 	else sv.startspot[0] = '\0';
 
 	Q_snprintf( sv.model_precache[1], sizeof( sv.model_precache[0] ), "maps/%s.bsp", sv.name );
-	Mod_LoadWorld( sv.model_precache[1], &sv.checksum, sv_maxclients->integer > 1 );
+	Mod_LoadWorld( sv.model_precache[1], &sv.checksum, svs.maxclients > 1 );
 	sv.worldmodel = Mod_Handle( 1 ); // get world pointer
 
 	for( i = 1; i < sv.worldmodel->numsubmodels; i++ )
@@ -654,48 +624,27 @@ void SV_InitGame( void )
 		CL_Drop();
 	}
 
-	// now apply latched commands
-	Cmd_ExecuteString( "latch\n" );
-
-	if( Cvar_VariableValue( "coop" ) && Cvar_VariableValue ( "deathmatch" ) && Cvar_VariableValue( "teamplay" ))
-	{
-		MsgDev( D_WARN, "Deathmatch, Teamplay and Coop set, defaulting to Deathmatch\n");
-		Cvar_FullSet( "coop", "0",  CVAR_LATCH );
-		Cvar_FullSet( "teamplay", "0", CVAR_LATCH );
-	}
+	svs.maxclients = sv_maxclients->value;	// copy the actual value from cvar
 
 	// dedicated servers are can't be single player and are usually DM
-	// so unless they explicity set coop, force it to deathmatch
 	if( host.type == HOST_DEDICATED )
-	{
-		if( !Cvar_VariableValue( "coop" ) && !Cvar_VariableValue( "teamplay" ))
-			Cvar_FullSet( "deathmatch", "1",  CVAR_LATCH );
-	}
+		svs.maxclients = bound( 4, svs.maxclients, MAX_CLIENTS );
+	else svs.maxclients = bound( 1, svs.maxclients, MAX_CLIENTS );
 
-	// init clients
-	if( Cvar_VariableValue( "deathmatch" ) || Cvar_VariableValue( "teamplay" ))
-	{
-		if( sv_maxclients->integer <= 1 )
-			Cvar_FullSet( "maxplayers", "8", CVAR_LATCH );
-		else if( sv_maxclients->integer > MAX_CLIENTS )
-			Cvar_FullSet( "maxplayers", "32", CVAR_LATCH );
-	}
-	else if( Cvar_VariableValue( "coop" ))
-	{
-		if( sv_maxclients->integer <= 1 || sv_maxclients->integer > 4 )
-			Cvar_FullSet( "maxplayers", "4", CVAR_LATCH );
-	}
-	else	
-	{
-		// non-deathmatch, non-coop is one player
-		Cvar_FullSet( "maxplayers", "1", CVAR_LATCH );
-	}
+	if( svs.maxclients == 1 )
+		Cvar_SetValue( "deathmatch", 0.0f );
+	else Cvar_SetValue( "deathmatch", 1.0f );
 
-	svgame.globals->maxClients = sv_maxclients->integer;
-	SV_UPDATE_BACKUP = ( svgame.globals->maxClients == 1 ) ? SINGLEPLAYER_BACKUP : MULTIPLAYER_BACKUP;
+	// make cvars consistant
+	if( coop.value ) Cvar_SetValue( "deathmatch", 0.0f );
 
-	svs.clients = Z_Malloc( sizeof( sv_client_t ) * sv_maxclients->integer );
-	svs.num_client_entities = sv_maxclients->integer * SV_UPDATE_BACKUP * NUM_PACKET_ENTITIES;
+	// feedback for cvar
+	Cvar_FullSet( "maxplayers", va( "%d", svs.maxclients ), FCVAR_LATCH );
+	SV_UPDATE_BACKUP = ( svs.maxclients == 1 ) ? SINGLEPLAYER_BACKUP : MULTIPLAYER_BACKUP;
+	svgame.globals->maxClients = svs.maxclients;
+
+	svs.clients = Z_Malloc( sizeof( sv_client_t ) * svs.maxclients );
+	svs.num_client_entities = svs.maxclients * SV_UPDATE_BACKUP * NUM_PACKET_ENTITIES;
 	svs.packet_entities = Z_Malloc( sizeof( entity_state_t ) * svs.num_client_entities );
 	svs.baselines = Z_Malloc( sizeof( entity_state_t ) * GI->max_edicts );
 	if( !load ) MsgDev( D_INFO, "%s alloced by server packet entities\n", Q_memprint( sizeof( entity_state_t ) * svs.num_client_entities ));
@@ -703,12 +652,11 @@ void SV_InitGame( void )
 	// client frames will be allocated in SV_DirectConnect
 
 	// init network stuff
-	NET_Config(( sv_maxclients->integer > 1 ));
+	NET_Config(( svs.maxclients > 1 ));
 
 	// copy gamemode into svgame.globals
-	svgame.globals->deathmatch = Cvar_VariableInteger( "deathmatch" );
-	svgame.globals->teamplay = Cvar_VariableInteger( "teamplay" );
-	svgame.globals->coop = ( sv_maxclients->integer > 1 ) ? Cvar_VariableInteger( "coop" ) : 0;
+	svgame.globals->deathmatch = deathmatch.value;
+	svgame.globals->coop = coop.value;
 
 	// heartbeats will always be sent to the id master
 	svs.last_heartbeat = MAX_HEARTBEAT; // send immediately
@@ -734,10 +682,15 @@ qboolean SV_Active( void )
 	return svs.initialized;
 }
 
+int SV_GetMaxClients( void )
+{
+	return svs.maxclients;
+}
+
 void SV_ForceError( void )
 {
 	// this is only for singleplayer testing
-	if( sv_maxclients->integer != 1 ) return;
+	if( svs.maxclients != 1 ) return;
 	sv.write_bad_message = true;
 }
 
@@ -769,13 +722,15 @@ qboolean SV_NewGame( const char *mapName, qboolean loadGame )
 	}
 	else
 	{
-		S_StopAllSounds ();
+		S_StopAllSounds (true);
 		SV_DeactivateServer ();
 	}
 
 	sv.loadgame = loadGame;
 	sv.background = false;
 	sv.changelevel = false;
+
+	SCR_BeginLoadingPlaque( false );
 
 	if( !SV_SpawnServer( mapName, NULL ))
 		return false;

@@ -27,6 +27,7 @@ engine\common\
 engine\common\imagelib\
 engine\common\soundlib\
 pm_shared\
+hl_res\
 mainui\
 mainui\legacy
 utils\

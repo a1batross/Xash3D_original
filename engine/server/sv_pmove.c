@@ -30,11 +30,14 @@ void SV_ClearPhysEnts( void )
 	svgame.pmove->numphysent = 0;
 }
 
-void SV_ConvertPMTrace( trace_t *out, pmtrace_t *in, edict_t *ent )
+qboolean SV_PlayerIsFrozen( edict_t *pClient )
 {
-	memcpy( out, in, 48 ); // matched
-	out->hitgroup = in->hitgroup;
-	out->ent = ent;
+	if( FBitSet( host.features, ENGINE_QUAKE_COMPATIBLE ))
+		return false;
+
+	if( FBitSet( pClient->v.flags, FL_FROZEN ))
+		return true;
+	return false;
 }
 
 void SV_ClipPMoveToEntity( physent_t *pe, const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end, pmtrace_t *tr )
@@ -67,12 +70,11 @@ qboolean SV_CopyEdictToPhysEnt( physent_t *pe, edict_t *ed )
 	if( ed->v.flags & FL_CLIENT )
 	{
 		// client
-		if( svs.currentPlayer )
-			SV_GetTrueOrigin( svs.currentPlayer, (pe->info - 1), pe->origin );
+		SV_GetTrueOrigin( &svs.clients[pe->info - 1], (pe->info - 1), pe->origin );
 		Q_strncpy( pe->name, "player", sizeof( pe->name ));
 		pe->player = pe->info;
 	}
-	else if( ed->v.flags & FL_FAKECLIENT )
+	else if( ed->v.flags & FL_FAKECLIENT && ed->v.solid != MOVETYPE_PUSH )
 	{
 		// bot
 		Q_strncpy( pe->name, "bot", sizeof( pe->name ));
@@ -148,13 +150,13 @@ qboolean SV_CopyEdictToPhysEnt( physent_t *pe, edict_t *ed )
 
 void SV_GetTrueOrigin( sv_client_t *cl, int edictnum, vec3_t origin )
 {
-	if( !FBitSet( cl->flags, FCL_LAG_COMPENSATION ) || !sv_unlag->integer )
+	// don't allow unlag in singleplayer
+	if( svs.maxclients <= 1 ) return;
+
+	if( cl->state < cs_connected || edictnum < 0 || edictnum >= svs.maxclients )
 		return;
 
-	// don't allow unlag in singleplayer
-	if( sv_maxclients->integer <= 1 ) return;
-
-	if( cl->state < cs_connected || edictnum < 0 || edictnum >= sv_maxclients->integer )
+	if( !FBitSet( cl->flags, FCL_LAG_COMPENSATION ) || !sv_unlag.value )
 		return;
 
 	if( !svgame.interp[edictnum].active || !svgame.interp[edictnum].moving )
@@ -165,13 +167,13 @@ void SV_GetTrueOrigin( sv_client_t *cl, int edictnum, vec3_t origin )
 
 void SV_GetTrueMinMax( sv_client_t *cl, int edictnum, vec3_t mins, vec3_t maxs )
 {
-	if( !FBitSet( cl->flags, FCL_LAG_COMPENSATION ) || !sv_unlag->integer )
+	// don't allow unlag in singleplayer
+	if( svs.maxclients <= 1 ) return;
+
+	if( cl->state < cs_connected || edictnum < 0 || edictnum >= svs.maxclients )
 		return;
 
-	// don't allow unlag in singleplayer
-	if( sv_maxclients->integer <= 1 ) return;
-
-	if( cl->state < cs_connected || edictnum < 0 || edictnum >= sv_maxclients->integer )
+	if( !FBitSet( cl->flags, FCL_LAG_COMPENSATION ) || !sv_unlag.value )
 		return;
 
 	if( !svgame.interp[edictnum].active || !svgame.interp[edictnum].moving )
@@ -230,8 +232,12 @@ void SV_AddLinksToPmove( areanode_t *node, const vec3_t pmove_mins, const vec3_t
 
 		if( check == pl ) continue;	// himself
 
-		if(( FBitSet( check->v.flags, FL_CLIENT|FL_FAKECLIENT ) && check->v.health <= 0.0f ) || check->v.deadflag == DEAD_DEAD )
-			continue;	// dead body
+		// nehahra collision flags
+		if( check->v.movetype != MOVETYPE_PUSH )
+		{
+			if(( FBitSet( check->v.flags, FL_CLIENT|FL_FAKECLIENT ) && check->v.health <= 0.0f ) || check->v.deadflag == DEAD_DEAD )
+				continue;	// dead body
+		}
 
 		if( VectorIsNull( check->v.size ))
 			continue;
@@ -241,9 +247,10 @@ void SV_AddLinksToPmove( areanode_t *node, const vec3_t pmove_mins, const vec3_t
 
 		if( FBitSet( check->v.flags, FL_CLIENT ))
 		{
+			int	e = NUM_FOR_EDICT( check ) - 1;
+
 			// trying to get interpolated values
-			if( svs.currentPlayer )
-				SV_GetTrueMinMax( svs.currentPlayer, ( NUM_FOR_EDICT( check ) - 1), mins, maxs );
+			SV_GetTrueMinMax( &svs.clients[e], e, mins, maxs );
 		}
 
 		if( !BoundsIntersect( pmove_mins, pmove_maxs, mins, maxs ))
@@ -279,12 +286,12 @@ void SV_AddLaddersToPmove( areanode_t *node, const vec3_t pmove_mins, const vec3
 	physent_t	*pe;
 	
 	// get water edicts
-	for( l = node->water_edicts.next; l != &node->water_edicts; l = next )
+	for( l = node->solid_edicts.next; l != &node->solid_edicts; l = next )
 	{
 		next = l->next;
 		check = EDICT_FROM_AREA( l );
 
-		if( check->v.solid != SOLID_NOT ) // disabled ?
+		if( check->v.solid != SOLID_NOT || check->v.skin != CONTENTS_LADDER )
 			continue;
 
 		// only brushes can have special contents
@@ -309,27 +316,6 @@ void SV_AddLaddersToPmove( areanode_t *node, const vec3_t pmove_mins, const vec3
 		SV_AddLaddersToPmove( node->children[0], pmove_mins, pmove_maxs );
 	if( pmove_mins[node->axis] < node->dist )
 		SV_AddLaddersToPmove( node->children[1], pmove_mins, pmove_maxs );
-}
-
-static void pfnParticle( float *origin, int color, float life, int zpos, int zvel )
-{
-	int	v;
-
-	if( !origin )
-	{
-		MsgDev( D_ERROR, "SV_StartParticle: NULL origin. Ignored\n" );
-		return;
-	}
-
-	MSG_WriteByte( &sv.reliable_datagram, svc_particle );
-	MSG_WriteVec3Coord( &sv.reliable_datagram, origin );
-	MSG_WriteChar( &sv.reliable_datagram, 0 ); // no x-vel
-	MSG_WriteChar( &sv.reliable_datagram, 0 ); // no y-vel
-	v = bound( -128, (zpos * zvel) * 16.0f, 127 );
-	MSG_WriteChar( &sv.reliable_datagram, v ); // write z-vel
-	MSG_WriteByte( &sv.reliable_datagram, 1 );
-	MSG_WriteByte( &sv.reliable_datagram, color );
-	MSG_WriteByte( &sv.reliable_datagram, bound( 0, life * 8, 255 ));
 }
 
 static int pfnTestPlayerPosition( float *pos, pmtrace_t *ptrace )
@@ -446,7 +432,7 @@ static float pfnTraceModel( physent_t *pe, float *start, float *end, trace_t *tr
  		VectorSubtract( end, offset, end_l );
  	}
 
-	SV_RecursiveHullCheck( hull, hull->firstclipnode, 0, 1, start_l, end_l, trace );
+	PM_RecursiveHullCheck( hull, hull->firstclipnode, 0, 1, start_l, end_l, (pmtrace_t *)trace );
 	trace->ent = NULL;
 
 	if( rotated )
@@ -559,23 +545,21 @@ void SV_InitClientMove( void )
 	svgame.pmove->movevars = &svgame.movevars;
 	svgame.pmove->runfuncs = false;
 
-	Mod_SetupHulls( svgame.player_mins, svgame.player_maxs );
-	
 	// enumerate client hulls
 	for( i = 0; i < MAX_MAP_HULLS; i++ )
 	{
-		if( svgame.dllFuncs.pfnGetHullBounds( i, svgame.player_mins[i], svgame.player_maxs[i] ))
+		if( svgame.dllFuncs.pfnGetHullBounds( i, host.player_mins[i], host.player_maxs[i] ))
 			MsgDev( D_NOTE, "SV: hull%i, player_mins: %g %g %g, player_maxs: %g %g %g\n", i,
-			svgame.player_mins[i][0], svgame.player_mins[i][1], svgame.player_mins[i][2],
-			svgame.player_maxs[i][0], svgame.player_maxs[i][1], svgame.player_maxs[i][2] );
+			host.player_mins[i][0], host.player_mins[i][1], host.player_mins[i][2],
+			host.player_maxs[i][0], host.player_maxs[i][1], host.player_maxs[i][2] );
 	}
 
-	memcpy( svgame.pmove->player_mins, svgame.player_mins, sizeof( svgame.player_mins ));
-	memcpy( svgame.pmove->player_maxs, svgame.player_maxs, sizeof( svgame.player_maxs ));
+	memcpy( svgame.pmove->player_mins, host.player_mins, sizeof( host.player_mins ));
+	memcpy( svgame.pmove->player_maxs, host.player_maxs, sizeof( host.player_maxs ));
 
 	// common utilities
 	svgame.pmove->PM_Info_ValueForKey = Info_ValueForKey;
-	svgame.pmove->PM_Particle = pfnParticle;
+	svgame.pmove->PM_Particle = CL_Particle; // for local system only
 	svgame.pmove->PM_TestPlayerPosition = pfnTestPlayerPosition;
 	svgame.pmove->Con_NPrintf = Con_NPrintf;
 	svgame.pmove->Con_DPrintf = Con_DPrintf;
@@ -587,8 +571,8 @@ void SV_InitClientMove( void )
 	svgame.pmove->PM_HullPointContents = pfnHullPointContents; 
 	svgame.pmove->PM_PlayerTrace = pfnPlayerTrace;
 	svgame.pmove->PM_TraceLine = pfnTraceLine;
-	svgame.pmove->RandomLong = Com_RandomLong;
-	svgame.pmove->RandomFloat = Com_RandomFloat;
+	svgame.pmove->RandomLong = COM_RandomLong;
+	svgame.pmove->RandomFloat = COM_RandomFloat;
 	svgame.pmove->PM_GetModelType = pfnGetModelType;
 	svgame.pmove->PM_GetModelBounds = pfnGetModelBounds;	
 	svgame.pmove->PM_HullForBsp = pfnHullForBsp;
@@ -639,8 +623,8 @@ static void SV_SetupPMove( playermove_t *pmove, sv_client_t *cl, usercmd_t *ucmd
 	svgame.globals->frametime = (ucmd->msec * 0.001f);
 
 	pmove->player_index = NUM_FOR_EDICT( clent ) - 1;
-	pmove->multiplayer = (sv_maxclients->integer > 1) ? true : false;
-	pmove->time = cl->timebase; // probably never used
+	pmove->multiplayer = (svs.maxclients > 1) ? true : false;
+	pmove->time = (float)(cl->timebase * 1000.0);
 	VectorCopy( clent->v.origin, pmove->origin );
 	VectorCopy( clent->v.v_angle, pmove->angles );
 	VectorCopy( clent->v.v_angle, pmove->oldangles );
@@ -751,14 +735,14 @@ static void SV_FinishPMove( playermove_t *pmove, sv_client_t *cl )
 	VectorCopy( pmove->vuser3, clent->v.vuser3 );
 	VectorCopy( pmove->vuser4, clent->v.vuser4 );
 
-	if( svgame.pmove->onground == -1 )
+	if( pmove->onground == -1 )
 	{
 		clent->v.flags &= ~FL_ONGROUND;
 	}
 	else if( pmove->onground >= 0 && pmove->onground < pmove->numphysent )
 	{
 		clent->v.flags |= FL_ONGROUND;
-		clent->v.groundentity = EDICT_NUM( svgame.pmove->physents[svgame.pmove->onground].info );
+		clent->v.groundentity = EDICT_NUM( pmove->physents[pmove->onground].info );
 	}
 
 	// angles
@@ -771,7 +755,7 @@ static void SV_FinishPMove( playermove_t *pmove, sv_client_t *cl )
 		clent->v.angles[YAW] = clent->v.v_angle[YAW];
 	}
 
-	SV_SetMinMaxSize( clent, pmove->player_mins[pmove->usehull], pmove->player_maxs[pmove->usehull] );
+	SV_SetMinMaxSize( clent, pmove->player_mins[pmove->usehull], pmove->player_maxs[pmove->usehull], false );
 
 	// all next calls ignore footstep sounds
 	pmove->runfuncs = false;
@@ -819,11 +803,11 @@ void SV_SetupMoveInterpolant( sv_client_t *cl )
 	has_update = false;
 
 	// don't allow unlag in singleplayer
-	if( sv_maxclients->integer <= 1 || cl->state != cs_spawned )
+	if( svs.maxclients <= 1 || cl->state != cs_spawned )
 		return;
 
 	// unlag disabled by game request
-	if( !svgame.dllFuncs.pfnAllowLagCompensation() || !sv_unlag->integer )
+	if( !svgame.dllFuncs.pfnAllowLagCompensation() || !sv_unlag.value )
 		return;
 
 	// unlag disabled for current client
@@ -832,7 +816,7 @@ void SV_SetupMoveInterpolant( sv_client_t *cl )
 
 	has_update = true;
 
-	for( i = 0, check = svs.clients; i < sv_maxclients->integer; i++, check++ )
+	for( i = 0, check = svs.clients; i < svs.maxclients; i++, check++ )
 	{
 		if( check->state != cs_spawned || check == cl )
 			continue;
@@ -849,13 +833,13 @@ void SV_SetupMoveInterpolant( sv_client_t *cl )
 		latency = 1.5f;
 	else latency = cl->latency;
 
-	if( sv_maxunlag->value != 0.0f )
+	if( sv_maxunlag.value != 0.0f )
 	{
-		if (sv_maxunlag->value < 0.0f )
-			Cvar_SetFloat( "sv_maxunlag", 0.0f );
+		if (sv_maxunlag.value < 0.0f )
+			Cvar_SetValue( "sv_maxunlag", 0.0f );
 
-		if( latency >= sv_maxunlag->value )
-			latency = sv_maxunlag->value;
+		if( latency >= sv_maxunlag.value )
+			latency = sv_maxunlag.value;
 	}
 
 	lerp_msec = cl->lastcmd.lerp_msec * 0.001f;
@@ -864,7 +848,7 @@ void SV_SetupMoveInterpolant( sv_client_t *cl )
 	if( lerp_msec < cl->cl_updaterate )
 		lerp_msec = cl->cl_updaterate;
 
-	finalpush = ( host.realtime - latency - lerp_msec ) + sv_unlagpush->value;
+	finalpush = ( host.realtime - latency - lerp_msec ) + sv_unlagpush.value;
 	if( finalpush > host.realtime ) finalpush = host.realtime; // pushed too much ?
 
 	frame = NULL;
@@ -877,7 +861,7 @@ void SV_SetupMoveInterpolant( sv_client_t *cl )
 		{
 			state = &svs.packet_entities[(frame->first_entity+j)%svs.num_client_entities];
 
-			if( state->number <= 0 || state->number >= sv_maxclients->integer )
+			if( state->number <= 0 || state->number >= svs.maxclients )
 				continue;
 
 			lerp = &svgame.interp[state->number-1];
@@ -927,7 +911,7 @@ void SV_SetupMoveInterpolant( sv_client_t *cl )
 	{
 		state = &svs.packet_entities[(frame->first_entity+i)%svs.num_client_entities];
 
-		if( state->number <= 0 || state->number >= sv_maxclients->integer )
+		if( state->number <= 0 || state->number >= svs.maxclients )
 			continue;
 
 		clientnum = state->number - 1;
@@ -978,18 +962,18 @@ void SV_RestoreMoveInterpolant( sv_client_t *cl )
 	}
 
 	// don't allow unlag in singleplayer
-	if( sv_maxclients->integer <= 1 || cl->state != cs_spawned )
+	if( svs.maxclients <= 1 || cl->state != cs_spawned )
 		return;
 
 	// unlag disabled by game request
-	if( !svgame.dllFuncs.pfnAllowLagCompensation() || !sv_unlag->integer )
+	if( !svgame.dllFuncs.pfnAllowLagCompensation() || !sv_unlag.value )
 		return;
 
 	// unlag disabled for current client
 	if( !FBitSet( cl->flags, FCL_LAG_COMPENSATION ))
 		return;
 
-	for( i = 0, check = svs.clients; i < sv_maxclients->integer; i++, check++ )
+	for( i = 0, check = svs.clients; i < svs.maxclients; i++, check++ )
 	{
 		if( check->state != cs_spawned || check == cl )
 			continue;
@@ -1017,36 +1001,34 @@ SV_RunCmd
 */
 void SV_RunCmd( sv_client_t *cl, usercmd_t *ucmd, int random_seed )
 {
-	usercmd_t lastcmd;
 	edict_t	*clent, *touch;
 	double	frametime;
 	int	i, oldmsec;
 	pmtrace_t	*pmtrace;
 	trace_t	trace;
 	vec3_t	oldvel;
+	usercmd_t cmd;
    
 	clent = cl->edict;
+	cmd = *ucmd;
 
-	if( cl->next_movetime > host.realtime )
+	if( cl->ignorecmdtime > host.realtime )
 	{
-		cl->last_movetime += ( ucmd->msec * 0.001f );
+		cl->cmdtime += ((double)ucmd->msec / 1000.0 );
 		return;
 	}
 
-	cl->next_movetime = 0.0;
+	cl->ignorecmdtime = 0.0;
 
 	// chop up very long commands
-	if( ucmd->msec > 50 )
+	if( cmd.msec > 50 )
 	{
-		lastcmd = *ucmd;
 		oldmsec = ucmd->msec;
-		lastcmd.msec = oldmsec / 2;
-
-		SV_RunCmd( cl, &lastcmd, random_seed );
-
-		lastcmd.msec = oldmsec / 2 + (oldmsec & 1);	// give them back thier msec.
-		lastcmd.impulse = 0;
-		SV_RunCmd( cl, &lastcmd, random_seed );
+		cmd.msec = oldmsec / 2;
+		SV_RunCmd( cl, &cmd, random_seed );
+		cmd.msec = oldmsec / 2;
+		cmd.impulse = 0;
+		SV_RunCmd( cl, &cmd, random_seed );
 		return;
 	}
 
@@ -1055,12 +1037,11 @@ void SV_RunCmd( sv_client_t *cl, usercmd_t *ucmd, int random_seed )
 		SV_SetupMoveInterpolant( cl );
 	}
 
-	lastcmd = *ucmd;
 	svgame.dllFuncs.pfnCmdStart( cl->edict, ucmd, random_seed );
 
-	frametime = ucmd->msec * 0.001;
+	frametime = ((double)ucmd->msec / 1000.0 );
 	cl->timebase += frametime;
-	cl->last_movetime += frametime;
+	cl->cmdtime += frametime;
 
 	PM_CheckMovingGround( clent, frametime );
 
@@ -1071,6 +1052,7 @@ void SV_RunCmd( sv_client_t *cl, usercmd_t *ucmd, int random_seed )
 
 	// copy player buttons
 	clent->v.button = ucmd->buttons;
+	clent->v.light_level = ucmd->lightlevel;
 	if( ucmd->impulse ) clent->v.impulse = ucmd->impulse;
 
 	if( ucmd->impulse == 204 )
@@ -1096,35 +1078,32 @@ void SV_RunCmd( sv_client_t *cl, usercmd_t *ucmd, int random_seed )
 	// copy results back to client
 	SV_FinishPMove( svgame.pmove, cl );
 
-	if( svgame.physFuncs.PM_PlayerTouch != NULL )
+	if( clent->v.solid != SOLID_NOT && !FBitSet( sv.hostflags, SVF_PLAYERSONLY ))
 	{
-		// run custom impact function
-		svgame.physFuncs.PM_PlayerTouch( svgame.pmove, clent );
-	}
-	else
-	{
-		// link into place and touch triggers
-		SV_LinkEdict( clent, true );
-		VectorCopy( clent->v.velocity, oldvel ); // save velocity
-
-		// touch other objects
-		for( i = 0; i < svgame.pmove->numtouch; i++ )
+		if( svgame.physFuncs.PM_PlayerTouch != NULL )
 		{
-			// never touch the objects when "playersonly" is active
-			if( i == MAX_PHYSENTS || ( sv.hostflags & SVF_PLAYERSONLY ))
-				break;
-
-			pmtrace = &svgame.pmove->touchindex[i];
-			touch = EDICT_NUM( svgame.pmove->physents[pmtrace->ent].info );
-			if( touch == clent ) continue;
-
-			VectorCopy( pmtrace->deltavelocity, clent->v.velocity );
-			SV_ConvertPMTrace( &trace, pmtrace, touch );
-			SV_Impact( touch, clent, &trace );
+			// run custom impact function
+			svgame.physFuncs.PM_PlayerTouch( svgame.pmove, clent );
 		}
+		else
+		{
+			// link into place and touch triggers
+			SV_LinkEdict( clent, true );
+			VectorCopy( clent->v.velocity, oldvel ); // save velocity
 
-		// restore velocity
-		VectorCopy( oldvel, clent->v.velocity );
+			// touch other objects
+			for( i = 0; i < svgame.pmove->numtouch; i++ )
+			{
+				pmtrace = &svgame.pmove->touchindex[i];
+				touch = EDICT_NUM( svgame.pmove->physents[pmtrace->ent].info );
+				VectorCopy( pmtrace->deltavelocity, clent->v.velocity );
+				PM_ConvertTrace( &trace, pmtrace, touch );
+				SV_Impact( touch, clent, &trace );
+			}
+
+			// restore velocity
+			VectorCopy( oldvel, clent->v.velocity );
+		}
 	}
 
 	svgame.pmove->numtouch = 0;

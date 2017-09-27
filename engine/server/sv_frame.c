@@ -22,9 +22,11 @@ typedef struct
 {
 	int		num_entities;
 	entity_state_t	entities[MAX_VISIBLE_PACKET];	
+	byte		sended[MAX_EDICTS_BYTES];
 } sv_ents_t;
 
 int	c_fullsend;	// just a debug counter
+int	c_notsend;
 
 /*
 =======================
@@ -95,12 +97,11 @@ static void SV_AddEntitiesToPacket( edict_t *pViewEnt, edict_t *pClient, client_
 
 		ent = EDICT_NUM( e );
 
-		if( !SV_IsValidEdict( ent ))
+		if( !SV_IsValidEdict( ent ) || FBitSet( ent->v.flags, FL_KILLME ))
 			continue;
 
-		// don't double add an entity through portals (already added)
-		// HACHACK: use pushmsec to keep net_framenum
-		if( ent->v.pushmsec == sv.net_framenum )
+		// don't double add an entity through portals (in case this already added)
+		if( CHECKVISBIT( ents->sended, e ))
 			continue;
 
 		if( FBitSet( ent->v.effects, EF_REQUEST_PHS ))
@@ -114,7 +115,7 @@ static void SV_AddEntitiesToPacket( edict_t *pViewEnt, edict_t *pClient, client_
 		if( svgame.dllFuncs.pfnAddToFullPack( state, e, ent, pClient, sv.hostflags, ( netclient != NULL ), pset ))
 		{
 			// to prevent adds it twice through portals
-			ent->v.pushmsec = sv.net_framenum;
+			SETVISBIT( ents->sended, e );
 
 			if( netclient && netclient->modelindex )
 			{
@@ -142,8 +143,9 @@ static void SV_AddEntitiesToPacket( edict_t *pViewEnt, edict_t *pClient, client_
 			else
 			{
 				// visibility list is full
-				MsgDev( D_ERROR, "too many entities in visible packet list\n" );
-				break;
+				// continue counting entities,
+				// so we know how many it's ovreflowed
+				c_notsend++;
 			}
 		}
 
@@ -177,41 +179,41 @@ void SV_EmitPacketEntities( sv_client_t *cl, client_frame_t *to, sizebuf_t *msg 
 {
 	entity_state_t	*oldent, *newent;
 	int		oldindex, newindex;
-	int		from_num_entities;
 	int		oldnum, newnum;
+	int		oldmax;
 	client_frame_t	*from;
 
 	// this is the frame that we are going to delta update from
 	if( cl->delta_sequence != -1 )
 	{
 		from = &cl->frames[cl->delta_sequence & SV_UPDATE_MASK];
-		from_num_entities = from->num_entities;
+		oldmax = from->num_entities;
 
 		// the snapshot's entities may still have rolled off the buffer, though
 		if( from->first_entity <= ( svs.next_client_entities - svs.num_client_entities ))
 		{
 			MsgDev( D_WARN, "%s: delta request from out of date entities.\n", cl->name );
 
-			from = NULL;
-			from_num_entities = 0;
+			MSG_BeginServerCmd( msg, svc_packetentities );
+			MSG_WriteUBitLong( msg, to->num_entities - 1, MAX_VISIBLE_PACKET_BITS );
 
-			MSG_WriteByte( msg, svc_packetentities );
-			MSG_WriteWord( msg, to->num_entities );
+			from = NULL;
+			oldmax = 0;
 		}
 		else
 		{
-			MSG_WriteByte( msg, svc_deltapacketentities );
-			MSG_WriteWord( msg, to->num_entities );
+			MSG_BeginServerCmd( msg, svc_deltapacketentities );
+			MSG_WriteUBitLong( msg, to->num_entities - 1, MAX_VISIBLE_PACKET_BITS );
 			MSG_WriteByte( msg, cl->delta_sequence );
 		}
 	}
 	else
 	{
 		from = NULL;
-		from_num_entities = 0;
+		oldmax = 0;
 
-		MSG_WriteByte( msg, svc_packetentities );
-		MSG_WriteWord( msg, to->num_entities );
+		MSG_BeginServerCmd( msg, svc_packetentities );
+		MSG_WriteUBitLong( msg, to->num_entities - 1, MAX_VISIBLE_PACKET_BITS );
 	}
 
 	newent = NULL;
@@ -219,7 +221,7 @@ void SV_EmitPacketEntities( sv_client_t *cl, client_frame_t *to, sizebuf_t *msg 
 	newindex = 0;
 	oldindex = 0;
 
-	while( newindex < to->num_entities || oldindex < from_num_entities )
+	while( newindex < to->num_entities || oldindex < oldmax )
 	{
 		if( newindex >= to->num_entities )
 		{
@@ -231,7 +233,7 @@ void SV_EmitPacketEntities( sv_client_t *cl, client_frame_t *to, sizebuf_t *msg 
 			newnum = newent->number;
 		}
 
-		if( oldindex >= from_num_entities )
+		if( oldindex >= oldmax )
 		{
 			oldnum = MAX_ENTNUMBER;
 		}
@@ -262,11 +264,12 @@ void SV_EmitPacketEntities( sv_client_t *cl, client_frame_t *to, sizebuf_t *msg 
 
 		if( newnum > oldnum )
 		{	
-			qboolean	force;
+			qboolean	force = false;
+			edict_t	*ed = EDICT_NUM( oldent->number );
 
-			if( EDICT_NUM( oldent->number )->free )
-				force = true;	// entity completely removed from server
-			else force = false;		// just removed from delta-message 
+			// check if entity completely removed from server
+			if( ed->free || FBitSet( ed->v.flags, FL_KILLME ))
+				force = true;
 
 			// remove from message
 			MSG_WriteDeltaEntity( oldent, NULL, msg, force, false, sv.time );
@@ -275,7 +278,7 @@ void SV_EmitPacketEntities( sv_client_t *cl, client_frame_t *to, sizebuf_t *msg 
 		}
 	}
 
-	MSG_WriteWord( msg, 0 ); // end of packetentities
+	MSG_WriteUBitLong( msg, 0, MAX_ENTITY_BITS ); // end of packetentities
 }
 
 /*
@@ -295,19 +298,20 @@ static void SV_EmitEvents( sv_client_t *cl, client_frame_t *to, sizebuf_t *msg )
 	int		i, j, ev;
 
 	memset( &nullargs, 0, sizeof( nullargs ));
-
 	es = &cl->events;
 
 	// count events
 	for( ev = 0; ev < MAX_EVENT_QUEUE; ev++ )
 	{
-		if( es->ei[ev].index ) ev_count++;
+		if( es->ei[ev].index )
+			ev_count++;
 	}
 
 	// nothing to send
 	if( !ev_count ) return; // nothing to send
 
-	if( ev_count >= 31 ) ev_count = 31;
+	if ( ev_count >= MAX_EVENT_QUEUE / 2 )
+		ev_count = ( MAX_EVENT_QUEUE / 2 ) - 1;
 
 	for( i = 0; i < MAX_EVENT_QUEUE; i++ )
 	{
@@ -324,13 +328,7 @@ static void SV_EmitEvents( sv_client_t *cl, client_frame_t *to, sizebuf_t *msg )
 				break;
 		}
 
-		if( j >= to->num_entities )
-		{
-			// couldn't find
-			info->packet_index = to->num_entities;
-			info->args.entindex = ent_index;
-		}
-		else
+		if( j < to->num_entities )
 		{
 			info->packet_index = j;
 			info->args.ducking = 0;
@@ -343,9 +341,15 @@ static void SV_EmitEvents( sv_client_t *cl, client_frame_t *to, sizebuf_t *msg )
 
 			VectorClear( info->args.velocity );
 		}
+		else
+		{
+			// couldn't find
+			info->packet_index = to->num_entities;
+			info->args.entindex = ent_index;
+		}
 	}
 
-	MSG_WriteByte( msg, svc_event );	// create message
+	MSG_BeginServerCmd( msg, svc_event );	// create message
 	MSG_WriteUBitLong( msg, ev_count, 5 );	// up to MAX_EVENT_QUEUE events
 
 	for( count = i = 0; i < MAX_EVENT_QUEUE; i++ )
@@ -387,7 +391,7 @@ static void SV_EmitEvents( sv_client_t *cl, client_frame_t *to, sizebuf_t *msg )
 			if( info->fire_time )
 			{
 				MSG_WriteOneBit( msg, 1 );
-				MSG_WriteWord( msg, Q_rint( info->fire_time * 100.0f ));
+				MSG_WriteWord( msg, ( info->fire_time * 100.0f ));
 			}
 			else MSG_WriteOneBit( msg, 0 );
 		}
@@ -411,9 +415,9 @@ void SV_EmitPings( sizebuf_t *msg )
 	int		packet_loss;
 	int		i, ping;
 
-	MSG_WriteByte( msg, svc_updatepings );
+	MSG_BeginServerCmd( msg, svc_pings );
 
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 	{
 		if( cl->state != cs_spawned )
 			continue;
@@ -454,12 +458,10 @@ void SV_WriteClientdataToMessage( sv_client_t *cl, sizebuf_t *msg )
 
 	frame->senttime = host.realtime;
 	frame->ping_time = -1.0f;
-	frame->latency = -1.0f;
 
 	if( cl->chokecount != 0 )
 	{
-		MSG_WriteByte( msg, svc_chokecount );
-		MSG_WriteByte( msg, cl->chokecount );
+		MSG_BeginServerCmd( msg, svc_choke );
 		cl->chokecount = 0;
 	}
 
@@ -467,28 +469,26 @@ void SV_WriteClientdataToMessage( sv_client_t *cl, sizebuf_t *msg )
 	switch( clent->v.fixangle )
 	{
 	case 1:
-		MSG_WriteByte( msg, svc_setangle );
+		MSG_BeginServerCmd( msg, svc_setangle );
 		MSG_WriteBitAngle( msg, clent->v.angles[0], 16 );
 		MSG_WriteBitAngle( msg, clent->v.angles[1], 16 );
 		MSG_WriteBitAngle( msg, clent->v.angles[2], 16 );
-		clent->v.effects |= EF_NOINTERP;
 		break;
 	case 2:
-		MSG_WriteByte( msg, svc_addangle );
-		MSG_WriteBitAngle( msg, clent->v.avelocity[1], 16 );
-		clent->v.avelocity[1] = 0.0f;
+		MSG_BeginServerCmd( msg, svc_addangle );
+		MSG_WriteBitAngle( msg, clent->v.avelocity[YAW], 16 );
+		clent->v.avelocity[YAW] = 0.0f;
 		break;
 	}
 
 	clent->v.fixangle = 0; // reset fixangle
 
 	memset( &frame->clientdata, 0, sizeof( frame->clientdata ));
-	clent->v.pushmsec = 0; // reset net framenum
 
 	// update clientdata_t
 	svgame.dllFuncs.pfnUpdateClientData( clent, FBitSet( cl->flags, FCL_LOCAL_WEAPONS ), &frame->clientdata );
 
-	MSG_WriteByte( msg, svc_clientdata );
+	MSG_BeginServerCmd( msg, svc_clientdata );
 	if( FBitSet( cl->flags, FCL_HLTV_PROXY )) return;	// don't send more nothing
 
 	if( cl->delta_sequence == -1 ) from_cd = &nullcd;
@@ -548,16 +548,24 @@ void SV_WriteEntitiesToClient( sv_client_t *cl, sizebuf_t *msg )
 
 	send_pings = SV_ShouldUpdatePing( cl );
 
+	memset( frame_ents.sended, 0, sizeof( frame_ents.sended ));
 	ClearBits( sv.hostflags, SVF_MERGE_VISIBILITY );
 	sv.net_framenum++;	// now all portal-through entities are invalidate
 
 	// clear everything in this snapshot
-	frame_ents.num_entities = c_fullsend = 0;
+	frame_ents.num_entities = c_fullsend = c_notsend = 0;
 
 	// add all the entities directly visible to the eye, which
 	// may include portal entities that merge other viewpoints
 	SV_AddEntitiesToPacket( viewent, clent, frame, &frame_ents, true );
-   
+
+	if( c_notsend != cl->ignored_ents )
+	{
+		if( c_notsend > 0 )
+			MsgDev( D_ERROR, "Too many entities in visible packet list. Ignored %d entities\n", c_notsend );
+		cl->ignored_ents = c_notsend;
+	}   
+
 	// if there were portals visible, there may be out of order entities
 	// in the list which will need to be resorted for the delta compression
 	// to work correctly.  This also catches the error condition
@@ -567,15 +575,15 @@ void SV_WriteEntitiesToClient( sv_client_t *cl, sizebuf_t *msg )
 	// it will break all connected clients, but it takes more than one week to overflow it
 	if(( (uint)svs.next_client_entities ) + frame_ents.num_entities >= 0x7FFFFFFE )
 	{
-		// just reset counter
 		svs.next_client_entities = 0;
-		// delta is broken now, cannot keep connected clients
-		SV_FinalMessage( "Server is running to long, reconnecting!", true );
+
+		// delta is broken for now, cannot keep connected clients
+		SV_FinalMessage( "Server will restart due delta is outdated", true );
 	}
 
 	// copy the entity states out
-	frame->num_entities = 0;
 	frame->first_entity = svs.next_client_entities;
+	frame->num_entities = 0;
 
 	for( i = 0; i < frame_ents.num_entities; i++ )
 	{
@@ -605,8 +613,16 @@ SV_SendClientDatagram
 */
 void SV_SendClientDatagram( sv_client_t *cl )
 {
-	static byte    	msg_buf[NET_MAX_PAYLOAD];
+	static byte    	msg_buf[NET_MAX_MESSAGE];
 	sizebuf_t		msg;
+
+	// if we running server with fixed fps so no reason
+	// to send updates too fast: time just not changed
+	if( FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
+	{
+		if( sv.simulating && cl->lastservertime == sv.time )
+			return;
+	}
 
 	svs.currentPlayerNum = (cl - svs.clients);
 	svs.currentPlayer = cl;
@@ -614,16 +630,26 @@ void SV_SendClientDatagram( sv_client_t *cl )
 	MSG_Init( &msg, "Datagram", msg_buf, sizeof( msg_buf ));
 
 	// always send servertime at new frame
-	MSG_WriteByte( &msg, svc_time );
+	MSG_BeginServerCmd( &msg, svc_time );
 	MSG_WriteFloat( &msg, sv.time );
+	cl->lastservertime = sv.time;
 
 	SV_WriteClientdataToMessage( cl, &msg );
 	SV_WriteEntitiesToClient( cl, &msg );
 
 	// copy the accumulated multicast datagram
 	// for this client out to the message
-	if( MSG_CheckOverflow( &cl->datagram )) MsgDev( D_WARN, "datagram overflowed for %s\n", cl->name );
-	else MSG_WriteBits( &msg, MSG_GetData( &cl->datagram ), MSG_GetNumBitsWritten( &cl->datagram ));
+	if( MSG_CheckOverflow( &cl->datagram ))
+	{
+		MsgDev( D_WARN, "datagram overflowed for %s\n", cl->name );
+	}
+	else
+	{
+		if( MSG_GetNumBytesWritten( &cl->datagram ) < MSG_GetNumBytesLeft( &msg ))
+			MSG_WriteBits( &msg, MSG_GetData( &cl->datagram ), MSG_GetNumBitsWritten( &cl->datagram ));
+		else MsgDev( D_WARN, "Ignoring unreliable datagram for %s, would overflow on msg\n", cl->name );
+	}
+
 	MSG_Clear( &cl->datagram );
 
 	if( MSG_CheckOverflow( &msg ))
@@ -639,6 +665,18 @@ void SV_SendClientDatagram( sv_client_t *cl )
 
 /*
 =======================
+SV_UpdateUserInfo
+=======================
+*/
+void SV_UpdateUserInfo( sv_client_t *cl )
+{
+	SV_FullClientUpdate( cl, &sv.reliable_datagram );
+	ClearBits( cl->flags, FCL_RESEND_USERINFO );
+	cl->next_sendinfotime = host.realtime + 1.0;
+}
+
+/*
+=======================
 SV_UpdateToReliableMessages
 =======================
 */
@@ -648,17 +686,17 @@ void SV_UpdateToReliableMessages( void )
 	int		i;
 
 	// check for changes to be sent over the reliable streams to all clients
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 	{
 		if( !cl->edict ) continue;	// not in game yet
 
 		if( cl->state != cs_spawned )
 			continue;
 
-		if( FBitSet( cl->flags, FCL_RESEND_USERINFO ))
+		if( FBitSet( cl->flags, FCL_RESEND_USERINFO ) && cl->next_sendinfotime <= host.realtime )
 		{
-			SV_FullClientUpdate( cl, &sv.reliable_datagram );
-			ClearBits( cl->flags, FCL_RESEND_USERINFO );
+			if( MSG_GetNumBytesLeft( &sv.reliable_datagram ) >= ( Q_strlen( cl->userinfo ) + 6 ))
+				SV_UpdateUserInfo( cl );
 		}
 
 		if( FBitSet( cl->flags, FCL_RESEND_MOVEVARS ))
@@ -669,37 +707,70 @@ void SV_UpdateToReliableMessages( void )
 	}
 
 	// 1% chanse for simulate random network bugs
-	if( sv.write_bad_message && Com_RandomLong( 0, 512 ) == 404 )
+	if( sv.write_bad_message && COM_RandomLong( 0, 512 ) == 404 )
 	{
 		// just for network debugging (send only for local client)
-		MSG_WriteByte( &sv.reliable_datagram, svc_bad );
-		MSG_WriteLong( &sv.reliable_datagram, rand( ));		// send some random data
-		MSG_WriteString( &sv.reliable_datagram, host.finalmsg );	// send final message
+		MSG_BeginServerCmd( &sv.reliable_datagram, svc_bad );
+		MSG_WriteLong( &sv.reliable_datagram, COM_RandomLong( 1, 65536 ));	// send some random data
+		MSG_WriteString( &sv.reliable_datagram, host.finalmsg );		// send final message
 		sv.write_bad_message = false;
 	}
 
 	// clear the server datagram if it overflowed.
-	if( MSG_CheckOverflow( &sv.spectator_datagram ))
+	if( MSG_CheckOverflow( &sv.datagram ))
 	{
-		MsgDev( D_ERROR, "sv.spectator_datagram overflowed!\n" );
-		MSG_Clear( &sv.spectator_datagram );
+		MsgDev( D_ERROR, "sv.datagram overflowed!\n" );
+		MSG_Clear( &sv.datagram );
+	}
+
+	// clear the server datagram if it overflowed.
+	if( MSG_CheckOverflow( &sv.spec_datagram ))
+	{
+		MsgDev( D_ERROR, "sv.spec_datagram overflowed!\n" );
+		MSG_Clear( &sv.spec_datagram );
 	}
 
 	// now send the reliable and server datagrams to all clients.
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 	{
 		if( cl->state < cs_connected || FBitSet( cl->flags, FCL_FAKECLIENT ))
 			continue;	// reliables go to all connected or spawned
 
-		MSG_WriteBits( &cl->netchan.message, MSG_GetData( &sv.reliable_datagram ), MSG_GetNumBitsWritten( &sv.reliable_datagram ));
+		if( MSG_GetNumBytesWritten( &sv.reliable_datagram ) < MSG_GetNumBytesLeft( &cl->netchan.message ))
+		{
+			MSG_WriteBits( &cl->netchan.message, MSG_GetBuf( &sv.reliable_datagram ), MSG_GetNumBitsWritten( &sv.reliable_datagram ));
+		}
+		else
+		{
+			Netchan_CreateFragments( &cl->netchan, &sv.reliable_datagram );
+		}
+
+		if( MSG_GetNumBytesWritten( &sv.datagram ) < MSG_GetNumBytesLeft( &cl->datagram ))
+		{
+			MSG_WriteBits( &cl->datagram, MSG_GetBuf( &sv.datagram ), MSG_GetNumBitsWritten( &sv.datagram ));
+		}
+		else
+		{
+			MsgDev( D_WARN, "Ignoring unreliable datagram for %s, would overflow\n", cl->name );
+		}
 
 		if( FBitSet( cl->flags, FCL_HLTV_PROXY ))
-			MSG_WriteBits( &cl->datagram, MSG_GetData( &sv.spectator_datagram ), MSG_GetNumBitsWritten( &sv.spectator_datagram ));
+		{
+			if( MSG_GetNumBytesWritten( &sv.spec_datagram ) < MSG_GetNumBytesLeft( &cl->datagram ))
+			{
+				MSG_WriteBits( &cl->datagram, MSG_GetBuf( &sv.spec_datagram ), MSG_GetNumBitsWritten( &sv.spec_datagram ));
+			}
+			else
+			{
+				MsgDev( D_WARN, "Ignoring spectator datagram for %s, would overflow\n", cl->name );
+			}
+		}
 	}
 
 	// now clear the reliable and datagram buffers.
-	MSG_Clear( &sv.spectator_datagram );
 	MSG_Clear( &sv.reliable_datagram );
+	MSG_Clear( &sv.spec_datagram );
+	MSG_Clear( &sv.datagram );
 }
 
 /*
@@ -721,7 +792,7 @@ void SV_SendClientMessages( void )
 	SV_UpdateToReliableMessages ();
 
 	// send a message to each connected client
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 	{
 		if( !cl->state || FBitSet( cl->flags, FCL_FAKECLIENT ))
 			continue;
@@ -732,12 +803,15 @@ void SV_SendClientMessages( void )
 			continue;
 		}
 
-		if( !host_limitlocal->integer && NET_IsLocalAddress( cl->netchan.remote_address ))
-			SetBits( cl->flags, FCL_SEND_NET_MESSAGE );
+		if( !FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
+		{
+			if( !host_limitlocal->value && NET_IsLocalAddress( cl->netchan.remote_address ))
+				SetBits( cl->flags, FCL_SEND_NET_MESSAGE );
+                    }
 
 		if( cl->state == cs_spawned )
 		{
-			if( FBitSet( host.features, ENGINE_FIXED_FRAMERATE ) || ( host.realtime + host.frametime ) >= cl->next_messagetime )
+			if(( host.realtime + sv.frametime ) >= cl->next_messagetime )
 				SetBits( cl->flags, FCL_SEND_NET_MESSAGE );
 		}
 
@@ -757,7 +831,7 @@ void SV_SendClientMessages( void )
 			// If we haven't gotten a message in sv_failuretime seconds, then stop sending messages to this client
 			// until we get another packet in from the client. This prevents crash/drop and reconnect where they are
 			// being hosed with "sequenced packet without connection" packets.
-			if(( host.realtime - cl->netchan.last_received ) > sv_failuretime->value )
+			if( sv_failuretime.value < ( host.realtime - cl->netchan.last_received ))
 				ClearBits( cl->flags, FCL_SEND_NET_MESSAGE );
 		}
 
@@ -773,9 +847,7 @@ void SV_SendClientMessages( void )
 			}
 
 			// now that we were able to send, reset timer to point to next possible send time.
-			if( FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
-				cl->next_messagetime = host.realtime + cl->cl_updaterate;
-			else cl->next_messagetime = host.realtime + host.frametime + cl->cl_updaterate;
+			cl->next_messagetime = host.realtime + sv.frametime + cl->cl_updaterate;
 			ClearBits( cl->flags, FCL_SEND_NET_MESSAGE );
 
 			// NOTE: we should send frame even if server is not simulated to prevent overflow
@@ -805,7 +877,7 @@ void SV_SendMessagesToAll( void )
 	if( sv.state == ss_dead )
 		return;
 
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 	{
 		if( cl->state >= cs_connected )
 			SetBits( cl->flags, FCL_SEND_NET_MESSAGE );
@@ -829,7 +901,7 @@ void SV_SkipUpdates( void )
 	if( sv.state == ss_dead )
 		return;
 
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 	{
 		if( cl->state != cs_spawned || FBitSet( cl->flags, FCL_FAKECLIENT ))
 			continue;
@@ -854,7 +926,7 @@ void SV_InactivateClients( void )
 		return;
 
 	// send a message to each connected client
-	for( i = 0, cl = svs.clients; i < sv_maxclients->integer; i++, cl++ )
+	for( i = 0, cl = svs.clients; i < svs.maxclients; i++, cl++ )
 	{
 		if( !cl->state || !cl->edict )
 			continue;

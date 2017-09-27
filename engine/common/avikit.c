@@ -92,7 +92,6 @@ dll_info_t avifile_dll = { "avifil32.dll", avifile_funcs, false };
 typedef struct movie_state_s
 {
 	qboolean		active;
-	qboolean		ignore_hwgamma;	// ignore hw gamma-correction
 	qboolean		quiet;		// ignore error messages
 
 	PAVIFILE		pfile;		// avi file pointer
@@ -275,8 +274,7 @@ long AVI_GetVideoFrameNumber( movie_state_t *Avi, float time )
 byte *AVI_GetVideoFrame( movie_state_t *Avi, long frame )
 {
 	LPBITMAPINFOHEADER	frame_info;
-	byte		*frame_raw, *tmp;
-	int		i;
+	byte		*frame_raw;
 
 	if( !Avi->active ) return NULL;
 
@@ -286,16 +284,6 @@ byte *AVI_GetVideoFrame( movie_state_t *Avi, long frame )
 	frame_info = (LPBITMAPINFOHEADER)pAVIStreamGetFrame( Avi->video_getframe, frame );
 	frame_raw = (byte *)frame_info + frame_info->biSize + frame_info->biClrUsed * sizeof( RGBQUAD );
 	pDrawDibDraw( Avi->hDD, Avi->hDC, 0, 0, Avi->video_xres, Avi->video_yres, frame_info, frame_raw, 0, 0, Avi->video_xres, Avi->video_yres, 0 );
-
-	// adjust gamma only if hardware gamma is enabled
-	if( Avi->ignore_hwgamma && glConfig.deviceSupportsGamma )
-	{
-		tmp = Avi->pframe_data;
-
-		// renormalize gamma
-		for( i = 0; i < Avi->video_xres * Avi->video_yres * 4; i++, tmp++ )
-			*tmp = clgame.ds.gammaTable[*tmp];
-	}
 
 	return Avi->pframe_data;
 }
@@ -471,7 +459,7 @@ void AVI_CloseVideo( movie_state_t *Avi )
 	memset( Avi, 0, sizeof( movie_state_t ));
 }
 
-void AVI_OpenVideo( movie_state_t *Avi, const char *filename, qboolean load_audio, qboolean ignore_hwgamma, int quiet )
+void AVI_OpenVideo( movie_state_t *Avi, const char *filename, qboolean load_audio, int quiet )
 {
 	BITMAPINFOHEADER	bmih;
 	AVISTREAMINFO	stream_info;
@@ -589,8 +577,6 @@ void AVI_OpenVideo( movie_state_t *Avi, const char *filename, qboolean load_audi
 		return; // couldn't open frame getter.
 	}
 
-	Avi->ignore_hwgamma = ignore_hwgamma;
-
 	bmih.biSize = sizeof( BITMAPINFOHEADER );
 	bmih.biPlanes = 1;	
 	bmih.biBitCount = 32;
@@ -624,7 +610,7 @@ AVIKit user interface
 
 =============
 */
-movie_state_t *AVI_LoadVideo( const char *filename, qboolean load_audio, qboolean ignore_hwgamma )
+movie_state_t *AVI_LoadVideo( const char *filename, qboolean load_audio )
 {
 	movie_state_t	*Avi;
 	string		path;
@@ -649,7 +635,7 @@ movie_state_t *AVI_LoadVideo( const char *filename, qboolean load_audio, qboolea
 	}
 
 	Avi = Mem_Alloc( cls.mempool, sizeof( movie_state_t ));
-	AVI_OpenVideo( Avi, fullpath, load_audio, ignore_hwgamma, false );
+	AVI_OpenVideo( Avi, fullpath, load_audio, false );
 
 	if( !AVI_IsActive( Avi ))
 	{
@@ -661,9 +647,9 @@ movie_state_t *AVI_LoadVideo( const char *filename, qboolean load_audio, qboolea
 	return Avi;
 }
 
-movie_state_t *AVI_LoadVideoNoSound( const char *filename, qboolean ignore_hwgamma )
+movie_state_t *AVI_LoadVideoNoSound( const char *filename )
 {
-	return AVI_LoadVideo( filename, false, ignore_hwgamma );
+	return AVI_LoadVideo( filename, false );
 }
 
 void AVI_FreeVideo( movie_state_t *state )

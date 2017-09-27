@@ -507,7 +507,7 @@ void HPAK_CheckSize( const char *filename )
 	string	pakname;
 	int	maxsize;
 
-	maxsize = hpk_maxsize->integer;
+	maxsize = hpk_maxsize->value;
 	if( maxsize <= 0 ) return;
 
 	if( !filename || !filename[0] ) return;

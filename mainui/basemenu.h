@@ -32,6 +32,8 @@ GNU General Public License for more details.
 #define ColorIndex( c )		((( c ) - '0' ) & 7 )
 #define IsColorString( p )		( p && *( p ) == '^' && *(( p ) + 1) && *(( p ) + 1) >= '0' && *(( p ) + 1 ) <= '9' )
 
+#define ARRAYSIZE(p)		(sizeof(p)/sizeof(p[0]))
+
 #include "netadr.h"
 
 #define ART_BACKGROUND		"gfx/shell/splash"

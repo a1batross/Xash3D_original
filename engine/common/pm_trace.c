@@ -22,13 +22,37 @@ GNU General Public License for more details.
 #include "studio.h"
 #include "world.h"
 
+#define PM_AllowHitBoxTrace( model, hull ) ( model && model->type == mod_studio && ( FBitSet( model->flags, STUDIO_TRACE_HITBOX ) || hull == 2 ))
+
 static mplane_t	pm_boxplanes[6];
-static dclipnode_t	pm_boxclipnodes[6];
+static mclipnode_t	pm_boxclipnodes[6];
 static hull_t	pm_boxhull;
+
+// default hullmins
+static const vec3_t pm_hullmins[MAX_MAP_HULLS] =
+{
+{ -16, -16, -36 },
+{ -16, -16, -18 },
+{   0,   0,   0 },
+{ -32, -32, -32 },
+};
+
+// defualt hullmaxs
+static const vec3_t pm_hullmaxs[MAX_MAP_HULLS] =
+{
+{  16,  16,  36 },
+{  16,  16,  18 },
+{   0,   0,   0 },
+{  32,  32,  32 },
+};
 
 void Pmove_Init( void )
 {
 	PM_InitBoxHull ();
+
+	// init default hull sizes
+	memcpy( host.player_mins, pm_hullmins, sizeof( pm_hullmins ));
+	memcpy( host.player_maxs, pm_hullmaxs, sizeof( pm_hullmaxs ));
 }
 
 /*
@@ -85,6 +109,13 @@ hull_t *PM_HullForBox( const vec3_t mins, const vec3_t maxs )
 	return &pm_boxhull;
 }
 
+void PM_ConvertTrace( trace_t *out, pmtrace_t *in, edict_t *ent )
+{
+	memcpy( out, in, 48 ); // matched
+	out->hitgroup = in->hitgroup;
+	out->ent = ent;
+}
+
 /*
 ==================
 PM_HullPointContents
@@ -138,10 +169,6 @@ hull_t *PM_HullForBsp( physent_t *pe, playermove_t *pmove, float *offset )
 
 	Assert( hull != NULL );
 
-	// force to use hull0 because other hulls doesn't exist for water
-	if( pe->model->flags & MODEL_LIQUID && pe->solid != SOLID_TRIGGER )
-		hull = &pe->model->hulls[0];
-
 	// calculate an offset value to center the origin
 	VectorSubtract( hull->clip_mins, pmove->player_mins[pmove->usehull], offset );
 	VectorAdd( offset, pe->origin, offset );
@@ -173,7 +200,7 @@ PM_RecursiveHullCheck
 */
 qboolean PM_RecursiveHullCheck( hull_t *hull, int num, float p1f, float p2f, vec3_t p1, vec3_t p2, pmtrace_t *trace )
 {
-	dclipnode_t	*node;
+	mclipnode_t	*node;
 	mplane_t		*plane;
 	float		t1, t2;
 	float		frac, midf;
@@ -341,22 +368,23 @@ pmtrace_t PM_PlayerTraceExt( playermove_t *pmove, vec3_t start, vec3_t end, int 
 			VectorCopy( pmove->player_maxs[pmove->usehull], maxs );
 			VectorClear( offset );
 		}
-		else if( !pe->model )
+		else if( pe->model )
 		{
-			if( !pe->studiomodel )
+			hull = PM_HullForBsp( pe, pmove, offset );
+		}
+		else
+		{
+			if( pe->studiomodel )
 			{
-				VectorSubtract( pe->mins, pmove->player_maxs[pmove->usehull], mins );
-				VectorSubtract( pe->maxs, pmove->player_mins[pmove->usehull], maxs );
-
-				hull = PM_HullForBox( mins, maxs );
-				VectorCopy( pe->origin, offset );
-			}
-			else
-			{
-				if( flags & PM_STUDIO_IGNORE )
+				if( FBitSet( flags, PM_STUDIO_IGNORE ))
 					continue;
 
-				if( pe->studiomodel->type != mod_studio || (!( pe->studiomodel->flags & STUDIO_TRACE_HITBOX ) && ( pmove->usehull != 2 || flags & PM_STUDIO_BOX )))
+				if( PM_AllowHitBoxTrace( pe->studiomodel, pmove->usehull ) && !FBitSet( flags, PM_STUDIO_BOX ))
+				{
+					hull = PM_HullForStudio( pe, pmove, &hullcount );
+					VectorClear( offset );
+				}
+				else
 				{
 					VectorSubtract( pe->mins, pmove->player_maxs[pmove->usehull], mins );
 					VectorSubtract( pe->maxs, pmove->player_mins[pmove->usehull], maxs );
@@ -364,23 +392,23 @@ pmtrace_t PM_PlayerTraceExt( playermove_t *pmove, vec3_t start, vec3_t end, int 
 					hull = PM_HullForBox( mins, maxs );
 					VectorCopy( pe->origin, offset );
 				}
-				else
-				{
-					hull = PM_HullForStudio( pe, pmove, &hullcount );
-					VectorClear( offset );
-				}
+			}			
+			else
+			{
+				VectorSubtract( pe->mins, pmove->player_maxs[pmove->usehull], mins );
+				VectorSubtract( pe->maxs, pmove->player_mins[pmove->usehull], maxs );
+
+				hull = PM_HullForBox( mins, maxs );
+				VectorCopy( pe->origin, offset );
 			}
-		}
-		else
-		{
-			hull = PM_HullForBsp( pe, pmove, offset );
+
 		}
 
 		if( pe->solid == SOLID_BSP && !VectorIsNull( pe->angles ))
 			rotated = true;
 		else rotated = false;
 
-		if( host.features & ENGINE_TRANSFORM_TRACE_AABB )
+		if( FBitSet( host.features, ENGINE_PHYSICS_PUSHER_EXT ))
 		{
 			if(( check_angles( pe->angles[0] ) || check_angles( pe->angles[2] )) && pmove->usehull != 2 )
 				transform_bbox = true;
@@ -538,18 +566,18 @@ int PM_TestPlayerPosition( playermove_t *pmove, vec3_t pos, pmtrace_t *ptrace, p
 		{
 			hull = PM_HullForBsp( pe, pmove, offset );
 		}
-		else if( !pe->studiomodel || pe->studiomodel->type != mod_studio || (!( pe->studiomodel->flags & STUDIO_TRACE_HITBOX ) && pmove->usehull != 2 ))
+		else if( PM_AllowHitBoxTrace( pe->studiomodel, pmove->usehull ))
+		{
+			hull = PM_HullForStudio( pe, pmove, &hullcount );
+			VectorClear( offset );
+		}
+		else
 		{
 			VectorSubtract( pe->mins, pmove->player_maxs[pmove->usehull], mins );
 			VectorSubtract( pe->maxs, pmove->player_mins[pmove->usehull], maxs );
 
 			hull = PM_HullForBox( mins, maxs );
 			VectorCopy( pe->origin, offset );
-		}
-		else
-		{
-			hull = PM_HullForStudio( pe, pmove, &hullcount );
-			VectorClear( offset );
 		}
 
 		// CM_TransformedPointContents :-)
@@ -558,7 +586,7 @@ int PM_TestPlayerPosition( playermove_t *pmove, vec3_t pos, pmtrace_t *ptrace, p
 			qboolean	transform_bbox = false;
 			matrix4x4	matrix;
 
-			if( host.features & ENGINE_TRANSFORM_TRACE_AABB )
+			if( FBitSet( host.features, ENGINE_PHYSICS_PUSHER_EXT ))
 			{
 				if(( check_angles( pe->angles[0] ) || check_angles( pe->angles[2] )) && pmove->usehull != 2 )
 					transform_bbox = true;

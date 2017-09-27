@@ -125,7 +125,7 @@ void CL_PlayCDTrack_f( void )
 			if( paused ) Msg( "Paused %s track %u\n", looped ? "looping" : "playing", track );
 			else Msg( "Currently %s track %u\n", looped ? "looping" : "playing", track );
 		}
-		Msg( "Volume is %f\n", Cvar_VariableValue( "musicvolume" ));
+		Msg( "Volume is %f\n", Cvar_VariableValue( "MP3Volume" ));
 		return;
 	}
 	else Msg( "cd: unknown command %s\n", command );
@@ -207,7 +207,7 @@ void CL_ScreenShot_f( void )
 	int	i;
 	string	checkname;
 
-	if( gl_overview->integer == 1 )
+	if( CL_IsDevOverviewMode() == 1 )
 	{
 		// special case for write overview image and script file
 		Q_snprintf( cls.shotname, sizeof( cls.shotname ), "overviews/%s.bmp", clgame.mapname );
@@ -245,7 +245,7 @@ void CL_SnapShot_f( void )
 	int	i;
 	string	checkname;
 
-	if( gl_overview->integer == 1 )
+	if( CL_IsDevOverviewMode() == 1 )
 	{
 		// special case for write overview image and script file
 		Q_snprintf( cls.shotname, sizeof( cls.shotname ), "overviews/%s.bmp", clgame.mapname );
@@ -455,25 +455,25 @@ void SCR_TimeRefresh_f( void )
 
 	start = Sys_DoubleTime();
 
-	if( Cmd_Argc() == 2 )
+	// run without page flipping like GoldSrc
+	if( Cmd_Argc() == 1 )
 	{	
-		// run without page flipping
-		R_BeginFrame( false );
+		pglDrawBuffer( GL_FRONT );
 		for( i = 0; i < 128; i++ )
 		{
-			cl.refdef.viewangles[1] = i / 128.0 * 360.0f;
-			R_RenderFrame( &cl.refdef, true );
+			RI.viewangles[1] = i / 128.0 * 360.0f;
+			R_RenderScene();
 		}
+		pglFinish();
 		R_EndFrame();
 	}
 	else
 	{
 		for( i = 0; i < 128; i++ )
 		{
-			cl.refdef.viewangles[1] = i / 128.0 * 360.0f;
-
 			R_BeginFrame( true );
-			R_RenderFrame( &cl.refdef, true );
+			RI.viewangles[1] = i / 128.0 * 360.0f;
+			R_RenderScene();
 			R_EndFrame();
 		}
 	}
@@ -492,6 +492,6 @@ viewpos (level-designer helper)
 */
 void SCR_Viewpos_f( void )
 {
-	Msg( "org ( %g %g %g )\n", cl.refdef.vieworg[0], cl.refdef.vieworg[1], cl.refdef.vieworg[2] );
-	Msg( "ang ( %g %g %g )\n", cl.refdef.viewangles[0], cl.refdef.viewangles[1], cl.refdef.viewangles[2] );
+	Msg( "org ( %g %g %g )\n", RI.vieworg[0], RI.vieworg[1], RI.vieworg[2] );
+	Msg( "ang ( %g %g %g )\n", RI.viewangles[0], RI.viewangles[1], RI.viewangles[2] );
 }

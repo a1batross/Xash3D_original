@@ -213,37 +213,20 @@ void Cbuf_Execute( void )
 }
 
 /*
-==============================================================================
-
-			SCRIPT COMMANDS
-
-==============================================================================
-*/
-/*
 ===============
-Cmd_StuffCmds_f
+Cbuf_ExecStuffCmds
 
-Adds command line parameters as script statements
-Commands lead with a +, and continue until a - or another +
-xash -dev 3 +map c1a0d
-xash -nosound -game bshift
+execute commandline
 ===============
 */
-void Cmd_StuffCmds_f( void )
+void Cbuf_ExecStuffCmds( void )
 {
-	int	i, j, l = 0;
 	char	build[MAX_CMD_LINE]; // this is for all commandline options combined (and is bounds checked)
-
-	if( Cmd_Argc() != 1 )
-	{
-		Msg( "Usage: stuffcmds : execute command line parameters\n" );
-		return;
-	}
+	int	i, j, l = 0;
 
 	// no reason to run the commandline arguments twice
-	if( host.stuffcmdsrun ) return;
-
-	host.stuffcmdsrun = true;
+	if( !host.stuffcmds_pending )
+		return;
 	build[0] = 0;
 
 	for( i = 0; i < host.argc; i++ )
@@ -282,6 +265,33 @@ void Cmd_StuffCmds_f( void )
 	// we already reserved space for the terminator
 	build[l++] = 0;
 	Cbuf_InsertText( build );
+	Cbuf_Execute(); // apply now
+
+	// this command can be called only from .rc
+	Cmd_RemoveCommand( "stuffcmds" );
+	host.stuffcmds_pending = false;
+}
+
+/*
+==============================================================================
+
+			SCRIPT COMMANDS
+
+==============================================================================
+*/
+/*
+===============
+Cmd_StuffCmds_f
+
+Adds command line parameters as script statements
+Commands lead with a +, and continue until a - or another +
+xash -dev 3 +map c1a0d
+xash -nosound -game bshift
+===============
+*/
+void Cmd_StuffCmds_f( void )
+{
+	host.stuffcmds_pending = true;
 }
 
 /*
@@ -625,7 +635,7 @@ void Cmd_AddServerCommand( const char *cmd_name, xcommand_t function )
 
 	if( !cmd_name || !*cmd_name )
 	{
-		MsgDev( D_INFO, "Cmd_AddServerCommand: NULL name\n" );
+		MsgDev( D_ERROR, "Cmd_AddServerCommand: NULL name\n" );
 		return;
 	}
 
@@ -669,21 +679,21 @@ int Cmd_AddClientCommand( const char *cmd_name, xcommand_t function )
 
 	if( !cmd_name || !*cmd_name )
 	{
-		MsgDev( D_INFO, "Cmd_AddClientCommand: NULL name\n" );
+		MsgDev( D_ERROR, "Cmd_AddClientCommand: NULL name\n" );
 		return 0;
 	}
 
 	// fail if the command is a variable name
 	if( Cvar_FindVar( cmd_name ))
 	{
-		MsgDev( D_INFO, "Cmd_AddClientCommand: %s already defined as a var\n", cmd_name );
+		MsgDev( D_ERROR, "Cmd_AddClientCommand: %s already defined as a var\n", cmd_name );
 		return 0;
 	}
 	
 	// fail if the command already exists
 	if( Cmd_Exists( cmd_name ))
 	{
-		MsgDev(D_INFO, "Cmd_AddClientCommand: %s already defined\n", cmd_name );
+		MsgDev( D_ERROR, "Cmd_AddClientCommand: %s already defined\n", cmd_name );
 		return 0;
 	}
 
@@ -715,21 +725,21 @@ int Cmd_AddGameUICommand( const char *cmd_name, xcommand_t function )
 
 	if( !cmd_name || !*cmd_name )
 	{
-		MsgDev( D_INFO, "Cmd_AddGameUICommand: NULL name\n" );
+		MsgDev( D_ERROR, "Cmd_AddGameUICommand: NULL name\n" );
 		return 0;
 	}
 
 	// fail if the command is a variable name
 	if( Cvar_FindVar( cmd_name ))
 	{
-		MsgDev( D_INFO, "Cmd_AddGameUICommand: %s already defined as a var\n", cmd_name );
+		MsgDev( D_ERROR, "Cmd_AddGameUICommand: %s already defined as a var\n", cmd_name );
 		return 0;
 	}
 	
 	// fail if the command already exists
 	if( Cmd_Exists( cmd_name ))
 	{
-		MsgDev(D_INFO, "Cmd_AddGameUICommand: %s already defined\n", cmd_name );
+		MsgDev( D_ERROR, "Cmd_AddGameUICommand: %s already defined\n", cmd_name );
 		return 0;
 	}
 
@@ -917,7 +927,7 @@ void Cmd_ExecuteString( char *text )
 	cmd_condlevel = 0;
 
 	// cvar value substitution
-	if( cmd_scripting && cmd_scripting->integer )
+	if( cmd_scripting && cmd_scripting->value )
 	{
 		while( *text )
 		{
@@ -962,30 +972,40 @@ void Cmd_ExecuteString( char *text )
 	// execute the command line
 	Cmd_TokenizeString( text );		
 
-	if( !Cmd_Argc()) return; // no tokens
+	if( !Cmd_Argc( )) return; // no tokens
 
-	// check aliases
-	for( a = cmd_alias; a; a = a->next )
+	if( !host.apply_game_config )
 	{
-		if( !Q_stricmp( cmd_argv[0], a->name ))
+		// check aliases
+		for( a = cmd_alias; a; a = a->next )
 		{
-			Cbuf_InsertText( a->value );
-			return;
+			if( !Q_stricmp( cmd_argv[0], a->name ))
+			{
+				Cbuf_InsertText( a->value );
+				return;
+			}
 		}
 	}
 
-	// check functions
-	for( cmd = cmd_functions; cmd; cmd = cmd->next )
+	// special mode for restore game.dll archived cvars
+	if( !host.apply_game_config || !Q_strcmp( cmd_argv[0], "exec" ))
 	{
-		if( !Q_stricmp( cmd_argv[0], cmd->name ) && cmd->function )
+		// check functions
+		for( cmd = cmd_functions; cmd; cmd = cmd->next )
 		{
-			cmd->function();
-			return;
+			if( !Q_stricmp( cmd_argv[0], cmd->name ) && cmd->function )
+			{
+				cmd->function();
+				return;
+			}
 		}
 	}
 
 	// check cvars
 	if( Cvar_Command( )) return;
+
+	if( host.apply_game_config )
+		return; // don't send nothing to server: we is a server!
 
 	// forward the command line to the server, so the entity DLL can parse it
 	if( host.type == HOST_NORMAL )
@@ -1016,13 +1036,14 @@ void Cmd_ForwardToServer( void )
 	if( cls.demoplayback )
 	{
 		if( !Q_stricmp( Cmd_Argv( 0 ), "pause" ))
-			cl.refdef.paused ^= 1;
+			cl.paused ^= 1;
 		return;
 	}
 
 	if( cls.state != ca_connected && cls.state != ca_active )
 	{
-		MsgDev( D_INFO, "Can't \"%s\", not connected\n", Cmd_Argv( 0 ));
+		if( Q_stricmp( Cmd_Argv( 0 ), "setinfo" ))
+			MsgDev( D_INFO, "Can't \"%s\", not connected\n", Cmd_Argv( 0 ));
 		return; // not connected
 	}
 
@@ -1103,6 +1124,7 @@ void Cmd_Unlink( int group )
 	}
 
 	prev = &cmd_functions;
+
 	while( 1 )
 	{
 		cmd = *prev;
@@ -1155,7 +1177,7 @@ void Cmd_Init( void )
 	Cmd_AddCommand( "echo", Cmd_Echo_f, "print a message to the console (useful in scripts)" );
 	Cmd_AddCommand( "wait", Cmd_Wait_f, "make script execution wait for some rendered frames" );
 	Cmd_AddCommand( "cmdlist", Cmd_List_f, "display all console commands beginning with the specified prefix" );
-	Cmd_AddCommand( "stuffcmds", Cmd_StuffCmds_f, va( "execute commandline parameters (must be present in %s.rc script)", SI.ModuleName ));
+	Cmd_AddCommand( "stuffcmds", Cmd_StuffCmds_f, "execute commandline parameters (must be present in .rc script)" );
 	Cmd_AddCommand( "cmd", Cmd_ForwardToServer, "send a console commandline to the server" );
 	Cmd_AddCommand( "alias", Cmd_Alias_f, "create a script function. Without arguments show the list of all alias" );
 	Cmd_AddCommand( "unalias", Cmd_UnAlias_f, "remove a script function" );

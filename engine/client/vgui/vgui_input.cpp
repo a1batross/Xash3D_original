@@ -83,7 +83,7 @@ void VGUI_CursorSelect( Cursor *cursor )
 
 void VGUI_ActivateCurrentCursor( void )
 {
-	if( cls.key_dest != key_game || cl.refdef.paused )
+	if( cls.key_dest != key_game || cl.paused )
 		return;
 
 	if( host.mouse_visible )

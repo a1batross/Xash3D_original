@@ -44,7 +44,6 @@ RSC=rc.exe
 # PROP Target_Dir ""
 # ADD BASE CPP /nologo /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /YX /c
 # ADD CPP /nologo /MD /W3 /GX /O2 /I "./" /I "common" /I "common/imagelib" /I "common/soundlib" /I "server" /I "client" /I "client/vgui" /I "../common" /I "../game_shared" /I "../pm_shared" /I "../utils/vgui/include" /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /FD /c
-# SUBTRACT CPP /Fr /YX
 # ADD BASE MTL /nologo /D "NDEBUG" /win32
 # ADD MTL /nologo /D "NDEBUG" /mktyplib203 /win32
 # ADD BASE RSC /l 0x409 /d "NDEBUG"
@@ -64,12 +63,20 @@ SOURCE="$(InputPath)"
 BuildCmds= \
 	copy $(TargetDir)\xash.dll "D:\Xash3D\xash.dll" \
 	copy $(TargetDir)\xash.dll "D:\Paranoia2\xash.dll" \
+	copy $(TargetDir)\xash.dll "D:\Area51\xash.dll" \
+	copy $(TargetDir)\xash.dll "D:\Quake\xash.dll" \
 	
 
 "D:\Xash3D\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
    $(BuildCmds)
 
 "D:\Paranoia2\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+   $(BuildCmds)
+
+"D:\Area51\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+   $(BuildCmds)
+
+"D:\Quake\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
    $(BuildCmds)
 # End Custom Build
 
@@ -98,7 +105,7 @@ BSC32=bscmake.exe
 # ADD BSC32 /nologo
 LINK32=link.exe
 # ADD BASE LINK32 kernel32.lib user32.lib gdi32.lib winspool.lib comdlg32.lib advapi32.lib shell32.lib ole32.lib oleaut32.lib uuid.lib odbc32.lib odbccp32.lib /nologo /subsystem:windows /debug /machine:I386
-# ADD LINK32 msvcrtd.lib user32.lib gdi32.lib shell32.lib advapi32.lib winmm.lib mpeg_dbg.lib ../utils/vgui/lib/win32_vc6/vgui.lib /nologo /subsystem:windows /dll /debug /machine:I386 /nodefaultlib:"libcd.lib" /out:"..\temp\engine\!debug/xash.dll" /pdbtype:sept /libpath:"./common/soundlib"
+# ADD LINK32 msvcrtd.lib user32.lib gdi32.lib shell32.lib advapi32.lib winmm.lib mpeg_dbg.lib ../utils/vgui/lib/win32_vc6/vgui.lib /nologo /subsystem:windows /dll /debug /machine:I386 /nodefaultlib:"libcmtd.lib" /out:"..\temp\engine\!debug/xash.dll" /pdbtype:sept /libpath:"./common/soundlib"
 # SUBTRACT LINK32 /incremental:no /map /nodefaultlib
 # Begin Custom Build
 TargetDir=\Xash3D\src_main\temp\engine\!debug
@@ -108,12 +115,20 @@ SOURCE="$(InputPath)"
 BuildCmds= \
 	copy $(TargetDir)\xash.dll "D:\Xash3D\xash.dll" \
 	copy $(TargetDir)\xash.dll "D:\Paranoia2\xash.dll" \
+	copy $(TargetDir)\xash.dll "D:\Area51\xash.dll" \
+	copy $(TargetDir)\xash.dll "D:\Quake\xash.dll" \
 	
 
 "D:\Xash3D\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
    $(BuildCmds)
 
 "D:\Paranoia2\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+   $(BuildCmds)
+
+"D:\Area51\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+   $(BuildCmds)
+
+"D:\Quake\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
    $(BuildCmds)
 # End Custom Build
 
@@ -232,6 +247,10 @@ SOURCE=.\common\gamma.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\client\gl_alias.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\client\gl_backend.c
 # End Source File
 # Begin Source File
@@ -249,6 +268,10 @@ SOURCE=.\client\gl_decals.c
 # Begin Source File
 
 SOURCE=.\client\gl_draw.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\client\gl_frustum.c
 # End Source File
 # Begin Source File
 
@@ -305,6 +328,10 @@ SOURCE=.\client\gl_warp.c
 # Begin Source File
 
 SOURCE=.\common\host.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\common\host_cmd.c
 # End Source File
 # Begin Source File
 
@@ -384,7 +411,11 @@ SOURCE=.\common\net_encode.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\common\network.c
+SOURCE=.\common\net_ws.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\common\pm_debug.c
 # End Source File
 # Begin Source File
 
@@ -393,10 +424,6 @@ SOURCE=.\common\pm_surface.c
 # Begin Source File
 
 SOURCE=.\common\pm_trace.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\common\random.c
 # End Source File
 # Begin Source File
 
@@ -473,6 +500,10 @@ SOURCE=.\server\sv_game.c
 # Begin Source File
 
 SOURCE=.\server\sv_init.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\server\sv_log.c
 # End Source File
 # Begin Source File
 
@@ -569,6 +600,10 @@ SOURCE=.\common\filesystem.h
 # Begin Source File
 
 SOURCE=.\client\gl_export.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\client\gl_frustum.h
 # End Source File
 # Begin Source File
 

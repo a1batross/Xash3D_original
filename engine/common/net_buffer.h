@@ -78,6 +78,9 @@ void MSG_WriteBitAngle( sizebuf_t *sb, float fAngle, int numbits );
 void MSG_WriteBitFloat( sizebuf_t *sb, float val );
 
 // Byte-write functions
+#define MSG_BeginServerCmd( sb, cmd ) MSG_WriteCmdExt( sb, cmd, NS_SERVER, NULL )
+#define MSG_BeginClientCmd( sb, cmd ) MSG_WriteCmdExt( sb, cmd, NS_CLIENT, NULL )
+void MSG_WriteCmdExt( sizebuf_t *sb, int cmd, netsrc_t type, const char *name );		// message marker
 void MSG_WriteChar( sizebuf_t *sb, int val );
 void MSG_WriteByte( sizebuf_t *sb, int val );
 void MSG_WriteShort( sizebuf_t *sb, int val );
@@ -99,6 +102,7 @@ _inline int MSG_GetMaxBytes( sizebuf_t *sb ) { return sb->nDataBits >> 3; }
 _inline int MSG_GetNumBitsLeft( sizebuf_t *sb ) { return sb->nDataBits - sb->iCurBit; }
 _inline int MSG_GetNumBytesLeft( sizebuf_t *sb ) { return MSG_GetNumBitsLeft( sb ) >> 3; }
 _inline byte *MSG_GetData( sizebuf_t *sb ) { return sb->pData; }
+_inline byte *MSG_GetBuf( sizebuf_t *sb ) { return sb->pData; } // just an alias
 
 // Bit-read functions
 int MSG_ReadOneBit( sizebuf_t *sb );
@@ -110,6 +114,9 @@ uint MSG_ReadUBitLong( sizebuf_t *sb, int numbits );
 uint MSG_ReadBitLong( sizebuf_t *sb, int numbits, qboolean bSigned );
 
 // Byte-read functions
+#define MSG_ReadServerCmd( sb ) MSG_ReadCmd( sb, NS_SERVER )
+#define MSG_ReadClientCmd( sb ) MSG_ReadCmd( sb, NS_CLIENT )
+int MSG_ReadCmd( sizebuf_t *sb, netsrc_t type );		// message marker
 int MSG_ReadChar( sizebuf_t *sb );
 int MSG_ReadByte( sizebuf_t *sb );
 int MSG_ReadShort( sizebuf_t *sb );

@@ -28,6 +28,13 @@ gameui_static_t	gameui;
 void UI_UpdateMenu( float realtime )
 {
 	if( !gameui.hInstance ) return;
+
+	// menu time (not paused, not clamped)
+	gameui.globals->time = host.realtime;
+	gameui.globals->frametime = host.realframetime;
+	gameui.globals->demoplayback = cls.demoplayback;
+	gameui.globals->demorecording = cls.demorecording;
+
 	gameui.dllFuncs.pfnRedraw( realtime );
 	UI_UpdateUserinfo();
 }
@@ -143,7 +150,7 @@ static void UI_DrawLogo( const char *filename, float x, float y, float width, fl
 			return;
 		}
 
-		AVI_OpenVideo( cin_state, fullpath, false, false, true );
+		AVI_OpenVideo( cin_state, fullpath, false, true );
 		if( !( AVI_GetVideoInfo( cin_state, &gameui.logo_xres, &gameui.logo_yres, &gameui.logo_length )))
 		{
 			AVI_CloseVideo( cin_state );
@@ -202,14 +209,17 @@ static void UI_UpdateUserinfo( void )
 {
 	player_info_t	*player;
 
-	if( !userinfo->modified ) return;
+	if( !host.userinfo_changed )
+		return;
+
 	player = &gameui.playerinfo;
 
-	Q_strncpy( player->userinfo, Cvar_Userinfo(), sizeof( player->userinfo ));
+	Q_strncpy( player->userinfo, cls.userinfo, sizeof( player->userinfo ));
 	Q_strncpy( player->name, Info_ValueForKey( player->userinfo, "name" ), sizeof( player->name ));
 	Q_strncpy( player->model, Info_ValueForKey( player->userinfo, "model" ), sizeof( player->model ));
 	player->topcolor = Q_atoi( Info_ValueForKey( player->userinfo, "topcolor" ));
 	player->bottomcolor = Q_atoi( Info_ValueForKey( player->userinfo, "bottomcolor" ));
+	host.userinfo_changed = false; // we got it
 }
 	
 void Host_Credits( void )
@@ -512,7 +522,7 @@ static void pfnFillRGBA( int x, int y, int width, int height, int r, int g, int 
 	a = bound( 0, a, 255 );
 	pglColor4ub( r, g, b, a );
 	GL_SetRenderMode( kRenderTransTexture );
-	R_DrawStretchPic( x, y, width, height, 0, 0, 1, 1, cls.fillImage );
+	R_DrawStretchPic( x, y, width, height, 0, 0, 1, 1, tr.whiteTexture );
 	pglColor4ub( 255, 255, 255, 255 );
 }
 
@@ -658,12 +668,32 @@ pfnRenderScene
 for drawing playermodel previews
 ====================
 */
-static void pfnRenderScene( const ref_params_t *fd )
+static void pfnRenderScene( const ref_viewpass_t *rvp )
 {
 	// to avoid division by zero
-	if( !fd || fd->fov_x <= 0.0f || fd->fov_y <= 0.0f )
+	if( !rvp || rvp->fov_x <= 0.0f || rvp->fov_y <= 0.0f )
 		return;
-	R_RenderFrame( fd, false );
+
+	// don't allow special modes from menu
+	((ref_viewpass_t *)&rvp)->flags = 0;
+
+	R_Set2DMode( false );
+	R_RenderFrame( rvp );
+	R_Set2DMode( true );
+}
+
+/*
+====================
+pfnAddEntity
+
+adding player model into visible list
+====================
+*/
+static int pfnAddEntity( int entityType, cl_entity_t *ent )
+{
+	if( !R_AddEntity( ent, entityType ))
+		return false;
+	return true;
 }
 
 /*
@@ -895,7 +925,7 @@ static ui_enginefuncs_t gEngfuncs =
 	Cvar_VariableValue,
 	Cvar_VariableString,
 	Cvar_Set,
-	Cvar_SetFloat,
+	Cvar_SetValue,
 	Cmd_AddGameUICommand,
 	pfnClientCmd,
 	Cmd_RemoveCommand,
@@ -920,7 +950,7 @@ static ui_enginefuncs_t gEngfuncs =
 	pfnSetPlayerModel,
 	R_ClearScene,	
 	pfnRenderScene,
-	CL_AddEntity,
+	pfnAddEntity,
 	Host_Error,
 	FS_FileExists,
 	pfnGetGameDir,
@@ -953,12 +983,13 @@ static ui_enginefuncs_t gEngfuncs =
 	pfnChangeInstance,
 	pfnStartBackgroundTrack,
 	pfnHostEndGame,
-	Com_RandomFloat,
-	Com_RandomLong,
+	COM_RandomFloat,
+	COM_RandomLong,
 	IN_SetCursor,
 	pfnIsMapValid,
 	GL_ProcessTexture,
 	COM_CompareFileTime,
+	VID_GetModeString,
 };
 
 void UI_UnloadProgs( void )
@@ -968,13 +999,13 @@ void UI_UnloadProgs( void )
 	// deinitialize game
 	gameui.dllFuncs.pfnShutdown();
 
-	Cvar_FullSet( "host_gameuiloaded", "0", CVAR_INIT );
+	Cvar_FullSet( "host_gameuiloaded", "0", FCVAR_READ_ONLY );
 
 	Com_FreeLibrary( gameui.hInstance );
 	Mem_FreePool( &gameui.mempool );
 	memset( &gameui, 0, sizeof( gameui ));
 
-	Cvar_Unlink( CVAR_GAMEUIDLL );
+	Cvar_Unlink( FCVAR_GAMEUIDLL );
 	Cmd_Unlink( CMD_GAMEUIDLL );
 }
 
@@ -1024,7 +1055,7 @@ qboolean UI_LoadProgs( void )
 		return false;
 	}
 
-	Cvar_FullSet( "host_gameuiloaded", "1", CVAR_INIT );
+	Cvar_FullSet( "host_gameuiloaded", "1", FCVAR_READ_ONLY );
 
 	// setup gameinfo
 	for( i = 0; i < SI.numgames; i++ )

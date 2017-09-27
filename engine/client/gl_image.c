@@ -18,27 +18,16 @@ GNU General Public License for more details.
 #include "gl_local.h"
 #include "studio.h"
 
-#define TEXTURES_HASH_SIZE		(MAX_TEXTURES >> 2)
+#define TEXTURES_HASH_SIZE	(MAX_TEXTURES >> 2)
 
 static gltexture_t		r_textures[MAX_TEXTURES];
 static gltexture_t		*r_texturesHashTable[TEXTURES_HASH_SIZE];
-static int		r_numTextures;
 static byte		data2D[BLOCK_SIZE_MAX*BLOCK_SIZE_MAX*4];	// intermediate texbuffer
+static int		r_numTextures;
 static rgbdata_t		r_image;					// generic pixelbuffer used for internal textures
 
 // internal tables
-static vec3_t	r_luminanceTable[256];	// RGB to luminance
-static byte	r_particleTexture[8][8] =
-{
-{0,0,0,0,0,0,0,0},
-{0,0,0,1,1,0,0,0},
-{0,0,0,1,1,0,0,0},
-{0,1,1,1,1,1,1,0},
-{0,1,1,1,1,1,1,0},
-{0,0,0,1,1,0,0,0},
-{0,0,0,1,1,0,0,0},
-{0,0,0,0,0,0,0,0},
-};
+static vec3_t		r_luminanceTable[256];			// RGB to luminance
 
 /*
 =================
@@ -158,7 +147,7 @@ void GL_ApplyTextureParams( gltexture_t *tex )
 	}
 	else if( FBitSet( tex->flags, TF_NOMIPMAP ) || tex->numMips <= 1 )
 	{
-		if( FBitSet( tex->flags, TF_NEAREST ))
+		if( FBitSet( tex->flags, TF_NEAREST ) || ( !Q_strncmp( tex->name, "*lightmap", 9 ) && gl_lightmap_nearest->value ))
 		{
 			pglTexParameteri( tex->target, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
 			pglTexParameteri( tex->target, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
@@ -171,7 +160,7 @@ void GL_ApplyTextureParams( gltexture_t *tex )
 	}
 	else
 	{
-		if( FBitSet( tex->flags, TF_NEAREST ) || gl_texture_nearest->integer )
+		if( FBitSet( tex->flags, TF_NEAREST ) || gl_texture_nearest->value )
 		{
 			pglTexParameteri( tex->target, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST );
 			pglTexParameteri( tex->target, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
@@ -273,9 +262,23 @@ static void GL_UpdateTextureParams( int iTexture )
 	if( GL_Support( GL_TEXTURE_LOD_BIAS ) && ( tex->numMips > 1 ) && !FBitSet( tex->flags, TF_DEPTHMAP ))
 		pglTexParameterf( tex->target, GL_TEXTURE_LOD_BIAS_EXT, gl_texture_lodbias->value );
 
+	if( !Q_strncmp( tex->name, "*lightmap", 9 ))
+	{
+		if( gl_lightmap_nearest->value )
+		{
+			pglTexParameteri( tex->target, GL_TEXTURE_MIN_FILTER, GL_NEAREST );
+			pglTexParameteri( tex->target, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
+		}
+		else
+		{
+			pglTexParameteri( tex->target, GL_TEXTURE_MIN_FILTER, GL_LINEAR );
+			pglTexParameteri( tex->target, GL_TEXTURE_MAG_FILTER, GL_LINEAR );
+		}
+	}
+
 	if( tex->numMips <= 1 ) return;
 
-	if( FBitSet( tex->flags, TF_NEAREST ) || gl_texture_nearest->integer )
+	if( FBitSet( tex->flags, TF_NEAREST ) || gl_texture_nearest->value )
 	{
 		pglTexParameteri( tex->target, GL_TEXTURE_MIN_FILTER, GL_NEAREST_MIPMAP_NEAREST );
 		pglTexParameteri( tex->target, GL_TEXTURE_MAG_FILTER, GL_NEAREST );
@@ -299,22 +302,23 @@ void R_SetTextureParameters( void )
 	if( GL_Support( GL_ANISOTROPY_EXT ))
 	{
 		if( gl_texture_anisotropy->value > glConfig.max_texture_anisotropy )
-			Cvar_SetFloat( "gl_anisotropy", glConfig.max_texture_anisotropy );
+			Cvar_SetValue( "gl_anisotropy", glConfig.max_texture_anisotropy );
 		else if( gl_texture_anisotropy->value < 1.0f )
-			Cvar_SetFloat( "gl_anisotropy", 1.0f );
+			Cvar_SetValue( "gl_anisotropy", 1.0f );
 	}
 
 	if( GL_Support( GL_TEXTURE_LOD_BIAS ))
 	{
 		if( gl_texture_lodbias->value < -glConfig.max_texture_lod_bias )
-			Cvar_SetFloat( "gl_texture_lodbias", -glConfig.max_texture_lod_bias );
+			Cvar_SetValue( "gl_texture_lodbias", -glConfig.max_texture_lod_bias );
 		else if( gl_texture_lodbias->value > glConfig.max_texture_lod_bias )
-			Cvar_SetFloat( "gl_texture_lodbias", glConfig.max_texture_lod_bias );
+			Cvar_SetValue( "gl_texture_lodbias", glConfig.max_texture_lod_bias );
 	}
 
-	gl_texture_anisotropy->modified = false;
-	gl_texture_lodbias->modified = false;
-	gl_texture_nearest->modified = false;
+	ClearBits( gl_texture_anisotropy->flags, FCVAR_CHANGED );
+	ClearBits( gl_texture_lodbias->flags, FCVAR_CHANGED );
+	ClearBits( gl_texture_nearest->flags, FCVAR_CHANGED );
+	ClearBits( gl_lightmap_nearest->flags, FCVAR_CHANGED );
 
 	// change all the existing mipmapped texture objects
 	for( i = 0; i < r_numTextures; i++ )
@@ -556,20 +560,6 @@ static void GL_SetTextureDimensions( gltexture_t *tex, int width, int height, in
 		}
 	}
 
-	// apply custom downscales
-	if( FBitSet( tex->flags, TF_SKYSIDE ))
-	{
-		// let people sample down the sky textures for speed
-		width >>= gl_skymip->integer;
-		height >>= gl_skymip->integer;
-	}
-	else if( !FBitSet( tex->flags, TF_NOPICMIP ))
-	{
-		// let people sample down the world textures for speed
-		width >>= gl_picmip->integer;
-		height >>= gl_picmip->integer;
-	}
-
 	// set the texture dimensions
 	tex->width = Q_max( 1, width );
 	tex->height = Q_max( 1, height );
@@ -591,7 +581,7 @@ static void GL_SetTextureTarget( gltexture_t *tex, rgbdata_t *pic )
 	tex->numMips = 0; // begin counting
 
 	// correct mip count
-	pic->numMips = max( 1, pic->numMips );
+	pic->numMips = Q_max( 1, pic->numMips );
 
 	// trying to determine texture type
 	if( pic->width > 1 && pic->height <= 1 )
@@ -622,6 +612,9 @@ static void GL_SetTextureTarget( gltexture_t *tex, rgbdata_t *pic )
 	// depth cubemaps only allowed when GL_EXT_gpu_shader4 is supported
 	if( tex->target == GL_TEXTURE_CUBE_MAP_ARB && !GL_Support( GL_EXT_GPU_SHADER4 ) && FBitSet( tex->flags, TF_DEPTHMAP ))
 		tex->target = GL_NONE;
+
+	if( tex->target == GL_TEXTURE_CUBE_MAP_ARB )
+		tex->flags |= TF_CUBEMAP; // it's cubemap!
 }
 
 /*
@@ -633,16 +626,8 @@ static void GL_SetTextureFormat( gltexture_t *tex, pixformat_t format, int chann
 {
 	qboolean	haveColor = ( channelMask & IMAGE_HAS_COLOR );
 	qboolean	haveAlpha = ( channelMask & IMAGE_HAS_ALPHA );
-	qboolean	compressImage = false;
 
 	ASSERT( tex != NULL );
-
-	if( !FBitSet( tex->flags, TF_UNCOMPRESSED ) && !ImageDXT( format ))
-	{
-		// check if it should be compressed
-		if( gl_compress_textures->integer && GL_Support( GL_TEXTURE_COMPRESSION_EXT ))
-			compressImage = true;
-	}
 
 	if( ImageDXT( format ))
 	{
@@ -687,16 +672,6 @@ static void GL_SetTextureFormat( gltexture_t *tex, pixformat_t format, int chann
 			if( FBitSet( tex->flags, TF_ARB_16BIT ) || glw_state.desktopBitsPixel == 16 )
 				tex->format = GL_LUMINANCE16F_ARB;
 			else tex->format = GL_LUMINANCE32F_ARB;
-		}
-	}
-	else if( compressImage )
-	{
-		switch( GL_CalcTextureSamples( channelMask ))
-		{
-		case 1: tex->format = GL_LUMINANCE8; break;
-		case 2: tex->format = GL_LUMINANCE8_ALPHA8; break;
-		case 3: tex->format = GL_COMPRESSED_RGB_S3TC_DXT1_EXT; break;
-		case 4: tex->format = GL_COMPRESSED_RGBA_S3TC_DXT5_EXT; break;
 		}
 	}
 	else
@@ -822,6 +797,78 @@ byte *GL_ResampleTexture( const byte *source, int inWidth, int inHeight, int out
 
 /*
 =================
+GL_BoxFilter3x3
+
+box filter 3x3
+=================
+*/
+void GL_BoxFilter3x3( byte *out, const byte *in, int w, int h, int x, int y )
+{
+	int		r = 0, g = 0, b = 0, a = 0;
+	int		count = 0, acount = 0;
+	int		i, j, u, v;
+	const byte	*pixel;
+
+	for( i = 0; i < 3; i++ )
+	{
+		u = ( i - 1 ) + x;
+
+		for( j = 0; j < 3; j++ )
+		{
+			v = ( j - 1 ) + y;
+
+			if( u >= 0 && u < w && v >= 0 && v < h )
+			{
+				pixel = &in[( u + v * w ) * 4];
+
+				if( pixel[3] != 0 )
+				{
+					r += pixel[0];
+					g += pixel[1];
+					b += pixel[2];
+					a += pixel[3];
+					acount++;
+				}
+			}
+		}
+	}
+
+	if(  acount == 0 )
+		acount = 1;
+
+	out[0] = r / acount;
+	out[1] = g / acount;
+	out[2] = b / acount;
+//	out[3] = (int)( SimpleSpline( ( a / 12.0f ) / 255.0f ) * 255 );
+}
+
+/*
+=================
+GL_ApplyFilter
+
+Apply box-filter to 1-bit alpha
+=================
+*/
+byte *GL_ApplyFilter( const byte *source, int width, int height )
+{
+	byte	*in = (byte *)source;
+	byte	*out = (byte *)source;
+	int	i;
+
+	if( FBitSet( host.features, ENGINE_QUAKE_COMPATIBLE ))
+		return in;
+
+	for( i = 0; source && i < width * height; i++, in += 4 )
+	{
+		if( in[0] == 0 && in[1] == 0 && in[2] == 0 && in[3] == 0 )
+			GL_BoxFilter3x3( in, source, width, height, i % width, i / width );
+	}
+
+	return out;
+}
+
+/*
+=================
 GL_ApplyGamma
 
 Assume input buffer is RGBA
@@ -833,7 +880,7 @@ byte *GL_ApplyGamma( const byte *source, int pixels, qboolean isNormalMap )
 	byte	*out = (byte *)source;
 	int	i;
 
-	if( !isNormalMap )
+	if( source && !isNormalMap )
 	{
 		for( i = 0; i < pixels; i++, in += 4 )
 		{
@@ -1089,8 +1136,8 @@ static qboolean GL_UploadTexture( gltexture_t *tex, rgbdata_t *pic )
 	bufend = pic->buffer + pic->size; // total image size include all the layers, cube sides, mipmaps
 	offset = GL_CalcImageSize( pic->type, pic->width, pic->height, pic->depth );
 	texsize = GL_CalcTextureSize( tex->format, tex->width, tex->height, tex->depth );
-	normalMap = ( tex->flags & TF_NORMALMAP ) ? true : false;
-	numSides = ( pic->flags & IMAGE_CUBEMAP ) ? 6 : 1;
+	normalMap = FBitSet( tex->flags, TF_NORMALMAP ) ? true : false;
+	numSides = FBitSet( pic->flags, IMAGE_CUBEMAP ) ? 6 : 1;
 
 	// uploading texture into video memory
 	pglBindTexture( tex->target, tex->texnum );
@@ -1103,10 +1150,10 @@ static qboolean GL_UploadTexture( gltexture_t *tex, rgbdata_t *pic )
 
 		if( ImageDXT( pic->type ))
 		{
-			for( j = 0; j < max( 1, pic->numMips ); j++ )
+			for( j = 0; j < Q_max( 1, pic->numMips ); j++ )
 			{
-				width = max( 1, ( tex->width >> j ));
-				height = max( 1, ( tex->height >> j ));
+				width = Q_max( 1, ( tex->width >> j ));
+				height = Q_max( 1, ( tex->height >> j ));
 				texsize = GL_CalcTextureSize( tex->format, width, height, tex->depth );
 				size = GL_CalcImageSize( pic->type, width, height, tex->depth );
 				GL_TextureImageDXT( tex, i, j, width, height, tex->depth, size, buf );
@@ -1117,12 +1164,12 @@ static qboolean GL_UploadTexture( gltexture_t *tex, rgbdata_t *pic )
 				GL_CheckTexImageError( tex );
 			}
 		}
-		else if( max( 1, pic->numMips ) > 1 )	// not-compressed DDS
+		else if( Q_max( 1, pic->numMips ) > 1 )	// not-compressed DDS
 		{
-			for( j = 0; j < max( 1, pic->numMips ); j++ )
+			for( j = 0; j < Q_max( 1, pic->numMips ); j++ )
 			{
-				width = max( 1, ( tex->width >> j ));
-				height = max( 1, ( tex->height >> j ));
+				width = Q_max( 1, ( tex->width >> j ));
+				height = Q_max( 1, ( tex->height >> j ));
 				texsize = GL_CalcTextureSize( tex->format, width, height, tex->depth );
 				size = GL_CalcImageSize( pic->type, width, height, tex->depth );
 				GL_TextureImageRAW( tex, i, j, width, height, tex->depth, pic->type, buf );
@@ -1143,17 +1190,17 @@ static qboolean GL_UploadTexture( gltexture_t *tex, rgbdata_t *pic )
 				data = GL_ResampleTexture( buf, pic->width, pic->height, tex->width, tex->height, normalMap );
 			else data = buf;
 
-			if( !glConfig.deviceSupportsGamma )
-			{
-				if( !ImageDXT( pic->type ) && !( tex->flags & TF_NOMIPMAP ) && !( tex->flags & TF_SKYSIDE ))
-					data = GL_ApplyGamma( data, tex->width * tex->height * tex->depth, ( tex->flags & TF_NORMALMAP ));
-			}
+			if( !ImageDXT( pic->type ) && !FBitSet( tex->flags, TF_NOMIPMAP|TF_SKYSIDE ))
+				data = GL_ApplyGamma( data, tex->width * tex->height * tex->depth, FBitSet( tex->flags, TF_NORMALMAP ));
+
+			if( !ImageDXT( pic->type ) && !FBitSet( tex->flags, TF_NOMIPMAP ) && FBitSet( pic->flags, IMAGE_ONEBIT_ALPHA ))
+				data = GL_ApplyFilter( data, tex->width, tex->height );
 
 			// mips will be auto-generated if desired
 			for( j = 0; j < mipCount; j++ )
 			{
-				width = max( 1, ( tex->width >> j ));
-				height = max( 1, ( tex->height >> j ));
+				width = Q_max( 1, ( tex->width >> j ));
+				height = Q_max( 1, ( tex->height >> j ));
 				texsize = GL_CalcTextureSize( tex->format, width, height, tex->depth );
 				size = GL_CalcImageSize( pic->type, width, height, tex->depth );
 				GL_TextureImageRAW( tex, i, j, width, height, tex->depth, pic->type, data );
@@ -1172,6 +1219,7 @@ static qboolean GL_UploadTexture( gltexture_t *tex, rgbdata_t *pic )
 	}
 
 	tex->flags |= TF_IMG_UPLOADED; // done
+	tex->numMips /= numSides;
 
 	return true;
 }
@@ -1199,9 +1247,7 @@ static void GL_ProcessImage( gltexture_t *tex, rgbdata_t *pic, imgfilter_t *filt
 			tex->flags |= TF_NOMIPMAP; // disable mipmapping by user request
 
 		// clear all the unsupported flags
-		tex->flags &= ~TF_KEEP_8BIT;
-		tex->flags &= ~TF_KEEP_RGBDATA;
-		tex->flags |= TF_NOPICMIP;
+		tex->flags &= ~TF_KEEP_SOURCE;
 	}
 	else
 	{
@@ -1216,7 +1262,7 @@ static void GL_ProcessImage( gltexture_t *tex, rgbdata_t *pic, imgfilter_t *filt
 			tex->flags &= ~TF_MAKELUMA;
 		}
 
-		if( !( tex->flags & TF_IMG_UPLOADED ) && ( tex->flags & ( TF_KEEP_8BIT|TF_KEEP_RGBDATA )))
+		if( !FBitSet( tex->flags, TF_IMG_UPLOADED ) && FBitSet( tex->flags, TF_KEEP_SOURCE ))
 			tex->original = FS_CopyImage( pic ); // because current pic will be expanded to rgba
 
 		// we need to expand image into RGBA buffer
@@ -1224,7 +1270,7 @@ static void GL_ProcessImage( gltexture_t *tex, rgbdata_t *pic, imgfilter_t *filt
 			img_flags |= IMAGE_FORCE_RGBA;
 
 		// processing image before uploading (force to rgba, make luma etc)
-		if( pic->buffer ) Image_Process( &pic, 0, 0, 0.0f, img_flags, filter );
+		if( pic->buffer ) Image_Process( &pic, 0, 0, img_flags, filter );
 
 		if( tex->flags & TF_LUMINANCE )
 		{
@@ -1265,17 +1311,13 @@ int GL_LoadTexture( const char *name, const byte *buf, size_t size, int flags, i
 	for( tex = r_texturesHashTable[hash]; tex != NULL; tex = tex->nextHash )
 	{
 		if( !Q_stricmp( tex->name, name ))
-		{
-			// prolonge registration
-			tex->cacheframe = world.load_sequence;
 			return (tex - r_textures);
-		}
 	}
 
 	if( flags & TF_NOFLIP_TGA )
 		picFlags |= IL_DONTFLIP_TGA;
 
-	if( flags & TF_KEEP_8BIT )
+	if( FBitSet( flags, TF_KEEP_SOURCE ) && !FBitSet( flags, TF_EXPAND_SOURCE ))
 		picFlags |= IL_KEEP_8BIT;	
 
 	// set some image flags
@@ -1379,11 +1421,7 @@ int GL_LoadTextureArray( const char **names, int flags, imgfilter_t *filter )
 	for( tex = r_texturesHashTable[hash]; tex != NULL; tex = tex->nextHash )
 	{
 		if( !Q_stricmp( tex->name, name ))
-		{
-			// prolonge registration
-			tex->cacheframe = world.load_sequence;
 			return (tex - r_textures);
-		}
 	}
 
 	// load all the images and pack it into single image
@@ -1418,7 +1456,7 @@ int GL_LoadTextureArray( const char **names, int flags, imgfilter_t *filter )
 
 			// but allow to rescale raw images
 			if( ImageRAW( pic->type ) && ImageRAW( src->type ) && ( pic->width != src->width || pic->height != src->height ))
-				Image_Process( &src, pic->width, pic->height, 0.0f, IMAGE_RESAMPLE, NULL );
+				Image_Process( &src, pic->width, pic->height, IMAGE_RESAMPLE, NULL );
 
 			if( pic->size != src->size )
 			{
@@ -1533,8 +1571,6 @@ int GL_LoadTextureInternal( const char *name, rgbdata_t *pic, texFlags_t flags, 
 	{
 		if( !Q_stricmp( tex->name, name ))
 		{
-			// prolonge registration
-			tex->cacheframe = world.load_sequence;
 			if( update ) break;
 			return (tex - r_textures);
 		}
@@ -1578,7 +1614,6 @@ int GL_LoadTextureInternal( const char *name, rgbdata_t *pic, texFlags_t flags, 
 	if( !GL_UploadTexture( tex, pic ))
 	{
 		memset( tex, 0, sizeof( gltexture_t ));
-		FS_FreeImage( pic ); // release source texture
 		return 0;
 	}
 
@@ -1722,7 +1757,7 @@ void GL_ProcessTexture( int texnum, float gamma, int topColor, int bottomColor )
 
 	// all the operations makes over the image copy not an original
 	pic = FS_CopyImage( image->original );
-	Image_Process( &pic, topColor, bottomColor, gamma, flags, NULL );
+	Image_Process( &pic, topColor, bottomColor, flags, NULL );
 
 	GL_UploadTexture( image, pic );
 	GL_ApplyTextureParams( image ); // update texture filter, wrap etc
@@ -1755,11 +1790,7 @@ int GL_FindTexture( const char *name )
 	for( tex = r_texturesHashTable[hash]; tex != NULL; tex = tex->nextHash )
 	{
 		if( !Q_stricmp( tex->name, name ))
-		{
-			// prolonge registration
-			tex->cacheframe = world.load_sequence;
 			return (tex - r_textures);
-		}
 	}
 
 	return 0;
@@ -1914,7 +1945,7 @@ static rgbdata_t *R_InitParticleTexture( texFlags_t *flags )
 	r_image.type = PF_RGBA_32;
 	r_image.size = r_image.width * r_image.height * 4;
 
-	*flags = TF_NOPICMIP|TF_NOMIPMAP;
+	*flags = TF_CLAMP;
 
 	for( x = 0; x < 16; x++ )
 	{
@@ -1933,37 +1964,6 @@ static rgbdata_t *R_InitParticleTexture( texFlags_t *flags )
 
 /*
 ==================
-R_InitParticleTexture2
-==================
-*/
-static rgbdata_t *R_InitParticleTexture2( texFlags_t *flags )
-{
-	int	x, y;
-
-	// particle texture
-	r_image.width = r_image.height = 8;
-	r_image.buffer = data2D;
-	r_image.flags = (IMAGE_HAS_COLOR|IMAGE_HAS_ALPHA);
-	r_image.type = PF_RGBA_32;
-	r_image.size = r_image.width * r_image.height * 4;
-
-	*flags = TF_NOPICMIP|TF_NOMIPMAP;
-
-	for( x = 0; x < 8; x++ )
-	{
-		for( y = 0; y < 8; y++ )
-		{
-			data2D[(y * 8 + x) * 4 + 0] = 255;
-			data2D[(y * 8 + x) * 4 + 1] = 255;
-			data2D[(y * 8 + x) * 4 + 2] = 255;
-			data2D[(y * 8 + x) * 4 + 3] = r_particleTexture[x][y] * 255;
-		}
-	}
-	return &r_image;
-}
-
-/*
-==================
 R_InitSkyTexture
 ==================
 */
@@ -1975,7 +1975,7 @@ static rgbdata_t *R_InitSkyTexture( texFlags_t *flags )
 	for( i = 0; i < 256; i++ )
 		((uint *)&data2D)[i] = 0xFFFFDEB5;
 
-	*flags = TF_NOPICMIP|TF_UNCOMPRESSED;
+	*flags = 0;
 
 	r_image.buffer = data2D;
 	r_image.width = r_image.height = 16;
@@ -1999,7 +1999,7 @@ static rgbdata_t *R_InitCinematicTexture( texFlags_t *flags )
 	r_image.width = r_image.height = 256;
 	r_image.size = r_image.width * r_image.height * 4;
 
-	*flags = TF_NOMIPMAP|TF_NOPICMIP|TF_UNCOMPRESSED|TF_CLAMP;
+	*flags = TF_NOMIPMAP|TF_CLAMP;
 
 	return &r_image;
 }
@@ -2018,7 +2018,7 @@ static rgbdata_t *R_InitSolidColorTexture( texFlags_t *flags, int color )
 	r_image.type = PF_RGB_24;
 	r_image.size = r_image.width * r_image.height * 3;
 
-	*flags = TF_NOPICMIP|TF_UNCOMPRESSED;
+	*flags = 0;
 
 	data2D[0] = data2D[1] = data2D[2] = color;
 	return &r_image;
@@ -2071,7 +2071,7 @@ static rgbdata_t *R_InitBlankBumpTexture( texFlags_t *flags )
 		data2D[i*4+2] = 255;
 	}
 
-	*flags = TF_NORMALMAP|TF_UNCOMPRESSED;
+	*flags = TF_NORMALMAP;
 
 	r_image.buffer = data2D;
 	r_image.width = r_image.height = 16;
@@ -2099,7 +2099,7 @@ static rgbdata_t *R_InitBlankDeluxeTexture( texFlags_t *flags )
 		data2D[i*4+2] = 0;	// light from ceiling
 	}
 
-	*flags = TF_NORMALMAP|TF_UNCOMPRESSED;
+	*flags = TF_NORMALMAP;
 
 	r_image.buffer = data2D;
 	r_image.width = r_image.height = 16;
@@ -2141,7 +2141,7 @@ static rgbdata_t *R_InitAttenTextureGamma( texFlags_t *flags, float gamma )
 		data2D[(i * 4) + 3] = (byte)atten;
 	}
 
-	*flags = TF_UNCOMPRESSED|TF_NOMIPMAP|TF_CLAMP|TF_TEXTURE_1D;
+	*flags = TF_NOMIPMAP|TF_CLAMP|TF_TEXTURE_1D;
 
 	return &r_image;
 }
@@ -2172,7 +2172,7 @@ static rgbdata_t *R_InitAttenuationTextureNoAtten( texFlags_t *flags )
 	r_image.size = r_image.width * r_image.height * 4;
 
 	memset( data2D, 0xFF, r_image.size );
-	*flags = TF_UNCOMPRESSED|TF_NOMIPMAP|TF_CLAMP|TF_TEXTURE_1D;
+	*flags = TF_NOMIPMAP|TF_CLAMP|TF_TEXTURE_1D;
 
 	return &r_image;
 }
@@ -2226,7 +2226,7 @@ static rgbdata_t *R_InitAttenTexture3D( texFlags_t *flags )
 		}
 	}
 
-	*flags = TF_UNCOMPRESSED|TF_NOMIPMAP|TF_CLAMP|TF_TEXTURE_3D;
+	*flags = TF_NOMIPMAP|TF_CLAMP|TF_TEXTURE_3D;
 
 	return &r_image;
 }
@@ -2243,7 +2243,7 @@ static rgbdata_t *R_InitDlightTexture( texFlags_t *flags )
 
 	memset( data2D, 0x00, r_image.size );
 
-	*flags = TF_NOPICMIP|TF_UNCOMPRESSED|TF_NOMIPMAP;
+	*flags = TF_NOMIPMAP;
 
 	return &r_image;
 }
@@ -2260,7 +2260,7 @@ static rgbdata_t *R_InitDlightTexture2( texFlags_t *flags )
 
 	memset( data2D, 0x00, r_image.size );
 
-	*flags = TF_NOPICMIP|TF_UNCOMPRESSED|TF_NOMIPMAP;
+	*flags = TF_NOMIPMAP;
 
 	return &r_image;
 }
@@ -2311,7 +2311,7 @@ static rgbdata_t *R_InitNormalizeCubemap( texFlags_t *flags )
 		dataCM += (size*size*4); // move pointer
 	}
 
-	*flags = (TF_NOPICMIP|TF_NOMIPMAP|TF_UNCOMPRESSED|TF_CUBEMAP|TF_CLAMP);
+	*flags = (TF_NOMIPMAP|TF_CUBEMAP|TF_CLAMP);
 
 	r_image.width = r_image.height = size;
 	r_image.size = r_image.width * r_image.height * 4 * 6;
@@ -2356,7 +2356,7 @@ static rgbdata_t *R_InitDlightCubemap( texFlags_t *flags )
 		dataCM += (size * size * 4); // move pointer
 	}
 
-	*flags = (TF_NOPICMIP|TF_NOMIPMAP|TF_UNCOMPRESSED|TF_CUBEMAP|TF_CLAMP);
+	*flags = (TF_NOMIPMAP|TF_CUBEMAP|TF_CLAMP);
 
 	r_image.width = r_image.height = size;
 	r_image.size = r_image.width * r_image.height * 4 * 6;
@@ -2383,7 +2383,7 @@ static rgbdata_t *R_InitGrayCubemap( texFlags_t *flags )
 	// gray cubemap - just stub for pointlights
 	memset( dataCM, 0x7F, size * size * 6 * 4 );
 
-	*flags = (TF_NOPICMIP|TF_NOMIPMAP|TF_UNCOMPRESSED|TF_CUBEMAP|TF_CLAMP);
+	*flags = (TF_NOMIPMAP|TF_CUBEMAP|TF_CLAMP);
 
 	r_image.width = r_image.height = size;
 	r_image.size = r_image.width * r_image.height * 4 * 6;
@@ -2410,7 +2410,7 @@ static rgbdata_t *R_InitWhiteCubemap( texFlags_t *flags )
 	// white cubemap - just stub for pointlights
 	memset( dataCM, 0xFF, size * size * 6 * 4 );
 
-	*flags = (TF_NOPICMIP|TF_NOMIPMAP|TF_UNCOMPRESSED|TF_CUBEMAP|TF_CLAMP);
+	*flags = (TF_NOMIPMAP|TF_CUBEMAP|TF_CLAMP);
 
 	r_image.width = r_image.height = size;
 	r_image.size = r_image.width * r_image.height * 4 * 6;
@@ -2444,7 +2444,7 @@ static rgbdata_t *R_InitVSDCTCubemap( texFlags_t *flags )
 		0x00, 0x00, 0x99, 0xFF, // -Z: <0, 0>, <1.5, 2.5>
 	};
 
-	*flags = (TF_NOPICMIP|TF_UNCOMPRESSED|TF_NEAREST|TF_CUBEMAP|TF_CLAMP);
+	*flags = (TF_NEAREST|TF_CUBEMAP|TF_CLAMP);
 
 	r_image.width = r_image.height = 1;
 	r_image.size = r_image.width * r_image.height * 4 * 6;
@@ -2479,7 +2479,6 @@ static void R_InitBuiltinTextures( void )
 	{ "*gray", &tr.grayTexture, R_InitGrayTexture },
 	{ "*black", &tr.blackTexture, R_InitBlackTexture },
 	{ "*particle", &tr.particleTexture, R_InitParticleTexture },
-	{ "*particle2", &tr.particleTexture2, R_InitParticleTexture2 },
 	{ "*cintexture", &tr.cinTexture, R_InitCinematicTexture },	// force linear filter
 	{ "*dlight", &tr.dlightTexture, R_InitDlightTexture },
 	{ "*dlight2", &tr.dlightTexture2, R_InitDlightTexture2 },

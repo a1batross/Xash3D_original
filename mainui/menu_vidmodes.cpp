@@ -35,35 +35,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define ID_VERTICALSYNC	6
 #define ID_TABLEHINT	7
 
-#define MAX_VIDMODES	(sizeof( uiVideoModes ) / sizeof( uiVideoModes[0] )) + 1
-
-static const char *uiVideoModes[] =
-{
-	"640 x 480",
-	"800 x 600",
-	"960 x 720",
-	"1024 x 768",
-	"1152 x 864",
-	"1280 x 800",
-	"1280 x 960",
-	"1280 x 1024",
-	"1600 x 1200",
-	"2048 x 1536",
-	"800 x 480 (wide)",
-	"856 x 480 (wide)",
-	"960 x 540 (wide)",
-	"1024 x 576 (wide)",
-	"1024 x 600 (wide)",
-	"1280 x 720 (wide)",
-	"1360 x 768 (wide)",
-	"1366 x 768 (wide)",
-	"1440 x 900 (wide)",
-	"1680 x 1050 (wide)",
-	"1920 x 1080 (wide)",
-	"1920 x 1200 (wide)",
-	"2560 x 1600 (wide)",
-	"1600 x 900 (wide)",
-};
+#define MAX_VIDMODES	65
 
 typedef struct
 {
@@ -92,7 +64,12 @@ UI_VidModes_GetModesList
 static void UI_VidModes_GetConfig( void )
 {
 	for( int i = 0; i < MAX_VIDMODES-1; i++ )
-		uiVidModes.videoModesPtr[i] = uiVideoModes[i];
+	{
+		uiVidModes.videoModesPtr[i] = VID_GET_MODE( i );
+		if( !uiVidModes.videoModesPtr[i] )
+			break; // end of list
+	}
+
 	uiVidModes.videoModesPtr[i] = NULL;	// terminator
 
 	uiVidModes.vidList.itemNames = uiVidModes.videoModesPtr;
@@ -101,7 +78,7 @@ static void UI_VidModes_GetConfig( void )
 	if( !CVAR_GET_FLOAT( "fullscreen" ))
 		uiVidModes.windowed.enabled = 1;
 
-	if( CVAR_GET_FLOAT( "gl_swapInterval" ))
+	if( CVAR_GET_FLOAT( "gl_vsync" ))
 		uiVidModes.vsync.enabled = 1;
 }
 
@@ -114,7 +91,7 @@ static void UI_VidOptions_SetConfig( void )
 {
 	CVAR_SET_FLOAT( "vid_mode", uiVidModes.vidList.curItem );
 	CVAR_SET_FLOAT( "fullscreen", !uiVidModes.windowed.enabled );
-	CVAR_SET_FLOAT( "gl_swapInterval", uiVidModes.vsync.enabled );
+	CVAR_SET_FLOAT( "gl_vsync", uiVidModes.vsync.enabled );
 }
 
 /*
@@ -124,7 +101,7 @@ UI_VidModes_UpdateConfig
 */
 static void UI_VidOptions_UpdateConfig( void )
 {
-	CVAR_SET_FLOAT( "gl_swapInterval", uiVidModes.vsync.enabled );
+	CVAR_SET_FLOAT( "gl_vsync", uiVidModes.vsync.enabled );
 }
 
 /*

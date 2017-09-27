@@ -35,7 +35,7 @@ void VGUI_DrawInit( void )
 	memset( g_textures, 0, sizeof( g_textures ));
 	g_textureId = g_iBoundTexture = 0;
 
-	vgui_colorstrings = Cvar_Get( "vgui_colorstrings", "0", CVAR_ARCHIVE, "allow colorstrings in VGUI texts" );
+	vgui_colorstrings = Cvar_Get( "vgui_colorstrings", "0", FCVAR_ARCHIVE, "allow colorstrings in VGUI texts" );
 }
 
 /*
@@ -135,7 +135,7 @@ void VGUI_CreateTexture( int id, int width, int height )
 
 void VGUI_UploadTextureBlock( int id, int drawX, int drawY, const byte *rgba, int blockWidth, int blockHeight )
 {
-	if( id <= 0 || id >= VGUI_MAX_TEXTURES || g_textures[id] == 0 || g_textures[id] == cls.fillImage )
+	if( id <= 0 || id >= VGUI_MAX_TEXTURES || g_textures[id] == 0 || g_textures[id] == tr.whiteTexture )
 	{
 		MsgDev( D_ERROR, "VGUI_UploadTextureBlock: bad texture %i. Ignored\n", id );
 		return;
@@ -157,7 +157,6 @@ void VGUI_SetupDrawingText( int *pColor )
 {
 	pglEnable( GL_BLEND );
 	pglEnable( GL_ALPHA_TEST );
-	pglAlphaFunc( GL_GREATER, 0.0f );
 	pglBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
 	pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
 	pglColor4ub( pColor[0], pColor[1], pColor[2], 255 - pColor[3] );
@@ -167,7 +166,6 @@ void VGUI_SetupDrawingImage( int *pColor )
 {
 	pglEnable( GL_BLEND );
 	pglEnable( GL_ALPHA_TEST );
-	pglAlphaFunc( GL_GREATER, 0.0f );
 	pglBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
 	pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
 	pglColor4ub( pColor[0], pColor[1], pColor[2], 255 - pColor[3] );

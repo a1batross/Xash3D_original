@@ -380,7 +380,7 @@ void S_FreeSounds( void )
 		return;
 
 	// stop all sounds
-	S_StopAllSounds();
+	S_StopAllSounds( true );
 
 	// free all sounds
 	for( i = 0, sfx = s_knownSfx; i < s_numSfx; i++, sfx++ )

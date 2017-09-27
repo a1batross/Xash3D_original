@@ -40,14 +40,20 @@ qboolean Image_LoadPAL( const char *name, const byte *buffer, size_t filesize )
 		// using palette name as rendermode
 		if( Q_stristr( name, "normal" ))
 			rendermode = LUMP_NORMAL;
-		else if( Q_stristr( name, "transparent" ))
-			rendermode = LUMP_TRANSPARENT;
-		else if( Q_stristr( name, "decal" ))
-			rendermode = LUMP_DECAL;
-		else if( Q_stristr( name, "qfont" ))
-			rendermode = LUMP_QFONT;
+		else if( Q_stristr( name, "masked" ))
+			rendermode = LUMP_MASKED;
+		else if( Q_stristr( name, "gradient" ))
+			rendermode = LUMP_GRADIENT;
 		else if( Q_stristr( name, "valve" ))
+		{
+			rendermode = LUMP_HALFLIFE;
 			buffer = NULL; // force to get HL palette
+		}
+		else if( Q_stristr( name, "id" ))
+		{
+			rendermode = LUMP_QUAKE1;
+			buffer = NULL; // force to get Q1 palette
+		}
 	}
 
 	// NOTE: image.d_currentpal not cleared with Image_Reset()
@@ -109,7 +115,7 @@ qboolean Image_LoadFNT( const char *name, const byte *buffer, size_t filesize )
 	if( numcolors == 768 || numcolors == 256 )
 	{
 		// g-cont. make sure that is didn't hit anything
-		Image_GetPaletteLMP( pal, LUMP_QFONT );
+		Image_GetPaletteLMP( pal, LUMP_MASKED );
 		image.flags |= IMAGE_HAS_ALPHA; // fonts always have transparency
 	}
 	else 
@@ -152,15 +158,12 @@ qboolean Image_LoadMDL( const char *name, const byte *buffer, size_t filesize )
 		if( filesize < ( sizeof( *pin ) + pixels + 768 ))
 			return false;
 
-		if( flags & STUDIO_NF_TRANSPARENT )
+		if( FBitSet( flags, STUDIO_NF_MASKED ))
 		{
 			byte	*pal = fin + pixels;
 
-			// make transparent color is black, blue color looks ugly
-			pal[255*3+0] = pal[255*3+1] = pal[255*3+2] = 0;
-
-			Image_GetPaletteLMP( pal, LUMP_TRANSPARENT );
-			image.flags |= IMAGE_HAS_ALPHA;
+			Image_GetPaletteLMP( pal, LUMP_MASKED );
+			image.flags |= IMAGE_HAS_ALPHA|IMAGE_ONEBIT_ALPHA;
 		}
 		else Image_GetPaletteLMP( fin + pixels, LUMP_NORMAL );
 	}
@@ -185,6 +188,7 @@ Image_LoadSPR
 qboolean Image_LoadSPR( const char *name, const byte *buffer, size_t filesize )
 {
 	dspriteframe_t	*pin;	// identical for q1\hl sprites
+	qboolean		truecolor = false;
 
 	if( image.hint == IL_HINT_HL )
 	{
@@ -214,23 +218,34 @@ qboolean Image_LoadSPR( const char *name, const byte *buffer, size_t filesize )
 		return false;
 	}
 
+	if( filesize == ( image.width * image.height * 4 ))
+		truecolor = true;
+
 	// sorry, can't validate palette rendermode
 	if( !Image_LumpValidSize( name )) return false;
-	image.type = PF_INDEXED_32;	// 32-bit palete
+	image.type = (truecolor) ? PF_RGBA_32 : PF_INDEXED_32;	// 32-bit palete
 	image.depth = 1;
 
 	// detect alpha-channel by palette type
 	switch( image.d_rendermode )
 	{
-	case LUMP_DECAL:
-	case LUMP_TRANSPARENT:
-		image.flags |= IMAGE_HAS_ALPHA;
+	case LUMP_MASKED:
+		SetBits( image.flags, IMAGE_ONEBIT_ALPHA );
+	case LUMP_GRADIENT:
+	case LUMP_QUAKE1:
+		SetBits( image.flags, IMAGE_HAS_ALPHA );
 		break;
 	}
 
-	// make transparent color is black, blue color looks ugly
-	if( image.d_rendermode == LUMP_TRANSPARENT )
-		image.d_currentpal[255] = 0;
+	if( truecolor )
+	{
+		// spr32 support
+		image.size = image.width * image.height * 4;
+		image.rgba = Mem_Alloc( host.imagepool, image.size );
+		memcpy( image.rgba, (byte *)(pin + 1), image.size );
+		SetBits( image.flags, IMAGE_HAS_COLOR ); // Color. True Color!
+		return true;
+	}
 
 	return Image_AddIndexedImageToPack( (byte *)(pin + 1), image.width, image.height );
 }
@@ -245,7 +260,7 @@ qboolean Image_LoadLMP( const char *name, const byte *buffer, size_t filesize )
 	lmp_t	lmp;
 	byte	*fin, *pal;
 	int	rendermode;
-	int	pixels;
+	int	i, pixels;
 
 	if( filesize < sizeof( lmp ))
 	{
@@ -257,12 +272,26 @@ qboolean Image_LoadLMP( const char *name, const byte *buffer, size_t filesize )
 	if( Q_stristr( name, "palette.lmp" ))
 		return Image_LoadPAL( name, buffer, filesize );
 
-	fin = (byte *)buffer;
-	memcpy( &lmp, fin, sizeof( lmp ));
-	image.width = lmp.width;
-	image.height = lmp.height;
-	rendermode = LUMP_NORMAL;
-	fin += sizeof( lmp );
+	// greatest hack from id software (image without header)
+	if( image.hint != IL_HINT_HL && Q_stristr( name, "conchars" ))
+	{
+		image.width = image.height = 128;
+		rendermode = LUMP_QUAKE1;
+		filesize += sizeof( lmp );
+		fin = (byte *)buffer;
+
+		// need to remap transparent color from first to last entry
+		for( i = 0; i < 16384; i++ ) if( !fin[i] ) fin[i] = 0xFF;
+	}
+	else
+	{
+		fin = (byte *)buffer;
+		memcpy( &lmp, fin, sizeof( lmp ));
+		image.width = lmp.width;
+		image.height = lmp.height;
+		rendermode = LUMP_NORMAL;
+		fin += sizeof( lmp );
+	}
 
 	pixels = image.width * image.height;
 
@@ -279,6 +308,11 @@ qboolean Image_LoadLMP( const char *name, const byte *buffer, size_t filesize )
 	{
 		int	numcolors;
 
+		if( fin[0] == 255 )
+		{
+			image.flags |= IMAGE_HAS_ALPHA;
+			rendermode = LUMP_MASKED;
+		}
 		pal = fin + pixels;
 		numcolors = *(short *)pal;
 		if( numcolors != 256 ) pal = NULL; // corrupted lump ?
@@ -286,6 +320,8 @@ qboolean Image_LoadLMP( const char *name, const byte *buffer, size_t filesize )
 	}
 	else if( image.hint != IL_HINT_HL )
 	{
+		image.flags |= IMAGE_HAS_ALPHA;
+		rendermode = LUMP_QUAKE1;
 		pal = NULL;
 	}
 	else
@@ -294,7 +330,6 @@ qboolean Image_LoadLMP( const char *name, const byte *buffer, size_t filesize )
 		return false;
 	}
 
-	if( fin[0] == 255 ) image.flags |= IMAGE_HAS_ALPHA;
 	Image_GetPaletteLMP( pal, rendermode );
 	image.type = PF_INDEXED_32; // 32-bit palete
 	image.depth = 1;
@@ -346,22 +381,17 @@ qboolean Image_LoadMIP( const char *name, const byte *buffer, size_t filesize )
 		// setup rendermode
 		if( Q_strrchr( name, '{' ))
 		{
-			if( !host.decal_loading )
+			// NOTE: decals with 'blue base' can be interpret as colored decals
+			if(( !host.decal_loading ) || ( pal[765] == 0 && pal[766] == 0 && pal[767] == 255 ))
 			{
-				rendermode = LUMP_TRANSPARENT;
-
-				// make transparent color is black, blue color looks ugly
-				pal[255*3+0] = pal[255*3+1] = pal[255*3+2] = 0;
+				rendermode = LUMP_MASKED;
+				image.flags |= IMAGE_ONEBIT_ALPHA;
 			}
 			else
 			{
-				// clear blue color for 'transparent' decals
-				if( pal[255*3+0] == 0 && pal[255*3+1] == 0 && pal[255*3+2] == 255 )
-					pal[255*3+0] = pal[255*3+1] = pal[255*3+2] = 0;
-
-				// apply decal palette immediately
+				// classic gradient decals
 				image.flags |= IMAGE_COLORINDEX;
-				rendermode = LUMP_DECAL;
+				rendermode = LUMP_GRADIENT;
 			}
 
 			image.flags |= IMAGE_HAS_ALPHA;
@@ -403,10 +433,10 @@ qboolean Image_LoadMIP( const char *name, const byte *buffer, size_t filesize )
 
 		hl_texture = false;
 
-		// check for luma pixels
+		// check for luma and alpha pixels
 		for( i = 0; i < image.width * image.height; i++ )
 		{
-			if( fin[i] > 224 )
+			if( fin[i] > 224 && fin[i] != 255 )
 			{
 				// don't apply luma to water surfaces because
 				// we use glpoly->next for store luma chain each frame
@@ -416,6 +446,20 @@ qboolean Image_LoadMIP( const char *name, const byte *buffer, size_t filesize )
 				if( mip.name[0] != '*' && mip.name[0] != '!' )
 					image.flags |= IMAGE_HAS_LUMA;
 				break;
+			}
+		}
+
+		// Arcane Dimensions has the transparent textures
+		if( Q_strrchr( name, '{' ))
+		{
+			for( i = 0; i < image.width * image.height; i++ )
+			{
+				if( fin[i] == 255 )
+				{
+					// don't set ONEBIT_ALPHA flag for some reasons
+					image.flags |= IMAGE_HAS_ALPHA;
+					break;
+				}
 			}
 		}
 
@@ -446,7 +490,7 @@ qboolean Image_LoadMIP( const char *name, const byte *buffer, size_t filesize )
 		// grab the fog density
 		image.fogParams[3] = pal[4*3+0];
           }
-          else if( hl_texture && host.decal_loading )
+          else if( hl_texture && ( rendermode == LUMP_GRADIENT ))
           {
 		// grab the decal color
 		image.fogParams[0] = pal[255*3+0];

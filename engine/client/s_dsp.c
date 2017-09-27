@@ -166,10 +166,10 @@ void SX_ReloadRoomFX( void )
 {
 	if( !dsp_room ) return; // not initialized
 
-	sxste_delay->modified    = true;
-	sxrvb_feedback->modified = true;
-	sxdly_delay->modified    = true;
-	room_type->modified      = true;
+	SetBits( sxste_delay->flags, FCVAR_CHANGED );
+	SetBits( sxrvb_feedback->flags, FCVAR_CHANGED );
+	SetBits( sxdly_delay->flags, FCVAR_CHANGED );
+	SetBits( room_type->flags, FCVAR_CHANGED );
 }
 
 /*
@@ -187,7 +187,7 @@ void SX_Init( void )
 	sxamodr = sxamodl = sxamodrt = sxamodlt = 255;
 	idsp_dma_speed = SOUND_11k;
 
-	hisound = Cvar_Get( "room_hires", "2", CVAR_ARCHIVE, "dsp quality. 1 for 22k, 2 for 44k(recommended) and 3 for 96k" );
+	hisound = Cvar_Get( "room_hires", "2", FCVAR_ARCHIVE, "dsp quality. 1 for 22k, 2 for 44k(recommended) and 3 for 96k" );
 	sxhires = 2;
 
 	sxmod1cur = sxmod1 = 350 * ( idsp_dma_speed / SOUND_11k );
@@ -214,6 +214,7 @@ void SX_Init( void )
 
 	// for compability
 	dsp_room         = room_type;
+
 	SX_ReloadRoomFX();
 }
 
@@ -317,7 +318,7 @@ void DLY_CheckNewStereoDelayVal( void )
 	dly_t *const	dly = &rgsxdly[STEREODLY];
 	float		delay = sxste_delay->value;
 
-	if( !sxste_delay->modified )
+	if( !FBitSet( sxste_delay->flags, FCVAR_CHANGED ))
 		return;
 
 	if( delay == 0 )
@@ -352,7 +353,7 @@ void DLY_CheckNewStereoDelayVal( void )
 			DLY_Free( STEREODLY );
 	}
 
-	sxste_delay->modified = false;
+	ClearBits( sxste_delay->flags, FCVAR_CHANGED );
 }
 
 /*
@@ -384,7 +385,7 @@ void DLY_DoStereoDelay( int count )
 			// set up new crossfade, if not crossfading, not modulating, but going to
 			if( !dly->xfade && !dly->modcur && dly->mod )
 			{
-				dly->idelayoutputxf = dly->idelayoutput + ((Com_RandomLong( 0, 255 ) * dly->delaysamples ) >> 9 );
+				dly->idelayoutputxf = dly->idelayoutput + ((COM_RandomLong( 0, 255 ) * dly->delaysamples ) >> 9 );
 
 				dly->xfade = 128;
 			}
@@ -432,7 +433,7 @@ void DLY_CheckNewDelayVal( void )
 	float		delay = sxdly_delay->value;
 	dly_t *const	dly = &rgsxdly[MONODLY];
 
-	if( sxdly_delay->modified )
+	if( FBitSet( sxdly_delay->flags, FCVAR_CHANGED ))
 	{
 		if( delay == 0 )
 		{
@@ -462,8 +463,8 @@ void DLY_CheckNewDelayVal( void )
 		}
 	}
 
-	sxdly_delay->modified = false;
-	dly->lp = sxdly_lp->integer;
+	ClearBits( sxdly_delay->flags, FCVAR_CHANGED );
+	dly->lp = sxdly_lp->value;
 	dly->delayfeedback = 255 * sxdly_feedback->value;
 }
 
@@ -567,7 +568,7 @@ void RVB_CheckNewReverbVal( void )
 	dly_t *const	dly2 = &rgsxdly[REVERBPOS + 1];
 	float		delay = sxrvb_size->value;
 
-	if( sxrvb_size->modified )
+	if( FBitSet( sxrvb_size->flags, FCVAR_CHANGED ))
 	{
 		if( delay == 0.0f )
 		{
@@ -581,8 +582,8 @@ void RVB_CheckNewReverbVal( void )
 		}
 	}
 
-	sxrvb_size->modified = false;
-	dly1->lp = dly2->lp = sxrvb_lp->integer;
+	ClearBits( sxrvb_size->flags, FCVAR_CHANGED );
+	dly1->lp = dly2->lp = sxrvb_lp->value;
 	dly1->delayfeedback = dly2->delayfeedback = (int)(255 * sxrvb_feedback->value);
 }
 
@@ -610,7 +611,7 @@ int RVB_DoReverbForOneDly( dly_t *dly, const int vlr, const portable_samplepair_
 		// modulate delay rate
 		if( !dly->mod )
 		{
-			dly->idelayoutputxf = dly->idelayoutput + ((Com_RandomLong( 0, 255 ) * delay) >> 9 );
+			dly->idelayoutputxf = dly->idelayoutput + ((COM_RandomLong( 0, 255 ) * delay) >> 9 );
 
 			if( dly->idelayoutputxf >= dly->cdelaysamplesmax )
 				dly->idelayoutputxf -= dly->cdelaysamplesmax;
@@ -703,7 +704,7 @@ void RVB_DoAMod( int count )
 {
 	portable_samplepair_t	*paint = paintto;
 
-	if( !sxmod_lowpass->integer && !sxmod_mod->integer )
+	if( !sxmod_lowpass->value && !sxmod_mod->value )
 		return;
 
 	for( ; count; count--, paint++ )
@@ -731,19 +732,19 @@ void RVB_DoAMod( int count )
 			rgsxlp[9] = paint->right;
 		}
 
-		if( sxmod_mod->integer )
+		if( sxmod_mod->value )
 		{
 			if( --sxmod1cur < 0 )
 				sxmod1cur = sxmod1;
 
 			if( !sxmod1 )
-				sxamodlt = Com_RandomLong( 32, 255 );
+				sxamodlt = COM_RandomLong( 32, 255 );
 
 			if( --sxmod2cur < 0 )
 				sxmod2cur = sxmod2;
 
 			if( !sxmod2 )
-				sxamodrt = Com_RandomLong( 32, 255 );
+				sxamodrt = COM_RandomLong( 32, 255 );
 
 			res.left = (sxamodl * res.left) >> 8;
 			res.right = (sxamodr * res.right) >> 8;
@@ -773,7 +774,7 @@ DSP_Process
 */
 void DSP_Process( int idsp, portable_samplepair_t *pbfront, int sampleCount )
 {
-	if( dsp_off->integer )
+	if( dsp_off->value )
 		return;
 
 	// HACKHACK: don't process while in menu
@@ -798,34 +799,8 @@ DSP_ClearState
 */
 void DSP_ClearState( void )
 {
-	Cvar_SetFloat( "room_type", 0.0f );
+	Cvar_SetValue( "room_type", 0.0f );
 	SX_ReloadRoomFX();
-}
-
-/*
-===========
-AllocDsps
-
-(xash dsp interface)
-===========
-*/
-qboolean AllocDsps( void )
-{
-	SX_Init();
-
-	return 1;
-}
-
-/*
-===========
-FreeDsps
-
-(xash dsp interface)
-===========
-*/
-void FreeDsps( void )
-{
-	SX_Free();
 }
 
 /*
@@ -844,10 +819,10 @@ void CheckNewDspPresets( void )
 		idsp_room = roomwater_type->value;
 	else idsp_room = room_type->value;
 
-	if( hisound->modified )
+	if( FBitSet( hisound->flags, FCVAR_CHANGED ))
 	{
-		sxhires = hisound->integer;
-		hisound->modified = false;
+		sxhires = hisound->value;
+		ClearBits( hisound->flags, FCVAR_CHANGED );
 	}
 
 	if( idsp_room == room_typeprev && idsp_room == 0 )
@@ -860,15 +835,15 @@ void CheckNewDspPresets( void )
 	{
 		const sx_preset_t *cur = rgsxpre + idsp_room;
 
-		Cvar_SetFloat( "room_lp", cur->room_lp );
-		Cvar_SetFloat( "room_mod", cur->room_mod );
-		Cvar_SetFloat( "room_size", cur->room_size );
-		Cvar_SetFloat( "room_refl", cur->room_refl );
-		Cvar_SetFloat( "room_rvblp", cur->room_rvblp );
-		Cvar_SetFloat( "room_delay", cur->room_delay );
-		Cvar_SetFloat( "room_feedback", cur->room_feedback );
-		Cvar_SetFloat( "room_dlylp", cur->room_dlylp );
-		Cvar_SetFloat( "room_left", cur->room_left );
+		Cvar_SetValue( "room_lp", cur->room_lp );
+		Cvar_SetValue( "room_mod", cur->room_mod );
+		Cvar_SetValue( "room_size", cur->room_size );
+		Cvar_SetValue( "room_refl", cur->room_refl );
+		Cvar_SetValue( "room_rvblp", cur->room_rvblp );
+		Cvar_SetValue( "room_delay", cur->room_delay );
+		Cvar_SetValue( "room_feedback", cur->room_feedback );
+		Cvar_SetValue( "room_dlylp", cur->room_dlylp );
+		Cvar_SetValue( "room_left", cur->room_left );
 	}
 
 	room_typeprev = idsp_room;
@@ -899,13 +874,13 @@ void SX_Profiling_f( void )
 
 	for( i = 0; i < 512; i++ )
 	{
-		testbuffer[i].left = Com_RandomLong( 0, 3000 );
-		testbuffer[i].right = Com_RandomLong( 0, 3000 );
+		testbuffer[i].left = COM_RandomLong( 0, 3000 );
+		testbuffer[i].right = COM_RandomLong( 0, 3000 );
 	}
 
 	if( Cmd_Argc() > 1 )
 	{
-		Cvar_SetFloat( "room_type", Q_atof( Cmd_Argv( 1 )));
+		Cvar_SetValue( "room_type", Q_atof( Cmd_Argv( 1 )));
 		SX_ReloadRoomFX();
 		CheckNewDspPresets(); // we just need idsp_room immediately, for message below
 	}
@@ -923,7 +898,7 @@ void SX_Profiling_f( void )
 
 	if( Cmd_Argc() > 1 )
 	{
-		Cvar_SetFloat( "room_type", oldroom );
+		Cvar_SetValue( "room_type", oldroom );
 		SX_ReloadRoomFX();
 		CheckNewDspPresets();
 	}

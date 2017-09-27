@@ -37,8 +37,8 @@ keyname_t keynames[] =
 {
 {"TAB",		K_TAB,		""		},
 {"ENTER",		K_ENTER,		""		},
-{"ESCAPE",	K_ESCAPE, 	"cancelselect"	}, // hardcoded
-{"SPACE",		K_SPACE,		"+moveup"		},
+{"ESCAPE",	K_ESCAPE, 	"escape"		}, // hardcoded
+{"SPACE",		K_SPACE,		"+jump"		},
 {"BACKSPACE",	K_BACKSPACE,	""		},
 {"UPARROW",	K_UPARROW,	"+forward"	},
 {"DOWNARROW",	K_DOWNARROW,	"+back"		},
@@ -59,7 +59,7 @@ keyname_t keynames[] =
 {"F9",		K_F9,		""		},
 {"F10",		K_F10,		"menu_main"	},
 {"F11",		K_F11,		""		},
-{"F12",		K_F12,		"screenshot"	},
+{"F12",		K_F12,		"snapshot"	},
 {"INS",		K_INS,		""		},
 {"DEL",		K_DEL,		"+lookdown"	},
 {"PGDN",		K_PGDN,		"+lookup"		},
@@ -559,10 +559,10 @@ void Key_Event( int key, qboolean down )
 		switch( cls.key_dest )
 		{
 		case key_game:
-			if( gl_showtextures->integer )
+			if( gl_showtextures->value )
 			{
 				// close texture atlas
-				Cvar_SetFloat( "r_showtextures", 0.0f );
+				Cvar_SetValue( "r_showtextures", 0.0f );
 				return;
 			}
 			if( host.mouse_visible && cls.state != ca_cinematic )
@@ -715,6 +715,9 @@ Key_ClearStates
 void Key_ClearStates( void )
 {
 	int	i;
+
+	// don't clear keys during changelevel
+	if( cls.changelevel ) return;
 
 	for( i = 0; i < 256; i++ )
 	{

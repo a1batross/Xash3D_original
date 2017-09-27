@@ -19,8 +19,6 @@ GNU General Public License for more details.
 #include "utlvector.h"
 #include "utlrbtree.h"
 
-//#define NEW_VGUI_DLL
-
 #include<VGUI.h>
 #include<VGUI_App.h>
 #include<VGUI_Font.h>

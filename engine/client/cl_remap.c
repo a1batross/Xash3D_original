@@ -233,8 +233,8 @@ void CL_AllocRemapInfo( int topcolor, int bottomcolor )
 		return;
 	}
 
-	phdr = (studiohdr_t *)Mod_Extradata( RI.currentmodel );
-	if( !phdr ) return;	// missed header ???
+	phdr = (studiohdr_t *)Mod_StudioExtradata( RI.currentmodel );
+	if( !phdr ) return;	// alias model?
 
 	src = (mstudiotexture_t *)(((byte *)phdr) + phdr->textureindex);
 	dst = (clgame.remap_info[i] ? clgame.remap_info[i]->ptexture : NULL); 

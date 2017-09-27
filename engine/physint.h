@@ -16,15 +16,15 @@ GNU General Public License for more details.
 #ifndef PHYSINT_H
 #define PHYSINT_H
 
-#define SV_PHYSICS_INTERFACE_VERSION		6
+#define SV_PHYSICS_INTERFACE_VERSION	6
 
-#define STRUCT_FROM_LINK( l, t, m )		((t *)((byte *)l - (int)&(((t *)0)->m)))
-#define EDICT_FROM_AREA( l )			STRUCT_FROM_LINK( l, edict_t, area )
+#define STRUCT_FROM_LINK( l, t, m )	((t *)((byte *)l - (int)&(((t *)0)->m)))
+#define EDICT_FROM_AREA( l )		STRUCT_FROM_LINK( l, edict_t, area )
 
 // values that can be returned with pfnServerState
-#define SERVER_DEAD		0
-#define SERVER_LOADING	1
-#define SERVER_ACTIVE	2
+#define SERVER_DEAD			0
+#define SERVER_LOADING		1
+#define SERVER_ACTIVE		2
 
 // LUMP reading errors
 #define LUMP_LOAD_OK		0
@@ -55,7 +55,6 @@ typedef struct areanode_s
 	struct areanode_s	*children[2];
 	link_t		trigger_edicts;
 	link_t		solid_edicts;
-	link_t		water_edicts;	// func water
 } areanode_t;
 
 typedef struct server_physics_api_s
@@ -65,7 +64,7 @@ typedef struct server_physics_api_s
 	double		( *pfnGetServerTime )( void ); // unclamped
 	double		( *pfnGetFrameTime )( void );	// unclamped
 	void*		( *pfnGetModel )( int modelindex );
-	areanode_t*	( *pfnGetHeadnode )( void ); // BSP tree for all physic entities
+	areanode_t*	( *pfnGetHeadnode )( void ); // AABB tree for all physic entities
 	int		( *pfnServerState )( void );
 	void		( *pfnHost_Error )( const char *error, ... );	// cause Host Error
 // ONLY ADD NEW FUNCTIONS TO THE END OF THIS STRUCT.  INTERFACE VERSION IS FROZEN AT 6
@@ -104,6 +103,8 @@ typedef struct server_physics_api_s
 	// FS tools
 	int		(*pfnSaveFile)( const char *filename, const void *data, long len );
 	const byte	*(*pfnLoadImagePixels)( const char *filename, int *width, int *height );
+
+	const char*	(*pfnGetModelName)( int modelindex );
 } server_physics_api_t;
 
 // physic callbacks
@@ -111,7 +112,7 @@ typedef struct physics_interface_s
 {
 	int		version;
 	// passed through pfnCreate (0 is attempt to create, -1 is reject)
-	int		( *SV_CreateEntity	)( edict_t *pent, const char *szName );
+	int		( *SV_CreateEntity )( edict_t *pent, const char *szName );
 	// run custom physics for each entity (return 0 to use built-in engine physic)
 	int		( *SV_PhysicsEntity	)( edict_t *pEntity );
 	// spawn entities with internal mod function e.g. for re-arrange spawn order (0 - use engine parser, 1 - use mod parser)
@@ -153,6 +154,10 @@ typedef struct physics_interface_s
 	void		(*PM_PlayerTouch)( struct playermove_s *ppmove, edict_t *client );
 	// alloc or destroy model custom data (called only for dedicated servers, otherwise using an client version)
 	void		(*Mod_ProcessUserData)( struct model_s *mod, qboolean create, const byte *buffer );
+	// select BSP-hull for trace with specified mins\maxs
+	void		*(*SV_HullForBsp)( edict_t *ent, const float *mins, const float *maxs, float *offset );
+	// handle player custom think function
+	int		(*SV_PlayerThink)( edict_t *ent, float frametime, double time );
 } physics_interface_t;
 
 #endif//PHYSINT_H

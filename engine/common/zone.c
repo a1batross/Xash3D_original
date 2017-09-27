@@ -440,7 +440,7 @@ void Mem_PrintStats( void )
 	}
 
 	Msg( "^3%lu^7 memory pools, totalling: ^1%s\n", (dword)count, Q_memprint( size ));
-	Msg( "Total allocated size: ^1%s\n", Q_memprint( realsize ));
+	Msg( "total allocated size: ^1%s\n", Q_memprint( realsize ));
 }
 
 void Mem_PrintList( size_t minallocationsize )

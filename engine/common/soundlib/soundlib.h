@@ -18,6 +18,9 @@ GNU General Public License for more details.
 
 #include "common.h"
 
+#define FRAME_SIZE		32768	// must match with mp3 frame size
+#define OUTBUF_SIZE		8192	// don't change!
+
 typedef struct loadwavfmt_s
 {
 	const char *formatstring;
@@ -61,17 +64,19 @@ typedef struct stream_s
 {
 	const streamfmt_t	*format;	// streamformat to operate
 
-	// current stream state
+	// stream info
 	file_t		*file;	// stream file
 	int		width;	// resolution - num bits divided by 8 (8 bit is 1, 16 bit is 2)
 	int		rate;	// stream rate
 	int		channels;	// stream channels
 	int		type;	// wavtype
 	size_t		size;	// total stream size
-	int		pos;	// actual track position
+
+	// current stream state
 	void		*ptr;	// internal decoder state
+	char		temp[OUTBUF_SIZE]; // mpeg decoder stuff
+	size_t		pos;	// actual track position (or actual buffer remains)
 	int		buffsize;	// cached buffer size
-	qboolean		timejump;	// true if position is changed
 };
 
 /*

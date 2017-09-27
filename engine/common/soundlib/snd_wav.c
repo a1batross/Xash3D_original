@@ -267,11 +267,11 @@ qboolean Sound_LoadWAV( const char *name, const byte *buffer, size_t filesize )
 	{
 		int	hdr_size = (iff_dataPtr - buffer);
 
-		if(( filesize - hdr_size ) < 16384 )
+		if(( filesize - hdr_size ) < FRAME_SIZE )
 		{
-			sound.tempbuffer = (byte *)Mem_Realloc( host.soundpool, sound.tempbuffer, 16384 );
+			sound.tempbuffer = (byte *)Mem_Realloc( host.soundpool, sound.tempbuffer, FRAME_SIZE );
 			memcpy( sound.tempbuffer, buffer + (iff_dataPtr - buffer), filesize - hdr_size );
-			return Sound_LoadMPG( name, sound.tempbuffer, 16384 );
+			return Sound_LoadMPG( name, sound.tempbuffer, FRAME_SIZE );
 		}
 
 		return Sound_LoadMPG( name, buffer + hdr_size, filesize - hdr_size );
@@ -405,7 +405,7 @@ assume stream is valid
 */
 long Stream_ReadWAV( stream_t *stream, long bytes, void *buffer )
 {
-	int	samples, remaining;
+	int	remaining;
 
 	if( !stream->file ) return 0;	// invalid file
 
@@ -414,7 +414,6 @@ long Stream_ReadWAV( stream_t *stream, long bytes, void *buffer )
 	if( bytes > remaining ) bytes = remaining;
 
 	stream->pos += bytes;
-	samples = ( bytes / stream->width ) / stream->channels;
 	FS_Read( stream->file, buffer, bytes );
 
 	return bytes;

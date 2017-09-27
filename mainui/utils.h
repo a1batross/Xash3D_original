@@ -103,8 +103,10 @@ inline int UnpackAlpha( unsigned int ulRGBA )
 	return ((ulRGBA & 0xFF000000) >> 24);	
 }
 
+// Remap a value in the range [A,B] to [C,D].
 inline float RemapVal( float val, float A, float B, float C, float D)
 {
+	if( A == B ) return val >= B ? D : C;
 	return C + (D - C) * (val - A) / (B - A);
 }
 

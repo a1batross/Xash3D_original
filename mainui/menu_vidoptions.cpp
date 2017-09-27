@@ -32,8 +32,6 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define ID_SCREEN_SIZE	3
 #define ID_GAMMA		4
 #define ID_GLARE_REDUCTION	5 
-#define ID_SIMPLE_SKY	6
-#define ID_ALLOW_MATERIALS	7
 
 typedef struct
 {
@@ -49,8 +47,6 @@ typedef struct
 	menuSlider_s	screenSize;
 	menuSlider_s	gammaIntensity;
 	menuSlider_s	glareReduction;
-	menuCheckBox_s	fastSky;
-	menuCheckBox_s	hiTextures;
 
 	HIMAGE		hTestImage;
 } uiVidOptions_t;
@@ -66,20 +62,9 @@ UI_VidOptions_GetConfig
 static void UI_VidOptions_GetConfig( void )
 {
 	uiVidOptions.screenSize.curValue = RemapVal( CVAR_GET_FLOAT( "viewsize" ), 30.0f, 120.0f, 0.0f, 1.0f );
-	uiVidOptions.glareReduction.curValue = (CVAR_GET_FLOAT( "r_flaresize" ) - 100.0f ) / 200.0f;
-
-	if( CVAR_GET_FLOAT( "gl_ignorehwgamma" ))
-	{
-		uiVidOptions.gammaIntensity.curValue = RemapVal( CVAR_GET_FLOAT( "gamma" ), 1.8f, 3.0f, 0.0f, 1.0f );
-		PIC_SetGamma( uiVidOptions.hTestImage, CVAR_GET_FLOAT( "gamma" ));
-	}
-	else uiVidOptions.gammaIntensity.curValue = RemapVal( CVAR_GET_FLOAT( "gamma" ), 0.5f, 2.3f, 0.0f, 1.0f );
-
-	if( CVAR_GET_FLOAT( "r_fastsky" ))
-		uiVidOptions.fastSky.enabled = 1;
-
-	if( CVAR_GET_FLOAT( "host_allow_materials" ))
-		uiVidOptions.hiTextures.enabled = 1;
+	uiVidOptions.glareReduction.curValue = RemapVal( CVAR_GET_FLOAT( "brightness" ), 0.0f, 3.0f, 0.0f, 1.0f );
+	uiVidOptions.gammaIntensity.curValue = RemapVal( CVAR_GET_FLOAT( "gamma" ), 1.8f, 3.0f, 0.0f, 1.0f );
+	PIC_SetGamma( uiVidOptions.hTestImage, 1.0f );
 
 	uiVidOptions.outlineWidth = 2;
 	UI_ScaleCoords( NULL, NULL, &uiVidOptions.outlineWidth, NULL );
@@ -93,25 +78,16 @@ UI_VidOptions_UpdateConfig
 static void UI_VidOptions_UpdateConfig( void )
 {
 	CVAR_SET_FLOAT( "viewsize", RemapVal( uiVidOptions.screenSize.curValue, 0.0f, 1.0f, 30.0f, 120.0f ));
-	CVAR_SET_FLOAT( "r_flaresize", (uiVidOptions.glareReduction.curValue * 200.0f ) + 100.0f );
-	CVAR_SET_FLOAT( "r_fastsky", uiVidOptions.fastSky.enabled );
-	CVAR_SET_FLOAT( "host_allow_materials", uiVidOptions.hiTextures.enabled );
-
-	if( CVAR_GET_FLOAT( "gl_ignorehwgamma" ))
-		PIC_SetGamma( uiVidOptions.hTestImage, RemapVal( uiVidOptions.gammaIntensity.curValue, 0.0f, 1.0f, 1.8f, 3.0f ));
-	else CVAR_SET_FLOAT( "gamma", RemapVal( uiVidOptions.gammaIntensity.curValue, 0.0f, 1.0f, 0.5f, 2.3f ));
+	CVAR_SET_FLOAT( "brightness", RemapVal( uiVidOptions.glareReduction.curValue, 0.0f, 1.0f, 0.0f, 3.0f ));
+	CVAR_SET_FLOAT( "gamma", RemapVal( uiVidOptions.gammaIntensity.curValue, 0.0f, 1.0f, 1.8f, 3.0f ));
+	PIC_SetGamma( uiVidOptions.hTestImage, 1.0f );
 }
 
 static void UI_VidOptions_SetConfig( void )
 {
 	CVAR_SET_FLOAT( "viewsize", RemapVal( uiVidOptions.screenSize.curValue, 0.0f, 1.0f, 30.0f, 120.0f ));
-	CVAR_SET_FLOAT( "r_flaresize", (uiVidOptions.glareReduction.curValue * 200.0f ) + 100.0f );
-	CVAR_SET_FLOAT( "r_fastsky", uiVidOptions.fastSky.enabled );
-	CVAR_SET_FLOAT( "host_allow_materials", uiVidOptions.hiTextures.enabled );
-
-	if( CVAR_GET_FLOAT( "gl_ignorehwgamma" ))
-		CVAR_SET_FLOAT( "gamma", RemapVal( uiVidOptions.gammaIntensity.curValue, 0.0f, 1.0f, 1.8f, 3.0f ));
-	else CVAR_SET_FLOAT( "gamma", RemapVal( uiVidOptions.gammaIntensity.curValue, 0.0f, 1.0f, 0.5f, 2.3f ));
+	CVAR_SET_FLOAT( "brightness", RemapVal( uiVidOptions.glareReduction.curValue, 0.0f, 1.0f, 0.0f, 3.0f ));
+	CVAR_SET_FLOAT( "gamma", RemapVal( uiVidOptions.gammaIntensity.curValue, 0.0f, 1.0f, 1.8f, 3.0f ));
 }
 
 /*
@@ -163,16 +139,6 @@ static void UI_VidOptions_Callback( void *self, int event )
 {
 	menuCommon_s	*item = (menuCommon_s *)self;
 
-	switch( item->id )
-	{
-	case ID_SIMPLE_SKY:
-	case ID_ALLOW_MATERIALS:
-		if( event == QM_PRESSED )
-			((menuCheckBox_s *)self)->focusPic = UI_CHECKBOX_PRESSED;
-		else ((menuCheckBox_s *)self)->focusPic = UI_CHECKBOX_FOCUS;
-		break;
-	}
-
 	if( event == QM_CHANGED )
 	{
 		UI_VidOptions_UpdateConfig();
@@ -200,7 +166,7 @@ static void UI_VidOptions_Init( void )
 {
 	memset( &uiVidOptions, 0, sizeof( uiVidOptions_t ));
 
-	uiVidOptions.hTestImage = PIC_Load( ART_GAMMA, PIC_KEEP_RGBDATA );
+	uiVidOptions.hTestImage = PIC_Load( ART_GAMMA, PIC_KEEP_SOURCE );
 
 	uiVidOptions.menu.vidInitFunc = UI_VidOptions_Init;
 
@@ -262,7 +228,7 @@ static void UI_VidOptions_Init( void )
 	uiVidOptions.gammaIntensity.generic.x = 72;
 	uiVidOptions.gammaIntensity.generic.y = 340;
 	uiVidOptions.gammaIntensity.generic.callback = UI_VidOptions_Callback;
-	uiVidOptions.gammaIntensity.generic.statusText = "Set gamma value (0.5 - 2.3)";
+	uiVidOptions.gammaIntensity.generic.statusText = "Set gamma value (1.8 - 3.0)";
 	uiVidOptions.gammaIntensity.minValue = 0.0;
 	uiVidOptions.gammaIntensity.maxValue = 1.0;
 	uiVidOptions.gammaIntensity.range = 0.05f;
@@ -279,24 +245,6 @@ static void UI_VidOptions_Init( void )
 	uiVidOptions.glareReduction.maxValue = 1.0;
 	uiVidOptions.glareReduction.range = 0.05f;
 
-	uiVidOptions.fastSky.generic.id = ID_SIMPLE_SKY;
-	uiVidOptions.fastSky.generic.type = QMTYPE_CHECKBOX;
-	uiVidOptions.fastSky.generic.flags = QMF_HIGHLIGHTIFFOCUS|QMF_ACT_ONRELEASE|QMF_MOUSEONLY|QMF_DROPSHADOW;
-	uiVidOptions.fastSky.generic.name = "Draw simple sky";
-	uiVidOptions.fastSky.generic.x = 72;
-	uiVidOptions.fastSky.generic.y = 615;
-	uiVidOptions.fastSky.generic.callback = UI_VidOptions_Callback;
-	uiVidOptions.fastSky.generic.statusText = "enable/disable fast sky rendering (for old computers)";
-
-	uiVidOptions.hiTextures.generic.id = ID_ALLOW_MATERIALS;
-	uiVidOptions.hiTextures.generic.type = QMTYPE_CHECKBOX;
-	uiVidOptions.hiTextures.generic.flags = QMF_HIGHLIGHTIFFOCUS|QMF_ACT_ONRELEASE|QMF_MOUSEONLY|QMF_DROPSHADOW;
-	uiVidOptions.hiTextures.generic.name = "Allow materials";
-	uiVidOptions.hiTextures.generic.x = 72;
-	uiVidOptions.hiTextures.generic.y = 665;
-	uiVidOptions.hiTextures.generic.callback = UI_VidOptions_Callback;
-	uiVidOptions.hiTextures.generic.statusText = "let engine replace 8-bit textures with full color hi-res prototypes (if present)";
-
 	UI_VidOptions_GetConfig();
 
 	UI_AddItem( &uiVidOptions.menu, (void *)&uiVidOptions.background );
@@ -305,8 +253,6 @@ static void UI_VidOptions_Init( void )
 	UI_AddItem( &uiVidOptions.menu, (void *)&uiVidOptions.screenSize );
 	UI_AddItem( &uiVidOptions.menu, (void *)&uiVidOptions.gammaIntensity );
 	UI_AddItem( &uiVidOptions.menu, (void *)&uiVidOptions.glareReduction );
-	UI_AddItem( &uiVidOptions.menu, (void *)&uiVidOptions.fastSky );
-	UI_AddItem( &uiVidOptions.menu, (void *)&uiVidOptions.hiTextures );
 	UI_AddItem( &uiVidOptions.menu, (void *)&uiVidOptions.testImage );
 }
 

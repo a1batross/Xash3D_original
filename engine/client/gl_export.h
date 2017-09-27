@@ -53,7 +53,7 @@ typedef float GLmatrix[16];
 #define GL_NICEST				0x1102
 
 #define GL_DEPTH_TEST			0x0B71
-
+#define GL_DEPTH_WRITEMASK			0x0B72
 #define GL_CULL_FACE			0x0B44
 #define GL_CW				0x0900
 #define GL_CCW				0x0901
@@ -185,6 +185,7 @@ typedef float GLmatrix[16];
 #define GL_OUT_OF_MEMORY			0x0505
 
 #define GL_DITHER				0x0BD0
+#define GL_ALPHA				0x1906
 #define GL_RGB				0x1907
 #define GL_RGBA				0x1908
 #define GL_BGR				0x80E0

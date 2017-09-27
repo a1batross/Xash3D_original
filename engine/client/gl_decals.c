@@ -40,7 +40,6 @@ GNU General Public License for more details.
 typedef struct
 {
 	vec3_t		m_Position;	// world coordinates of the decal center
-	vec3_t		m_SAxis;		// the s axis for the decal in world coordinates
 	model_t		*m_pModel;	// the model the decal is going to be applied in
 	int		m_iTexture;	// The decal material
 	int		m_Size;		// Size of the decal (in world coords)
@@ -92,13 +91,11 @@ static void R_DecalUnlink( decal_t *pdecal )
 		}
 	}
 
-	if( pdecal->mesh )
-	{
-		Mem_Free( pdecal->mesh );
-	}
+	if( pdecal->polys )
+		Mem_Free( pdecal->polys );
 
 	pdecal->psurface = NULL;
-	pdecal->mesh = NULL;
+	pdecal->polys = NULL;
 }
 
 // Just reuse next decal in list
@@ -108,8 +105,8 @@ static decal_t *R_DecalAlloc( decal_t *pdecal )
 {
 	int	limit = MAX_RENDER_DECALS;
 
-	if( r_decals->integer < limit )
-		limit = r_decals->integer;
+	if( r_decals->value < limit )
+		limit = r_decals->value;
 	
 	if( !limit ) return NULL;
 
@@ -126,7 +123,7 @@ static decal_t *R_DecalAlloc( decal_t *pdecal )
 			pdecal = &gDecalPool[gDecalCount]; // reuse next decal
 			gDecalCount++;
 			count++;
-		} while(( pdecal->flags & FDECAL_PERMANENT ) && count < limit );
+		} while( FBitSet( pdecal->flags, FDECAL_PERMANENT ) && count < limit );
 	}
 	
 	// if decal is already linked to a surface, unlink it.
@@ -147,9 +144,9 @@ static void R_GetDecalDimensions( int texture, int *width, int *height )
 }
 
 //-----------------------------------------------------------------------------
-// compute the decal basis based on surface normal, and preferred saxis
+// compute the decal basis based on surface normal
 //-----------------------------------------------------------------------------
-void R_DecalComputeBasis( msurface_t *surf, vec3_t pSAxis, vec3_t textureSpaceBasis[3] )
+void R_DecalComputeBasis( msurface_t *surf, vec3_t textureSpaceBasis[3] )
 {
 	vec3_t	surfaceNormal;
 
@@ -158,44 +155,17 @@ void R_DecalComputeBasis( msurface_t *surf, vec3_t pSAxis, vec3_t textureSpaceBa
 		VectorNegate( surf->plane->normal, surfaceNormal );
 	else VectorCopy( surf->plane->normal, surfaceNormal );
 
-	VectorCopy( surfaceNormal, textureSpaceBasis[2] );
-
-	if( pSAxis )
-	{
-		// T = S cross N
-		CrossProduct( pSAxis, textureSpaceBasis[2], textureSpaceBasis[1] );
-
-		// Name sure they aren't parallel or antiparallel
-		// In that case, fall back to the normal algorithm.
-		if( DotProduct( textureSpaceBasis[1], textureSpaceBasis[1] ) > 1e-6 )
-		{
-			// S = N cross T
-			CrossProduct( textureSpaceBasis[2], textureSpaceBasis[1], textureSpaceBasis[0] );
-
-			VectorNormalizeFast( textureSpaceBasis[0] );
-			VectorNormalizeFast( textureSpaceBasis[1] );
-			return;
-		}
-		// Fall through to the standard algorithm for parallel or antiparallel
-	}
-
-	// original Half-Life algorithm: get textureBasis from linked surface
-	VectorCopy( surf->texinfo->vecs[0], textureSpaceBasis[0] );
-	VectorCopy( surf->texinfo->vecs[1], textureSpaceBasis[1] );
-	VectorNormalizeFast( textureSpaceBasis[0] );
-	VectorNormalizeFast( textureSpaceBasis[1] );
+	VectorNormalize2( surf->texinfo->vecs[0], textureSpaceBasis[0] );
+	VectorNormalize2( surf->texinfo->vecs[1], textureSpaceBasis[1] );
+	VectorNormalize2( surfaceNormal, textureSpaceBasis[2] );
 }
 
 void R_SetupDecalTextureSpaceBasis( decal_t *pDecal, msurface_t *surf, int texture, vec3_t textureSpaceBasis[3], float decalWorldScale[2] )
 {
-	float	*sAxis = NULL;
 	int	width, height;
 
-	if( pDecal->flags & FDECAL_USESAXIS )
-		sAxis = pDecal->saxis;
-
 	// Compute the non-scaled decal basis
-	R_DecalComputeBasis( surf, sAxis, textureSpaceBasis );
+	R_DecalComputeBasis( surf, textureSpaceBasis );
 	R_GetDecalDimensions( texture, &width, &height );
 
 	// world width of decal = ptexture->width / pDecal->scale
@@ -511,79 +481,41 @@ static decal_t *R_DecalIntersect( decalinfo_t *decalinfo, msurface_t *surf, int 
 
 /*
 ====================
-R_BuildMeshForDecal
+R_DecalCreatePoly
 
 creates mesh for decal on first rendering
 ====================
 */
-msurfmesh_t *R_DecalCreateMesh( decalinfo_t *decalinfo, decal_t *pdecal, msurface_t *surf )
+glpoly_t *R_DecalCreatePoly( decalinfo_t *decalinfo, decal_t *pdecal, msurface_t *surf )
 {
+	int		lnumverts;
+	glpoly_t		*poly;
 	float		*v;
-	uint		i, bufSize;
-	qboolean		createSTverts = false;
-	int		numVerts, numElems;
-	byte		*buffer;
-	msurfmesh_t	*mesh;
+	int		i;
 
-	if( pdecal->mesh )
+	if( pdecal->polys )	// already created?
+		return pdecal->polys;
+
+	v = R_DecalSetupVerts( pdecal, surf, pdecal->texture, &lnumverts );
+	if( !lnumverts ) return NULL;	// probably this never happens
+
+	// allocate glpoly
+	poly = Mem_Alloc( com_studiocache, sizeof( glpoly_t ) + ( lnumverts - 4 ) * VERTEXSIZE * sizeof( float ));
+	poly->next = pdecal->polys;
+	poly->flags = surf->flags;
+	pdecal->polys = poly;
+	poly->numverts = lnumverts;
+
+	for( i = 0; i < lnumverts; i++, v += VERTEXSIZE )
 	{
-		// already have mesh
-		return pdecal->mesh;
+		VectorCopy( v, poly->verts[i] );
+		poly->verts[i][3] = v[3];
+		poly->verts[i][4] = v[4];
+		poly->verts[i][5] = v[5];
+		poly->verts[i][6] = v[6];
 	}
 
-	v = R_DecalSetupVerts( pdecal, surf, pdecal->texture, &numVerts );
-	if( !numVerts ) return NULL;	// probably this never happens
-
-	// allocate mesh
-	numElems = (numVerts - 2) * 3;
-
-	bufSize = sizeof( msurfmesh_t ) + numVerts * sizeof( glvert_t ) + numElems * sizeof( word );
-	buffer = Mem_Alloc( cls.mempool, bufSize );
-
-	mesh = (msurfmesh_t *)buffer;
-	buffer += sizeof( msurfmesh_t );
-	mesh->numVerts = numVerts;
-	mesh->numElems = numElems;
-
-	// setup pointers
-	mesh->verts = (glvert_t *)buffer;
-	buffer += numVerts * sizeof( glvert_t );
-	mesh->elems = (word *)buffer;
-	buffer += numElems * sizeof( word );
-
-	mesh->surf = surf;	// NOTE: meshchains can be linked with one surface
-
-	// create indices
-	for( i = 0; i < mesh->numVerts - 2; i++ )
-	{
-		mesh->elems[i*3+0] = 0;
-		mesh->elems[i*3+1] = i + 1;
-		mesh->elems[i*3+2] = i + 2;
-	}
-
-	// fill the mesh
-	for( i = 0; i < numVerts; i++, v += VERTEXSIZE )
-	{
-		glvert_t	*out = &mesh->verts[i];
-		VectorCopy( v, out->vertex );
-		VectorCopy( decalinfo->m_Basis[0], out->tangent );
-		VectorCopy( decalinfo->m_Basis[1], out->binormal );
-		VectorCopy( decalinfo->m_Basis[2], out->normal );
-
-		out->stcoord[0] = v[3];
-		out->stcoord[1] = v[4];
-		out->lmcoord[0] = v[5];
-		out->lmcoord[1] = v[6];
-		out->sccoord[0] = (( DotProduct( v , surf->texinfo->vecs[0] ) + surf->texinfo->vecs[0][3] ) / surf->texinfo->texture->width );
-		out->sccoord[1] = (( DotProduct( v , surf->texinfo->vecs[1] ) + surf->texinfo->vecs[1][3] ) / surf->texinfo->texture->height );
-
-		// clear colors (it can be used for vertex lighting)
-		memset( out->color, 0xFF, sizeof( out->color ));
-	}
-
-	pdecal->mesh = mesh;
-
-	return mesh;
+	return poly;
 }
 
 // Add the decal to the surface's list of decals.
@@ -612,9 +544,8 @@ static void R_AddDecalToSurface( decal_t *pdecal, msurface_t *surf, decalinfo_t 
 	// and will be culled, drawing and sorting
 	// together with surface
 
-	// build mesh for decal if allowed
-	if( host.features & ENGINE_BUILD_SURFMESHES )
-		pdecal->mesh = R_DecalCreateMesh( decalinfo, pdecal, surf );
+	// alloc clipped poly for decal
+	R_DecalCreatePoly( decalinfo, pdecal, surf );
 }
 
 static void R_DecalCreate( decalinfo_t *decalinfo, msurface_t *surf, float x, float y )
@@ -638,16 +569,13 @@ static void R_DecalCreate( decalinfo_t *decalinfo, msurface_t *surf, float x, fl
 
 	VectorCopy( decalinfo->m_Position, pdecal->position );
 
-	if( pdecal->flags & FDECAL_USESAXIS )
-		VectorCopy( decalinfo->m_SAxis, pdecal->saxis );
-
 	pdecal->dx = x;
 	pdecal->dy = y;
-	pdecal->texture = decalinfo->m_iTexture;
 
 	// set scaling
 	pdecal->scale = decalinfo->m_scale;
 	pdecal->entityIndex = decalinfo->m_Entity;
+	pdecal->texture = decalinfo->m_iTexture;
 
 	// check to see if the decal actually intersects the surface
 	// if not, then remove the decal
@@ -667,10 +595,9 @@ void R_DecalSurface( msurface_t *surf, decalinfo_t *decalinfo )
 {
 	// get the texture associated with this surface
 	mtexinfo_t	*tex = surf->texinfo;
-	vec4_t		textureU, textureV;
-	float		*sAxis = NULL;
-	float		s, t, w, h;
 	decal_t		*decal = surf->pdecals;
+	vec4_t		textureU, textureV;
+	float		s, t, w, h;
 
 	// we in restore mode
 	if( cls.state == ca_connected )
@@ -695,11 +622,7 @@ void R_DecalSurface( msurface_t *surf, decalinfo_t *decalinfo )
 	// Determine the decal basis (measured in world space)
 	// Note that the decal basis vectors 0 and 1 will always lie in the same
 	// plane as the texture space basis vectorstextureVecsTexelsPerWorldUnits.
-
-	if( decalinfo->m_Flags & FDECAL_USESAXIS )
-		sAxis = decalinfo->m_SAxis;
-
-	R_DecalComputeBasis( surf, sAxis, decalinfo->m_Basis );
+	R_DecalComputeBasis( surf, decalinfo->m_Basis );
 
 	// Compute an effective width and height (axis aligned) in the parent texture space
 	// How does this work? decalBasis[0] represents the u-direction (width)
@@ -806,13 +729,13 @@ static void R_DecalNode( model_t *model, mnode_t *node, decalinfo_t *decalinfo )
 }
 
 // Shoots a decal onto the surface of the BSP.  position is the center of the decal in world coords
-void R_DecalShoot( int textureIndex, int entityIndex, int modelIndex, vec3_t pos, int flags, vec3_t saxis, float scale )
+void R_DecalShoot( int textureIndex, int entityIndex, int modelIndex, vec3_t pos, int flags, float scale )
 {
 	decalinfo_t	decalInfo;
-	hull_t		*hull;
 	cl_entity_t	*ent = NULL;
 	model_t		*model = NULL;
 	int		width, height;
+	hull_t		*hull;
 
 	if( textureIndex <= 0 || textureIndex >= MAX_TEXTURES )
 	{
@@ -869,13 +792,6 @@ void R_DecalShoot( int textureIndex, int entityIndex, int modelIndex, vec3_t pos
 		VectorCopy( pos, decalInfo.m_Position );
 	}
 
-	// deal with the s axis if one was passed in
-	if( saxis )
-	{
-		flags |= FDECAL_USESAXIS;
-		VectorCopy( saxis, decalInfo.m_SAxis );
-	}
-
 	// this decal must use landmark for correct transition
 	if(!( model->flags & MODEL_HAS_ORIGIN ))
 	{
@@ -906,23 +822,24 @@ void R_DecalShoot( int textureIndex, int entityIndex, int modelIndex, vec3_t pos
 // triangles the same way.
 float *R_DecalSetupVerts( decal_t *pDecal, msurface_t *surf, int texture, int *outCount )
 {
-	float	*v;
+	glpoly_t	*p = pDecal->polys;
 	int	i, count;
+	float	*v, *v2;
 
-	if( pDecal->mesh )
+	if( p )
 	{
-		count = pDecal->mesh->numVerts;
+		v = g_DecalClipVerts[0];
+		count = p->numverts;
+		v2 = p->verts[0];
 
 		// if we have mesh so skip clipping and just copy vertexes out (perf)
-		for( i = 0, v = g_DecalClipVerts[0]; i < count; i++, v += VERTEXSIZE )
+		for( i = 0; i < count; i++, v += VERTEXSIZE, v2 += VERTEXSIZE )
 		{
-			glvert_t	*p = &pDecal->mesh->verts[i];
-
-			VectorCopy( p->vertex, v );
-			v[3] = p->stcoord[0];
-			v[4] = p->stcoord[1];
-			v[5] = p->lmcoord[0];
-			v[6] = p->lmcoord[1];
+			VectorCopy( v2, v );
+			v[3] = v2[3];
+			v[4] = v2[4];
+			v[5] = v2[5];
+			v[6] = v2[6];
 		}
 
 		// restore pointer
@@ -961,8 +878,8 @@ void DrawSingleDecal( decal_t *pDecal, msurface_t *fa )
 	pglEnd();
 }
 
-void DrawSurfaceDecals( msurface_t *fa )
-{
+void DrawSurfaceDecals( msurface_t *fa, qboolean single, qboolean reverse )
+{	
 	decal_t		*p;
 	cl_entity_t	*e;
 
@@ -971,25 +888,31 @@ void DrawSurfaceDecals( msurface_t *fa )
 	e = RI.currententity;
 	ASSERT( e != NULL );
 
-	if( e->curstate.rendermode == kRenderNormal || e->curstate.rendermode == kRenderTransAlpha )
+	if( single )
 	{
-		pglDepthMask( GL_FALSE );
-		pglEnable( GL_BLEND );
+		if( e->curstate.rendermode == kRenderNormal || e->curstate.rendermode == kRenderTransAlpha )
+		{
+			pglDepthMask( GL_FALSE );
+			pglEnable( GL_BLEND );
 
-		if( e->curstate.rendermode == kRenderTransAlpha )
-			pglDisable( GL_ALPHA_TEST );
+			if( e->curstate.rendermode == kRenderTransAlpha )
+				pglDisable( GL_ALPHA_TEST );
+		}
+
+		if( e->curstate.rendermode == kRenderTransColor )
+			pglEnable( GL_TEXTURE_2D );
+
+		if( e->curstate.rendermode == kRenderTransTexture || e->curstate.rendermode == kRenderTransAdd )
+			GL_Cull( GL_NONE );
+
+		if( gl_polyoffset->value )
+		{
+			pglEnable( GL_POLYGON_OFFSET_FILL );
+			pglPolygonOffset( -1.0f, -gl_polyoffset->value );
+		}
 	}
 
-	if( e->curstate.rendermode == kRenderTransColor )
-		pglEnable( GL_TEXTURE_2D );
-
-	if( e->curstate.rendermode == kRenderTransTexture || e->curstate.rendermode == kRenderTransAdd )
-		GL_Cull( GL_NONE );
-
-	pglEnable( GL_POLYGON_OFFSET_FILL );
-	pglBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
-
-	if( fa->flags & SURF_TRANSPARENT && glState.stencilEnabled )
+	if( FBitSet( fa->flags, SURF_TRANSPARENT ) && glState.stencilEnabled )
 	{
 		mtexinfo_t	*tex = fa->texinfo;
 
@@ -1039,55 +962,106 @@ void DrawSurfaceDecals( msurface_t *fa )
 		}
 	}
 
-	for( p = fa->pdecals; p; p = p->pnext )
+	pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
+	pglBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
+
+	if( reverse && e->curstate.rendermode == kRenderTransTexture )
 	{
-		if( p->texture )
+		decal_t	*list[1024];
+		int	i, count;
+
+		for( p = fa->pdecals, count = 0; p && count < 1024; p = p->pnext )
+			if( p->texture ) list[count++] = p;
+
+		for( i = count - 1; i >= 0; i-- )
+			DrawSingleDecal( list[i], fa );
+	}
+	else
+	{
+		for( p = fa->pdecals; p; p = p->pnext )
 		{
-			gltexture_t *glt = R_GetTexture( p->texture );
-
-			// normal HL decal with alpha-channel
-			if( glt->flags & TF_HAS_ALPHA )
-			{
-				// draw transparent decals with GL_MODULATE
-				if( glt->fogParams[3] > DECAL_TRANSPARENT_THRESHOLD )
-					pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
-				else pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
-				pglBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
-			}
-			else
-			{
-				// color decal like detail texture. Base color is 127 127 127
-				pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
-				pglBlendFunc( GL_DST_COLOR, GL_SRC_COLOR );
-                              }
-
+			if( !p->texture ) continue;
 			DrawSingleDecal( p, fa );
 		}
 	}
 
-	if( fa->flags & SURF_TRANSPARENT && glState.stencilEnabled )
+	if( FBitSet( fa->flags, SURF_TRANSPARENT ) && glState.stencilEnabled )
 		pglDisable( GL_STENCIL_TEST );
 
-	if( e->curstate.rendermode == kRenderNormal || e->curstate.rendermode == kRenderTransAlpha )
+	if( single )
+	{
+		if( e->curstate.rendermode == kRenderNormal || e->curstate.rendermode == kRenderTransAlpha )
+		{
+			pglDepthMask( GL_TRUE );
+			pglDisable( GL_BLEND );
+
+			if( e->curstate.rendermode == kRenderTransAlpha )
+				pglEnable( GL_ALPHA_TEST );
+		}
+
+		if( gl_polyoffset->value )
+			pglDisable( GL_POLYGON_OFFSET_FILL );
+
+		if( e->curstate.rendermode == kRenderTransTexture || e->curstate.rendermode == kRenderTransAdd )
+			GL_Cull( GL_FRONT );
+
+		if( e->curstate.rendermode == kRenderTransColor )
+			pglDisable( GL_TEXTURE_2D );
+
+		// restore blendfunc here
+		if( e->curstate.rendermode == kRenderTransAdd || e->curstate.rendermode == kRenderGlow )
+			pglBlendFunc( GL_SRC_ALPHA, GL_ONE );
+
+		pglTexEnvf( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
+	}
+}
+
+void DrawDecalsBatch( void )
+{	
+	cl_entity_t	*e;
+	int		i;
+
+	if( !tr.num_draw_decals )
+		return;
+
+	e = RI.currententity;
+	ASSERT( e != NULL );
+
+	if( e->curstate.rendermode != kRenderTransTexture )
+	{
+		pglEnable( GL_BLEND );
+		pglBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
+		pglDepthMask( GL_FALSE );
+	}
+
+	if( e->curstate.rendermode == kRenderTransTexture || e->curstate.rendermode == kRenderTransAdd )
+		GL_Cull( GL_NONE );
+
+	if( gl_polyoffset->value )
+	{
+		pglEnable( GL_POLYGON_OFFSET_FILL );
+		pglPolygonOffset( -1.0f, -gl_polyoffset->value );
+	}
+
+	for( i = 0; i < tr.num_draw_decals; i++ )
+	{
+		DrawSurfaceDecals( tr.draw_decals[i], false, false );
+	}
+
+	if( e->curstate.rendermode != kRenderTransTexture )
 	{
 		pglDepthMask( GL_TRUE );
 		pglDisable( GL_BLEND );
-
-		if( e->curstate.rendermode == kRenderTransAlpha )
-			pglEnable( GL_ALPHA_TEST );
+		pglDisable( GL_ALPHA_TEST );
 	}
 
-	pglDisable( GL_POLYGON_OFFSET_FILL );
+	if( gl_polyoffset->value )
+		pglDisable( GL_POLYGON_OFFSET_FILL );
 
 	if( e->curstate.rendermode == kRenderTransTexture || e->curstate.rendermode == kRenderTransAdd )
 		GL_Cull( GL_FRONT );
 
-	if( e->curstate.rendermode == kRenderTransColor )
-		pglDisable( GL_TEXTURE_2D );
-
-	// restore blendfunc here
-	if( e->curstate.rendermode == kRenderTransAdd || e->curstate.rendermode == kRenderGlow )
-		pglBlendFunc( GL_SRC_ALPHA, GL_ONE );
+	tr.num_draw_decals = 0;
 }
 
 /*

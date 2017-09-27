@@ -153,25 +153,29 @@ typedef struct server_s
 
 	sv_baselines_t	instanced;	// instanced baselines
 
+	// unreliable data to send to clients.
+	sizebuf_t		datagram;
+	byte		datagram_buf[MAX_DATAGRAM];
+
 	// reliable data to send to clients.
 	sizebuf_t		reliable_datagram;	// copied to all clients at end of frame
-	byte		reliable_datagram_buf[NET_MAX_PAYLOAD];
+	byte		reliable_datagram_buf[MAX_DATAGRAM];
 
 	// the multicast buffer is used to send a message to a set of clients
 	sizebuf_t		multicast;
-	byte		multicast_buf[NET_MAX_PAYLOAD];
+	byte		multicast_buf[MAX_MULTICAST];
 
 	sizebuf_t		signon;
-	byte		signon_buf[NET_MAX_PAYLOAD];
+	byte		signon_buf[NET_MAX_PAYLOAD];	// need a get to maximum size
 
-	sizebuf_t		spectator_datagram;
-	byte		spectator_buf[NET_MAX_PAYLOAD];
+	sizebuf_t		spec_datagram;
+	byte		spectator_buf[MAX_MULTICAST];
 
 	model_t		*worldmodel;	// pointer to world
 	uint		checksum;		// for catching cheater maps
 
+	qboolean		simulating;
 	qboolean		write_bad_message;	// just for debug
-	qboolean		simulating;	// physics is running
 	qboolean		paused;
 } server_t;
 
@@ -179,7 +183,6 @@ typedef struct
 {
 	double		senttime;
 	float		ping_time;
-	float		latency;
 
 	clientdata_t	clientdata;
 	weapon_data_t	weapondata[MAX_LOCAL_WEAPONS];
@@ -203,24 +206,26 @@ typedef struct sv_client_s
 
 	double		next_messagetime;		// time when we should send next world state update  
 	double		next_checkpingtime;		// time to send all players pings to client
+	double		next_sendinfotime;		// time to send info about all players
 	double		cl_updaterate;		// client requested updaterate
 	double		timebase;			// client timebase
+	double		lastservertime;		// check if server time was not changed so no resaon to send update
 
-	customization_t	customization;		// player customization linked list
-	resource_t	resource1;
-	resource_t	resource2;		// <mapname.res> from client (server downloading)
+	customization_t	customdata;		// player customization linked list
+	resource_t	resourcesonhand;
+	resource_t	resourcesneeded;		// <mapname.res> from client (server downloading)
 
 	usercmd_t		lastcmd;			// for filling in big drops
 
-	double		last_cmdtime;
-	double		last_movetime;
-	double		next_movetime;
+	double		connecttime;
+	double		cmdtime;
+	double		ignorecmdtime;
 
 	int		modelindex;		// custom playermodel index
 	int		packet_loss;
 	float		latency;
-	float		ping;
 
+	int		ignored_ents;		// if visibility list is full we should know how many entities will be ignored
 	int		listeners;		// 32 bits == MAX_CLIENTS (voice listeners)
 
 	edict_t		*edict;			// EDICT_NUM(clientnum+1)
@@ -233,13 +238,13 @@ typedef struct sv_client_s
 	// the datagram is written to by sound calls, prints, temp ents, etc.
 	// it can be harmlessly overflowed.
 	sizebuf_t		datagram;
-	byte		datagram_buf[NET_MAX_PAYLOAD];
+	byte		datagram_buf[MAX_DATAGRAM];
 
 	client_frame_t	*frames;			// updates can be delta'd from here
 	event_state_t	events;
 
 	double		lastmessage;		// time when packet was last received
-	double		lastconnect;
+	double		connection_started;
 
 	int		challenge;		// challenge of this user, randomly generated
 	int		userid;			// identifying number on server
@@ -318,6 +323,7 @@ typedef struct
 	int		gmsgHudText;		// -1 if not catched (e.g. mod not registered this message)
 
 	void		*hInstance;		// pointer to game.dll
+	qboolean		config_executed;		// should to execute config.cfg once time to restore FCVAR_ARCHIVE that specified in hl.dll
 
 	union
 	{
@@ -333,8 +339,6 @@ typedef struct
 
 	sv_pushed_t	pushed[MAX_PUSHED_ENTS];	// no reason to keep array for all edicts
 						// 256 it should be enough for any game situation
-	vec3_t		player_mins[MAX_MAP_HULLS];	// 4 hulls allowed
-	vec3_t		player_maxs[MAX_MAP_HULLS];	// 4 hulls allowed
 
 	globalvars_t	*globals;			// server globals
 	DLL_FUNCTIONS	dllFuncs;			// dll exported funcs
@@ -351,16 +355,21 @@ typedef struct
 	qboolean		initialized;		// sv_init has completed
 	double		timestart;		// just for profiling
 
+	int		maxclients;		// server max clients
+
 	int		groupmask;
 	int		groupop;
+
+	char		serverinfo[MAX_SERVERINFO_STRING];
+	char		localinfo[MAX_LOCALINFO_STRING];
 
 	double		changelevel_next_time;	// don't execute multiple changelevels at once time
 	int		spawncount;		// incremented each server start
 						// used to check late spawns
-	sv_client_t	*clients;			// [sv_maxclients->integer]
+	sv_client_t	*clients;			// [svs.maxclients]
 	sv_client_t	*currentPlayer;		// current client who network message sending on
 	int		currentPlayerNum;		// for easy acess to some global arrays
-	int		num_client_entities;	// sv_maxclients->integer*UPDATE_BACKUP*MAX_PACKET_ENTITIES
+	int		num_client_entities;	// svs.maxclients*UPDATE_BACKUP*MAX_PACKET_ENTITIES
 	int		next_client_entities;	// next client_entity to use
 	entity_state_t	*packet_entities;		// [num_client_entities]
 	entity_state_t	*baselines;		// [GI->max_edicts]
@@ -376,52 +385,55 @@ extern	server_t		sv;			// local server
 extern	svgame_static_t	svgame;			// persistant game info
 extern	areanode_t	sv_areanodes[];		// AABB dynamic tree
 
+extern convar_t		sv_lan;
+extern convar_t		sv_lan_rate;
+extern convar_t		sv_unlag;
+extern convar_t		sv_maxunlag;
+extern convar_t		sv_unlagpush;
+extern convar_t		sv_unlagsamples;
+extern convar_t		rcon_password;
+extern convar_t		sv_instancedbaseline;
+extern convar_t		sv_minupdaterate;
+extern convar_t		sv_maxupdaterate;
+extern convar_t		sv_newunit;
+extern convar_t		sv_clienttrace;
+extern convar_t		sv_failuretime;
+extern convar_t		sv_send_resources;
+extern convar_t		sv_send_logos;
+extern convar_t		sv_allow_upload;
+extern convar_t		sv_allow_download;
+extern convar_t		sv_airaccelerate;
+extern convar_t		sv_accelerate;
+extern convar_t		sv_friction;
+extern convar_t		sv_edgefriction;
+extern convar_t		sv_gravity;
+extern convar_t		sv_stopspeed;
+extern convar_t		sv_maxspeed;
+extern convar_t		sv_stepsize;
+extern convar_t		sv_maxvelocity;
+extern convar_t		sv_rollangle;
+extern convar_t		sv_rollspeed;
+extern convar_t		sv_skyname;
+extern convar_t		sv_skyspeed;
+extern convar_t		sv_skyangle;
+extern convar_t		sv_consistency;
+extern convar_t		sv_spawntime;
+extern convar_t		sv_changetime;
+extern convar_t		deathmatch;
+extern convar_t		skill;
+extern convar_t		coop;
+
 extern	convar_t		*sv_pausable;		// allows pause in multiplayer
-extern	convar_t		*sv_newunit;
-extern	convar_t		*sv_airaccelerate;
-extern	convar_t		*sv_accelerate;
-extern	convar_t		*sv_friction;
-extern	convar_t		*sv_edgefriction;
-extern	convar_t		*sv_maxvelocity;
-extern	convar_t		*sv_gravity;
-extern	convar_t		*sv_stopspeed;
 extern	convar_t		*sv_check_errors;
 extern	convar_t		*sv_reconnect_limit;
 extern	convar_t		*sv_lighting_modulate;
-extern	convar_t		*rcon_password;
 extern	convar_t		*hostname;
-extern	convar_t		*sv_stepsize;
-extern	convar_t		*sv_rollangle;
-extern	convar_t		*sv_rollspeed;
-extern	convar_t		*sv_maxspeed;
 extern	convar_t		*sv_maxclients;
-extern	convar_t		*sv_skyname;
-extern	convar_t		*serverinfo;
-extern	convar_t		*sv_failuretime;
-extern	convar_t		*sv_unlag;
 extern	convar_t		*sv_novis;
-extern	convar_t		*sv_maxunlag;
-extern	convar_t		*sv_unlagpush;
-extern	convar_t		*sv_unlagsamples;
-extern	convar_t		*sv_allow_upload;
-extern	convar_t		*sv_allow_download;
-extern	convar_t		*sv_allow_studio_attachment_angles;
-extern	convar_t		*sv_allow_rotate_pushables;
-extern	convar_t		*sv_clienttrace;
-extern	convar_t		*sv_send_resources;
-extern	convar_t		*sv_send_logos;
+extern	convar_t		*sv_hostmap;
 extern	convar_t		*sv_sendvelocity;
-extern	convar_t		*sv_skyspeed;
-extern	convar_t		*sv_skyangle;
-extern	convar_t		*sv_quakehulls;
 extern	convar_t		*sv_validate_changelevel;
-extern	convar_t		*mp_consistency;
 extern	convar_t		*public_server;
-extern	convar_t		*physinfo;
-extern	convar_t		*deathmatch;
-extern	convar_t		*teamplay;
-extern	convar_t		*skill;
-extern	convar_t		*coop;
 
 //===========================================================
 //
@@ -489,7 +501,7 @@ void SV_WaterMove( edict_t *ent );
 void SV_SendClientMessages( void );
 void SV_ClientPrintf( sv_client_t *cl, int level, char *fmt, ... );
 void SV_BroadcastPrintf( sv_client_t *ignore, int level, char *fmt, ... );
-void SV_BroadcastCommand( char *fmt, ... );
+void SV_BroadcastCommand( const char *fmt, ... );
 
 //
 // sv_client.c
@@ -509,9 +521,10 @@ void SV_ClientThink( sv_client_t *cl, usercmd_t *cmd );
 void SV_ExecuteClientMessage( sv_client_t *cl, sizebuf_t *msg );
 void SV_ConnectionlessPacket( netadr_t from, sizebuf_t *msg );
 edict_t *SV_FakeConnect( const char *netname );
- void SV_ExecuteClientCommand( sv_client_t *cl, char *s );
+void SV_ExecuteClientCommand( sv_client_t *cl, char *s );
 void SV_RunCmd( sv_client_t *cl, usercmd_t *ucmd, int random_seed );
 qboolean SV_IsPlayerIndex( int idx );
+int SV_CalcPing( sv_client_t *cl );
 void SV_InitClientMove( void );
 void SV_UpdateServerInfo( void );
 void SV_EndRedirect( void );
@@ -521,6 +534,7 @@ void SV_EndRedirect( void );
 //
 void SV_Status_f( void );
 void SV_Newgame_f( void );
+void SV_InitHostCommands( void );
 
 //
 // sv_custom.c
@@ -550,7 +564,7 @@ const char *SV_ClassName( const edict_t *e );
 void SV_SetModel( edict_t *ent, const char *name );
 void SV_FreePrivateData( edict_t *pEdict );
 void SV_CopyTraceToGlobal( trace_t *trace );
-void SV_SetMinMaxSize( edict_t *e, const float *min, const float *max );
+void SV_SetMinMaxSize( edict_t *e, const float *min, const float *max, qboolean relink );
 edict_t* SV_FindEntityByString( edict_t *pStartEdict, const char *pszField, const char *pszValue );
 void SV_PlaybackEventFull( int flags, const edict_t *pInvoker, word eventindex, float delay, float *origin,
 	float *angles, float fparam1, float fparam2, int iparam1, int iparam2, int bparam1, int bparam2 );
@@ -562,6 +576,7 @@ char *SV_ReadEntityScript( const char *filename, int *flags );
 float SV_AngleMod( float ideal, float current, float speed );
 void SV_SpawnEntities( const char *mapname, char *entities );
 edict_t* SV_AllocPrivateData( edict_t *ent, string_t className );
+edict_t* SV_CreateNamedEntity( edict_t *ent, string_t className );
 string_t SV_AllocString( const char *szValue );
 string_t SV_MakeString( const char *szValue );
 const char *SV_GetString( string_t iString );
@@ -577,8 +592,9 @@ void SV_UpdateBaseVelocity( edict_t *ent );
 byte *pfnSetFatPVS( const float *org );
 byte *pfnSetFatPAS( const float *org );
 int pfnPrecacheModel( const char *s );
-int pfnNumberOfEntities( void );
+void pfnRemoveEntity( edict_t* e );
 void SV_RestartStaticEnts( void );
+char *SV_Localinfo( void );
 
 _inline edict_t *SV_EDICT_NUM( int n, const char * file, const int line )
 {
@@ -605,6 +621,7 @@ void SV_InitSaveRestore( void );
 //
 void SV_GetTrueOrigin( sv_client_t *cl, int edictnum, vec3_t origin );
 void SV_GetTrueMinMax( sv_client_t *cl, int edictnum, vec3_t mins, vec3_t maxs );
+qboolean SV_PlayerIsFrozen( edict_t *pClient );
 
 //
 // sv_world.c
@@ -614,8 +631,9 @@ void SV_UnlinkEdict( edict_t *ent );
 void SV_ClipMoveToEntity( edict_t *ent, const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end, trace_t *trace );
 void SV_CustomClipMoveToEntity( edict_t *ent, const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end, trace_t *trace );
 trace_t SV_TraceHull( edict_t *ent, int hullNum, const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end );
-trace_t SV_Move( const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end, int type, edict_t *e );
+trace_t SV_Move( const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end, int type, edict_t *e, qboolean monsterclip );
 trace_t SV_MoveNoEnts( const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end, int type, edict_t *e );
+trace_t SV_MoveNormal( const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end, int type, edict_t *e );
 const char *SV_TraceTexture( edict_t *ent, const vec3_t start, const vec3_t end );
 msurface_t *SV_TraceSurface( edict_t *ent, const vec3_t start, const vec3_t end );
 trace_t SV_MoveToss( edict_t *tossent, edict_t *ignore );

@@ -35,9 +35,11 @@ qboolean SV_CheckBottom( edict_t *ent, int iMode )
 {
 	vec3_t	mins, maxs, start, stop;
 	float	mid, bottom;
+	qboolean	monsterClip;
 	trace_t	trace;
 	int	x, y;
 
+	monsterClip = FBitSet( ent->v.flags, FL_MONSTERCLIP ) ? true : false;
 	VectorAdd( ent->v.origin, ent->v.mins, mins );
 	VectorAdd( ent->v.origin, ent->v.maxs, maxs );
 
@@ -61,7 +63,10 @@ qboolean SV_CheckBottom( edict_t *ent, int iMode )
 	return true; // we got out easy
 realcheck:
 	// check it for real...
-	start[2] = mins[2] + svgame.movevars.stepsize;
+	start[2] = mins[2];
+
+	if( !FBitSet( host.features, ENGINE_QUAKE_COMPATIBLE ))
+		start[2] += svgame.movevars.stepsize;
 
 	// the midpoint must be within 16 of the bottom
 	start[0] = stop[0] = (mins[0] + maxs[0]) * 0.5f;
@@ -70,7 +75,7 @@ realcheck:
 
 	if( iMode == WALKMOVE_WORLDONLY )
 		trace = SV_MoveNoEnts( start, vec3_origin, vec3_origin, stop, MOVE_NORMAL, ent );
-	else trace = SV_Move( start, vec3_origin, vec3_origin, stop, MOVE_NORMAL, ent );
+	else trace = SV_Move( start, vec3_origin, vec3_origin, stop, MOVE_NORMAL, ent, monsterClip );
 
 	if( trace.fraction == 1.0f )
 		return false;
@@ -87,7 +92,7 @@ realcheck:
 
 			if( iMode == WALKMOVE_WORLDONLY )
 				trace = SV_MoveNoEnts( start, vec3_origin, vec3_origin, stop, MOVE_NORMAL, ent );
-			else trace = SV_Move( start, vec3_origin, vec3_origin, stop, MOVE_NORMAL, ent );
+			else trace = SV_Move( start, vec3_origin, vec3_origin, stop, MOVE_NORMAL, ent, monsterClip );
 
 			if( trace.fraction != 1.0f && trace.endpos[2] > bottom )
 				bottom = trace.endpos[2];
@@ -145,7 +150,7 @@ void SV_WaterMove( edict_t *ent )
 		if( flags & FL_INWATER )
 		{
 			// leave the water.
-			switch( Com_RandomLong( 0, 3 ))
+			switch( COM_RandomLong( 0, 3 ))
 			{
 			case 0:
 				SV_StartSound( ent, CHAN_BODY, "player/pl_wade1.wav", 1.0f, ATTN_NORM, 0, 100 );
@@ -192,7 +197,7 @@ void SV_WaterMove( edict_t *ent )
 		if( watertype == CONTENTS_WATER )
 		{
 			// entering the water
-			switch( Com_RandomLong( 0, 3 ))
+			switch( COM_RandomLong( 0, 3 ))
 			{
 			case 0:
 				SV_StartSound( ent, CHAN_BODY, "player/pl_wade1.wav", 1.0f, ATTN_NORM, 0, 100 );
@@ -215,7 +220,7 @@ void SV_WaterMove( edict_t *ent )
 
 	if( !( flags & FL_WATERJUMP ))
 	{
-		VectorMA( ent->v.velocity, ( ent->v.waterlevel * -0.8f * host.frametime ), ent->v.velocity, ent->v.velocity );
+		VectorMA( ent->v.velocity, ( ent->v.waterlevel * -0.8f * sv.frametime ), ent->v.velocity, ent->v.velocity );
 	}
 }
 
@@ -249,11 +254,13 @@ qboolean SV_MoveStep( edict_t *ent, vec3_t move, qboolean relink )
 	int	i;
 	trace_t	trace;
 	vec3_t	oldorg, neworg, end;
+	qboolean	monsterClip;
 	edict_t	*enemy;
 	float	dz;
 
 	VectorCopy( ent->v.origin, oldorg );
 	VectorAdd( ent->v.origin, move, neworg );
+	monsterClip = FBitSet( ent->v.flags, FL_MONSTERCLIP ) ? true : false;
 
 	// well, try it.  Flying and swimming monsters are easiest.
 	if( ent->v.flags & ( FL_SWIM|FL_FLY ))
@@ -272,7 +279,7 @@ qboolean SV_MoveStep( edict_t *ent, vec3_t move, qboolean relink )
 				else if( dz < 30.0f ) neworg[2] += 8.0f;
 			}
 
-			trace = SV_Move( ent->v.origin, ent->v.mins, ent->v.maxs, neworg, MOVE_NORMAL, ent );
+			trace = SV_Move( ent->v.origin, ent->v.mins, ent->v.maxs, neworg, MOVE_NORMAL, ent, monsterClip );
 
 			if( trace.fraction == 1.0f )
 			{
@@ -303,14 +310,14 @@ qboolean SV_MoveStep( edict_t *ent, vec3_t move, qboolean relink )
 		VectorCopy( neworg, end );
 		end[2] -= dz * 2.0f;
 
-		trace = SV_Move( neworg, ent->v.mins, ent->v.maxs, end, MOVE_NORMAL, ent );
+		trace = SV_Move( neworg, ent->v.mins, ent->v.maxs, end, MOVE_NORMAL, ent, monsterClip );
 		if( trace.allsolid )
 			return 0;
 
 		if( trace.startsolid != 0 )
 		{
 			neworg[2] -= dz;
-			trace = SV_Move( neworg, ent->v.mins, ent->v.maxs, end, MOVE_NORMAL, ent );
+			trace = SV_Move( neworg, ent->v.mins, ent->v.maxs, end, MOVE_NORMAL, ent, monsterClip );
 
 			if( trace.allsolid != 0 || trace.startsolid != 0 )
 				return 0;
@@ -482,7 +489,7 @@ void SV_NewChaseDir( edict_t *actor, vec3_t destination, float dist )
 	}
 
 	// try other directions
-	if( Com_RandomLong( 0, 1 ) != 0 || fabs( deltay ) > fabs( deltax ))
+	if( COM_RandomLong( 0, 1 ) != 0 || fabs( deltay ) > fabs( deltax ))
 	{
 		tempdir = d[1];
 		d[1] = d[2];
@@ -500,7 +507,7 @@ void SV_NewChaseDir( edict_t *actor, vec3_t destination, float dist )
 		return;
 
 	// fine, just run somewhere.
-	if( Com_RandomLong( 0, 1 ) != 1 )
+	if( COM_RandomLong( 0, 1 ) != 1 )
 	{
 		for( tempdir = 0; tempdir <= 315.0f; tempdir += 45.0f )
 		{

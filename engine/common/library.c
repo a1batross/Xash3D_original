@@ -401,6 +401,7 @@ void *MemoryLoadLibrary( const char *name )
 		// try to allocate memory at arbitrary position
 		code = (byte *)VirtualAlloc( NULL, old_header->OptionalHeader.SizeOfImage, MEM_RESERVE, PAGE_READWRITE );
 	}    
+
 	if( code == NULL )
 	{
 		Q_sprintf( errorstring, "%s can't reserve memory", name );

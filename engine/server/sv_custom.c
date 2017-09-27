@@ -150,13 +150,13 @@ void SV_CreateCustomizationList( sv_client_t *cl )
 	customization_t	*pCust, *pNewCust;
 	int		duplicated, lump_count;
 
-	cl->customization.pNext = NULL;
+	cl->customdata.pNext = NULL;
 
-	for( pRes = cl->resource1.pNext; pRes != &cl->resource1; pRes = pRes->pNext )
+	for( pRes = cl->resourcesonhand.pNext; pRes != &cl->resourcesonhand; pRes = pRes->pNext )
 	{
 		duplicated = false;
 
-		for( pCust = cl->customization.pNext; pCust != NULL; pCust = pCust->pNext )
+		for( pCust = cl->customdata.pNext; pCust != NULL; pCust = pCust->pNext )
 		{
 			if( !memcmp( pCust->resource.rgucMD5_hash, pRes->rgucMD5_hash, 16 ))
 			{
@@ -174,7 +174,7 @@ void SV_CreateCustomizationList( sv_client_t *cl )
 		// create it.
 		lump_count = 0;
 
-		if( !SV_CreateCustomization( &cl->customization, pRes, -1, 3, &pNewCust, &lump_count ))
+		if( !SV_CreateCustomization( &cl->customdata, pRes, -1, 3, &pNewCust, &lump_count ))
 		{
 			MsgDev( D_WARN, "CreateCustomizationList: ignoring custom decal.\n" );
 			continue;
@@ -302,7 +302,7 @@ void SV_SendConsistencyList( sizebuf_t *msg )
 	int		lastIndex;
 	int		i;
 
-	if( mp_consistency->integer && ( sv.num_consistency_resources > 0 ) && !FBitSet( svs.currentPlayer->flags, FCL_HLTV_PROXY ))
+	if( sv_consistency.value && ( sv.num_consistency_resources > 0 ) && !FBitSet( svs.currentPlayer->flags, FCL_HLTV_PROXY ))
 	{
 		lastIndex = 0;
 		MSG_WriteOneBit( msg, 1 );
@@ -332,7 +332,7 @@ void SV_SendResources( sizebuf_t *msg )
 
 	memset( nullrguc, 0, sizeof( nullrguc ));
 
-	MSG_WriteByte( msg, svc_customization );
+	MSG_BeginServerCmd( msg, svc_customization );
 	MSG_WriteLong( msg, svs.spawncount );
 
 	// g-cont. This is more than HL limit but unmatched with GoldSrc protocol

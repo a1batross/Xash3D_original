@@ -15,17 +15,58 @@ GNU General Public License for more details.
 
 #include "common.h"
 #include "mathlib.h"
+#include "eiface.h"
 
-vec3_t	vec3_origin = { 0, 0, 0 };
+#define NUM_HULL_ROUNDS	ARRAYSIZE( hull_table )
+#define HULL_PRECISION	4
+
+vec3_t vec3_origin = { 0, 0, 0 };
+
+static word hull_table[] = { 2, 4, 6, 8, 12, 16, 18, 24, 28, 32, 36, 40, 48, 54, 56, 60, 64, 72, 80, 112, 120, 128, 140, 176 };
+
+int boxpnt[6][4] =
+{
+{ 0, 4, 6, 2 }, // +X
+{ 0, 1, 5, 4 }, // +Y
+{ 0, 2, 3, 1 }, // +Z
+{ 7, 5, 1, 3 }, // -X
+{ 7, 3, 2, 6 }, // -Y
+{ 7, 6, 4, 5 }, // -Z
+};	
+
+// pre-quantized table normals from Quake1
+const float m_bytenormals[NUMVERTEXNORMALS][3] =
+{
+#include "anorms.h"
+};
 
 /*
 =================
 anglemod
 =================
 */
-float anglemod( const float a )
+float anglemod( float a )
 {
-	return (360.0f/65536) * ((int)(a*(65536/360.0f)) & 65535);
+	a = (360.0 / 65536) * ((int)(a*(65536/360.0)) & 65535);
+	return a;
+}
+
+/*
+=================
+SimpleSpline
+
+NOTE: ripped from hl2 source
+hermite basis function for smooth interpolation
+Similar to Gain() above, but very cheap to call
+value should be between 0 & 1 inclusive
+=================
+*/
+float SimpleSpline( float value )
+{
+	float	valueSquared = value * value;
+
+	// nice little ease-in, ease-out spline-like curve
+	return (3.0f * valueSquared - 2.0f * valueSquared * value);
 }
 
 word FloatToHalf( float v )
@@ -77,6 +118,56 @@ float HalfToFloat( word h )
 
 /*
 =================
+RoundUpHullSize
+
+round the hullsize to nearest 'right' value
+=================
+*/
+void RoundUpHullSize( vec3_t size )
+{
+	int	i, j;
+	
+	for( i = 0; i < 3; i++)
+	{
+		qboolean	negative = false;
+                    float	result, value;
+
+		value = size[i];
+		if( value < 0.0f ) negative = true;
+		value = Q_ceil( fabs( value ));
+
+		// lookup hull table to find nearest supposed value
+		for( j = 0; j < NUM_HULL_ROUNDS; j++ )
+          	{
+			if( value > hull_table[j] )
+				continue;	// ceil only
+
+			if( negative )
+			{
+				result = ( value - hull_table[j] );
+				if( result <= HULL_PRECISION )
+				{ 
+					result = -hull_table[j];
+					break;
+				}
+			}
+			else
+			{
+				result = ( value - hull_table[j] );
+				if( result <= HULL_PRECISION )
+				{ 
+					result = hull_table[j];
+					break;
+				}
+			}
+		}
+
+		size[i] = result;
+	}
+}
+
+/*
+=================
 SignbitsForPlane
 
 fast box on planeside test
@@ -89,6 +180,65 @@ int SignbitsForPlane( const vec3_t normal )
 	for( bits = i = 0; i < 3; i++ )
 		if( normal[i] < 0.0f ) bits |= 1<<i;
 	return bits;
+}
+
+/*
+=================
+PlaneTypeForNormal
+=================
+*/
+int PlaneTypeForNormal( const vec3_t normal )
+{
+	if( normal[0] == 1.0f )
+		return PLANE_X;
+	if( normal[1] == 1.0f )
+		return PLANE_Y;
+	if( normal[2] == 1.0f )
+		return PLANE_Z;
+	return PLANE_NONAXIAL;
+}
+
+/*
+=================
+PlanesGetIntersectionPoint
+
+=================
+*/
+qboolean PlanesGetIntersectionPoint( const mplane_t *plane1, const mplane_t *plane2, const mplane_t *plane3, vec3_t out )
+{
+	vec3_t	n1, n2, n3;
+	vec3_t	n1n2, n2n3, n3n1;
+	float	denom;
+
+	VectorNormalize2( plane1->normal, n1 );
+	VectorNormalize2( plane2->normal, n2 );
+	VectorNormalize2( plane3->normal, n3 );
+
+	CrossProduct( n1, n2, n1n2 );
+	CrossProduct( n2, n3, n2n3 );
+	CrossProduct( n3, n1, n3n1 );
+
+	denom = DotProduct( n1, n2n3 );
+	VectorClear( out );
+
+	// check if the denominator is zero (which would mean that no intersection is to be found
+	if( denom == 0.0f )
+	{
+		// no intersection could be found, return <0,0,0>
+		return false;
+	}
+
+	// compute intersection point
+#if 0
+	VectorMAMAM( plane1->dist, n2n3, plane2->dist, n3n1, plane3->dist, n1n2, out );
+#else
+	VectorMA( out, plane1->dist, n2n3, out );
+	VectorMA( out, plane2->dist, n3n1, out );
+	VectorMA( out, plane3->dist, n1n2, out );
+#endif
+	VectorScale( out, ( 1.0f / denom ), out );
+
+	return true;
 }
 
 /*
@@ -201,6 +351,7 @@ void VectorVectors( const vec3_t forward, vec3_t right, vec3_t up )
 	VectorMA( right, -d, forward, right );
 	VectorNormalize( right );
 	CrossProduct( right, forward, up );
+	VectorNormalize( up );
 }
 
 /*
@@ -343,6 +494,21 @@ void AddPointToBounds( const vec3_t v, vec3_t mins, vec3_t maxs )
 
 /*
 =================
+ExpandBounds
+=================
+*/
+void ExpandBounds( vec3_t mins, vec3_t maxs, float offset )
+{
+	mins[0] -= offset;
+	mins[1] -= offset;
+	mins[2] -= offset;
+	maxs[0] += offset;
+	maxs[1] += offset;
+	maxs[2] += offset;
+}
+
+/*
+=================
 BoundsIntersect
 =================
 */
@@ -371,6 +537,46 @@ qboolean BoundsAndSphereIntersect( const vec3_t mins, const vec3_t maxs, const v
 
 /*
 =================
+SphereIntersect
+=================
+*/
+qboolean SphereIntersect( const vec3_t vSphereCenter, float fSphereRadiusSquared, const vec3_t vLinePt, const vec3_t vLineDir )
+{
+	float	a, b, c, insideSqr;
+	vec3_t	p;
+
+	// translate sphere to origin.
+	VectorSubtract( vLinePt, vSphereCenter, p );
+
+	a = DotProduct( vLineDir, vLineDir );
+	b = 2.0f * DotProduct( p, vLineDir );
+	c = DotProduct( p, p ) - fSphereRadiusSquared;
+
+	insideSqr = b * b - 4.0f * a * c;
+	if( insideSqr <= 0.000001f )
+		return false;
+	return true;
+}
+
+/*
+=================
+PlaneIntersect
+
+find point where ray
+was intersect with plane
+=================
+*/
+void PlaneIntersect( const mplane_t *plane, const vec3_t p0, const vec3_t p1, vec3_t out )
+{
+	float distToPlane = PlaneDiff( p0, plane );
+	float planeDotRay = DotProduct( plane->normal, p1 );
+	float sect = -(distToPlane) / planeDotRay;
+
+	VectorMA( p0, sect, p1, out );
+}
+
+/*
+=================
 RadiusFromBounds
 =================
 */
@@ -384,41 +590,6 @@ float RadiusFromBounds( const vec3_t mins, const vec3_t maxs )
 		corner[i] = fabs( mins[i] ) > fabs( maxs[i] ) ? fabs( mins[i] ) : fabs( maxs[i] );
 	}
 	return VectorLength( corner );
-}
-
-/*
-====================
-RotatePointAroundVector
-====================
-*/
-void RotatePointAroundVector( vec3_t dst, const vec3_t dir, const vec3_t point, float degrees )
-{
-	float	t0, t1;
-	float	angle, c, s;
-	vec3_t	vr, vu, vf;
-
-	angle = DEG2RAD( degrees );
-	SinCos( angle, &s, &c );
-	VectorCopy( dir, vf );
-	VectorVectors( vf, vr, vu );
-
-	t0 = vr[0] *  c + vu[0] * -s;
-	t1 = vr[0] *  s + vu[0] *  c;
-	dst[0] = (t0 * vr[0] + t1 * vu[0] + vf[0] * vf[0]) * point[0]
-	       + (t0 * vr[1] + t1 * vu[1] + vf[0] * vf[1]) * point[1]
-	       + (t0 * vr[2] + t1 * vu[2] + vf[0] * vf[2]) * point[2];
-
-	t0 = vr[1] *  c + vu[1] * -s;
-	t1 = vr[1] *  s + vu[1] *  c;
-	dst[1] = (t0 * vr[0] + t1 * vu[0] + vf[1] * vf[0]) * point[0]
-	       + (t0 * vr[1] + t1 * vu[1] + vf[1] * vf[1]) * point[1]
-	       + (t0 * vr[2] + t1 * vu[2] + vf[1] * vf[2]) * point[2];
-
-	t0 = vr[2] *  c + vu[2] * -s;
-	t1 = vr[2] *  s + vu[2] *  c;
-	dst[2] = (t0 * vr[0] + t1 * vu[0] + vf[2] * vf[0]) * point[0]
-	       + (t0 * vr[1] + t1 * vu[1] + vf[2] * vf[1]) * point[1]
-	       + (t0 * vr[2] + t1 * vu[2] + vf[2] * vf[2]) * point[2];
 }
 
 //
@@ -468,52 +639,70 @@ void QuaternionAngle( const vec4_t q, vec3_t angles )
 
 /*
 ====================
-QuaternionSlerp
+QuaternionAlign
 
+make sure quaternions are within 180 degrees of one another,
+if not, reverse q
 ====================
 */
-void QuaternionSlerp( const vec4_t p, vec4_t q, float t, vec4_t qt )
+void QuaternionAlign( const vec4_t p, const vec4_t q, vec4_t qt )
 {
-	float	omega, sclp, sclq;
-	float	cosom, sinom;
+	// decide if one of the quaternions is backwards
 	float	a = 0.0f;
 	float	b = 0.0f;
 	int	i;
 
-	// decide if one of the quaternions is backwards
-	for( i = 0; i < 4; i++ )
+	for( i = 0; i < 4; i++ ) 
 	{
 		a += (p[i] - q[i]) * (p[i] - q[i]);
 		b += (p[i] + q[i]) * (p[i] + q[i]);
 	}
 
-	if( a > b )
+	if( a > b ) 
 	{
-		for( i = 0; i < 4; i++ )
-		{
-			q[i] = -q[i];
-		}
+		for( i = 0; i < 4; i++ ) 
+			qt[i] = -q[i];
 	}
+	else
+	{
+		for( i = 0; i < 4; i++ ) 
+			qt[i] = q[i];
+	}
+}
 
+/*
+====================
+QuaternionSlerpNoAlign
+====================
+*/
+void QuaternionSlerpNoAlign( const vec4_t p, const vec4_t q, float t, vec4_t qt )
+{
+	float	omega, cosom, sinom, sclp, sclq;
+	int	i;
+
+	// 0.0 returns p, 1.0 return q.
 	cosom = p[0] * q[0] + p[1] * q[1] + p[2] * q[2] + p[3] * q[3];
 
-	if(( 1.0 + cosom ) > 0.000001f )
+	if(( 1.0f + cosom ) > 0.000001f )
 	{
 		if(( 1.0f - cosom ) > 0.000001f )
 		{
 			omega = acos( cosom );
 			sinom = sin( omega );
-			sclp = sin(( 1.0f - t ) * omega ) / sinom;
+			sclp = sin( (1.0f - t) * omega) / sinom;
 			sclq = sin( t * omega ) / sinom;
 		}
 		else
 		{
+			// TODO: add short circuit for cosom == 1.0f?
 			sclp = 1.0f - t;
 			sclq = t;
 		}
 
 		for( i = 0; i < 4; i++ )
+		{
 			qt[i] = sclp * p[i] + sclq * q[i];
+		}
 	}
 	else
 	{
@@ -525,6 +714,26 @@ void QuaternionSlerp( const vec4_t p, vec4_t q, float t, vec4_t qt )
 		sclq = sin( t * ( 0.5f * M_PI ));
 
 		for( i = 0; i < 3; i++ )
+		{
 			qt[i] = sclp * p[i] + sclq * qt[i];
+		}
 	}
+}
+
+/*
+====================
+QuaternionSlerp
+
+Quaternion sphereical linear interpolation
+====================
+*/
+void QuaternionSlerp( const vec4_t p, const vec4_t q, float t, vec4_t qt )
+{
+	vec4_t	q2;
+
+	// 0.0 returns p, 1.0 return q.
+	// decide if one of the quaternions is backwards
+	QuaternionAlign( p, q, q2 );
+
+	QuaternionSlerpNoAlign( p, q2, t, qt );
 }

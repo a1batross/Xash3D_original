@@ -1452,7 +1452,7 @@ static void UI_LoadBackgroundMapList( void )
 		// skip the numbers (old format list)
 		if( isdigit( token[0] )) continue;
 
-		strncpy( uiStatic.bgmaps[uiStatic.bgmapcount], token, sizeof( uiStatic.bgmaps[0] ));
+		strncpy( uiStatic.bgmaps[uiStatic.bgmapcount], token, sizeof( uiStatic.bgmaps[0] ) - 1 );
 		if( ++uiStatic.bgmapcount > UI_MAX_BGMAPS )
 			break; // list is full
 	}

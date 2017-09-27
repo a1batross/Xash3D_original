@@ -14,7 +14,6 @@ GNU General Public License for more details.
 */
 
 #include "common.h"
-#include "bspfile.h"
 #include "client.h"
 
 #define NUM_BYTES		256
@@ -271,8 +270,14 @@ qboolean CRC32_MapFile( dword *crcvalue, const char *filename, qboolean multipla
 	header = (dheader_t *)headbuf;
 
 	// invalid version ?
-	if( header->version != Q1BSP_VERSION && header->version != HLBSP_VERSION && header->version != XTBSP_VERSION )
+	switch( header->version )
 	{
+	case Q1BSP_VERSION:
+	case HLBSP_VERSION:
+	case XTBSP_VERSION:
+	case QBSP2_VERSION:
+		break;
+	default:
 		FS_Close( f );
 		return false;
 	}
