@@ -89,36 +89,44 @@ typedef struct
 
 #include "custom.h"
 
-#define IDCUSTOMHEADER	(('K'<<24)+('A'<<16)+('P'<<8)+'H') // little-endian "HPAK"
-#define IDCUSTOM_VERSION	1
+/*
+========================================================================
+.HPK archive format	(Hash PAK - HPK)
 
-typedef struct hpak_s
-{
-	char		*name;
-	resource_t	HpakResource;
-	size_t		size;
-	void		*data;
-	struct hpak_s	*next;
-} hpak_t;
+List of compressed files, that can be identify only by TYPE_*
+
+<format>
+header:	dwadinfo_t[dwadinfo_t]
+file_1:	byte[dwadinfo_t[num]->disksize]
+file_2:	byte[dwadinfo_t[num]->disksize]
+file_3:	byte[dwadinfo_t[num]->disksize]
+...
+file_n:	byte[dwadinfo_t[num]->disksize]
+infotable	dlumpinfo_t[dwadinfo_t->numlumps]
+========================================================================
+*/
+
+#define IDHPAKHEADER	(('K'<<24)+('A'<<16)+('P'<<8)+'H') // little-endian "HPAK"
+#define IDHPAK_VERSION	1
 
 typedef struct
 {
 	int		ident;		// should be equal HPAK
 	int		version;
-	int		seek;		// infotableofs ?
+	int		infotableofs;
 } hpak_header_t;
 
 typedef struct
 {
-	resource_t	DirectoryResource;
-	int		seek;		// filepos ?
-	int		size;
-} hpak_dir_t;
+	resource_t	resource;
+	int		filepos;
+	int		disksize;
+} hpak_lump_t;
 
 typedef struct
 {
 	int		count;
-	hpak_dir_t	*dirs;		// variable sized.
-} hpak_container_t;
+	hpak_lump_t	*entries;		// variable sized.
+} hpak_info_t;
 
 #endif//FILESYSTEM_H

@@ -90,6 +90,7 @@ void VGui_Startup()
 	//root->setBorder(new LineBorder());
 	root->setLayout(new BorderLayout(0));
 
+//	App::getInstance()->setMinimumTickMillisInterval( 0 );
 	
 	//root->getSurfaceBase()->setEmulatedCursorVisible(true);
 

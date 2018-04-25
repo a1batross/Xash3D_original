@@ -278,7 +278,7 @@ static void UI_LoadGame_Ownerdraw( void *self )
 
 			sprintf( saveshot, "save/%s.bmp", uiLoadGame.saveName[uiLoadGame.savesList.curItem] );
 
-			if( !FILE_EXISTS( saveshot ))
+			if( !g_engfuncs.pfnFileExists( saveshot, TRUE ))
 				UI_DrawPicAdditive( x, y, w, h, uiColorWhite, "{GRAF001" );
 			else UI_DrawPic( x, y, w, h, uiColorWhite, saveshot );
 		}

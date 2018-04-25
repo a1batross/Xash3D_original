@@ -10,8 +10,6 @@ backup.lst
 backup.bat
 release.bat
 change.log
-make_sdk.bat
-xash_sdk.lst
 
 cl_dll\
 cl_dll\hl\
@@ -27,11 +25,9 @@ engine\common\
 engine\common\imagelib\
 engine\common\soundlib\
 pm_shared\
-hl_res\
 mainui\
 mainui\legacy
 utils\
-utils\makefont\
 utils\vgui\
 utils\vgui\include\
 utils\vgui\lib\win32_vc6\

@@ -28,8 +28,10 @@ qboolean	in_restore_spi;
 qboolean	in_mouseinitialized;
 int	in_mouse_oldbuttonstate;
 qboolean	in_mouse_suspended;
+qboolean	in_mouse_savedpos;
 int	in_mouse_buttons;
 RECT	window_rect, real_rect;
+POINT	in_lastvalidpos;
 uint	in_mouse_wheel;
 int	wnd_caption;
 
@@ -159,6 +161,38 @@ void IN_SetCursor( HICON hCursor )
 	in_mousecursor = hCursor;
 
 	IN_ActivateCursor();
+}
+
+/*
+===========
+IN_MouseSavePos
+
+Save mouse pos before state change e.g. changelevel
+===========
+*/
+void IN_MouseSavePos( void )
+{
+	if( !in_mouseactive )
+		return;
+
+	GetCursorPos( &in_lastvalidpos );
+	in_mouse_savedpos = true;
+}
+
+/*
+===========
+IN_MouseRestorePos
+
+Restore right position for background
+===========
+*/
+void IN_MouseRestorePos( void )
+{
+	if( !in_mouse_savedpos )
+		return;
+
+	SetCursorPos( in_lastvalidpos.x, in_lastvalidpos.y );
+	in_mouse_savedpos = false;
 }
 
 /*
@@ -382,7 +416,7 @@ void Host_InputFrame( void )
 	if( !in_mouseinitialized )
 		return;
 
-	if( host.state != HOST_FRAME )
+	if( host.status != HOST_FRAME )
 	{
 		IN_DeactivateMouse();
 		return;
@@ -451,21 +485,21 @@ LONG IN_WndProc( HWND hWnd, UINT uMsg, UINT wParam, LONG lParam )
 		Sys_Quit();
 		break;
 	case WM_ACTIVATE:
-		if( host.state == HOST_SHUTDOWN )
+		if( host.status == HOST_SHUTDOWN )
 			break; // no need to activate
 		if( HIWORD( wParam ))
-			host.state = HOST_SLEEP;
+			host.status = HOST_SLEEP;
 		else if( LOWORD( wParam ) == WA_INACTIVE )
-			host.state = HOST_NOFOCUS;
-		else host.state = HOST_FRAME;
-		fActivate = (host.state == HOST_FRAME) ? true : false;
+			host.status = HOST_NOFOCUS;
+		else host.status = HOST_FRAME;
+		fActivate = (host.status == HOST_FRAME) ? true : false;
 		wnd_caption = GetSystemMetrics( SM_CYCAPTION ) + WND_BORDER;
 
 		S_Activate( fActivate, host.hWnd );
 		IN_ActivateMouse( fActivate );
 		Key_ClearStates();
 
-		if( host.state == HOST_FRAME )
+		if( host.status == HOST_FRAME )
 		{
 			SetForegroundWindow( hWnd );
 			ShowWindow( hWnd, SW_RESTORE );
@@ -512,7 +546,7 @@ LONG IN_WndProc( HWND hWnd, UINT uMsg, UINT wParam, LONG lParam )
 		break;
 	case WM_SYSCOMMAND:
 		// never turn screensaver while Xash is active
-		if( wParam == SC_SCREENSAVE && host.state != HOST_SLEEP )
+		if( wParam == SC_SCREENSAVE && host.status != HOST_SLEEP )
 			return 0;
 		break;
 	case WM_SYSKEYDOWN:

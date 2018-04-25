@@ -134,7 +134,7 @@ static long _stdcall Con_WndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lP
 			SetFocus( s_wcd.hwndInputLine );
 		break;
 	case WM_CLOSE:
-		if( host.state == HOST_ERR_FATAL )
+		if( host.status == HOST_ERR_FATAL )
 		{
 			// send windows message
 			PostQuitMessage( 0 );
@@ -197,13 +197,13 @@ long _stdcall Con_InputLineProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lPa
 	case WM_CHAR:
 		if( Con_KeyEvent( wParam, true ))
 			return 0;
-		if( wParam == 13 && host.state != HOST_ERR_FATAL )
+		if( wParam == 13 && host.status != HOST_ERR_FATAL )
 		{
 			GetWindowText( s_wcd.hwndInputLine, inputBuffer, sizeof( inputBuffer ));
 			Q_strncat( s_wcd.consoleText, inputBuffer, sizeof( s_wcd.consoleText ) - Q_strlen( s_wcd.consoleText ) - 5 );
 			Q_strcat( s_wcd.consoleText, "\n" );
 			SetWindowText( s_wcd.hwndInputLine, "" );
-			Msg( ">%s\n", inputBuffer );
+			Con_Printf( ">%s\n", inputBuffer );
 
 			// copy line to history buffer
 			Q_strncpy( s_wcd.historyLines[s_wcd.nextHistoryLine % COMMAND_HISTORY], inputBuffer, MAX_STRING );
@@ -280,7 +280,7 @@ void Con_CreateConsole( void )
 	wc.lpszClassName = SYSCONSOLE;
 	wc.lpszMenuName  = 0;
 
-	if( Sys_CheckParm( "-log" ) && host.developer != 0 )
+	if( Sys_CheckParm( "-log" ))
 		s_wcd.log_active = true;
 
 	if( host.type == HOST_NORMAL )
@@ -499,7 +499,7 @@ void Sys_CloseLog( void )
 	char	event_name[64];
 
 	// continue logged
-	switch( host.state )
+	switch( host.status )
 	{
 	case HOST_CRASHED:
 		Q_strncpy( event_name, "crashed", sizeof( event_name ));

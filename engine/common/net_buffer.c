@@ -54,9 +54,9 @@ void MSG_InitMasks( void )
  
 void MSG_InitExt( sizebuf_t *sb, const char *pDebugName, void *pData, int nBytes, int nMaxBits )
 {
-	sb->pDebugName = pDebugName;
-
 	MSG_StartWriting( sb, pData, nBytes, 0, nMaxBits );
+
+	sb->pDebugName = pDebugName;
 }
 
 void MSG_StartWriting( sizebuf_t *sb, void *pData, int nBytes, int iStartBit, int nBits )
@@ -64,6 +64,7 @@ void MSG_StartWriting( sizebuf_t *sb, void *pData, int nBytes, int iStartBit, in
 	// make sure it's dword aligned and padded.
 	Assert(((dword)pData & 3 ) == 0 );
 
+	sb->pDebugName = "Unnamed";
 	sb->pData = (byte *)pData;
 
 	if( nBits == -1 )
@@ -105,9 +106,29 @@ qboolean MSG_CheckOverflow( sizebuf_t *sb )
 	return MSG_Overflow( sb, 0 );
 }
 
-void MSG_SeekToBit( sizebuf_t *sb, int bitPos )
+int MSG_SeekToBit( sizebuf_t *sb, int bitPos, int whence )
 {
+	// compute the file offset
+	switch( whence )
+	{
+	case SEEK_CUR:
+		bitPos += sb->iCurBit;
+		break;
+	case SEEK_SET:
+		break;
+	case SEEK_END:
+		bitPos += sb->nDataBits;
+		break;
+	default: 
+		return -1;
+	}
+
+	if( bitPos < 0 || bitPos > sb->nDataBits )
+		return -1;
+
 	sb->iCurBit = bitPos;
+
+	return 0;
 }
 
 void MSG_SeekToByte( sizebuf_t *sb, int bytePos )
@@ -274,6 +295,13 @@ void MSG_WriteVec3Coord( sizebuf_t *sb, const float *fa )
 	MSG_WriteCoord( sb, fa[2] );
 }
 
+void MSG_WriteVec3Angles( sizebuf_t *sb, const float *fa )
+{
+	MSG_WriteBitAngle( sb, fa[0], 16 );
+	MSG_WriteBitAngle( sb, fa[1], 16 );
+	MSG_WriteBitAngle( sb, fa[2], 16 );
+}
+
 void MSG_WriteBitFloat( sizebuf_t *sb, float val )
 {
 	long	intVal;
@@ -291,21 +319,21 @@ void MSG_WriteCmdExt( sizebuf_t *sb, int cmd, netsrc_t type, const char *name )
 	if( name != NULL )
 	{
 		// get custom name
-		Msg( "^1sv^7 write: %s\n", name );
+		Con_Printf( "^1sv^7 write: %s\n", name );
 	}
 	else if( type == NS_SERVER )
 	{
 		if( cmd >= 0 && cmd <= svc_lastmsg )
 		{
 			// get engine message name
-			Msg( "^1sv^7 write: %s\n", svc_strings[cmd] );
+			Con_Printf( "^1sv^7 write: %s\n", svc_strings[cmd] );
 		}
 	}
 	else if( type == NS_CLIENT )
 	{
 		if( cmd >= 0 && cmd <= clc_lastmsg )
 		{
-			Msg( "^1cl^7 write: %s\n", clc_strings[cmd] );
+			Con_Printf( "^1cl^7 write: %s\n", clc_strings[cmd] );
 		}
 	}
 #endif
@@ -536,11 +564,11 @@ int MSG_ReadCmd( sizebuf_t *sb, netsrc_t type )
 #ifdef DEBUG_NET_MESSAGES_READ
 	if( type == NS_SERVER )
 	{
-		Msg( "^1cl^7 read: %s\n", CL_MsgInfo( cmd ));
+		Con_Printf( "^1cl^7 read: %s\n", CL_MsgInfo( cmd ));
 	}
 	else if( cmd >= 0 && cmd <= clc_lastmsg )
 	{
-		Msg( "^1sv^7 read: %s\n", clc_strings[cmd] );
+		Con_Printf( "^1sv^7 read: %s\n", clc_strings[cmd] );
 	}
 #endif
 	return cmd;
@@ -580,6 +608,14 @@ void MSG_ReadVec3Coord( sizebuf_t *sb, vec3_t fa )
 	fa[1] = MSG_ReadCoord( sb );
 	fa[2] = MSG_ReadCoord( sb );
 }
+
+void MSG_ReadVec3Angles( sizebuf_t *sb, vec3_t fa )
+{
+	fa[0] = MSG_ReadBitAngle( sb, 16 );
+	fa[1] = MSG_ReadBitAngle( sb, 16 );
+	fa[2] = MSG_ReadBitAngle( sb, 16 );
+}
+
 
 long MSG_ReadLong( sizebuf_t *sb )
 {
@@ -639,14 +675,14 @@ void MSG_ExciseBits( sizebuf_t *sb, int startbit, int bitstoremove )
 	int	remaining_to_end = sb->nDataBits - endbit;
 	sizebuf_t	temp;
 
-	MSG_StartWriting( &temp, sb->pData, sb->nDataBits << 3, startbit, -1 );
-	MSG_SeekToBit( sb, endbit );
+	MSG_StartWriting( &temp, sb->pData, MSG_GetMaxBytes( sb ), startbit, -1 );
+	MSG_SeekToBit( sb, endbit, SEEK_SET );
 
 	for( i = 0; i < remaining_to_end; i++ )
 	{
 		MSG_WriteOneBit( &temp, MSG_ReadOneBit( sb ));
 	}
 
-	MSG_SeekToBit( sb, startbit );
+	MSG_SeekToBit( sb, startbit, SEEK_SET );
 	sb->nDataBits -= bitstoremove;
 }

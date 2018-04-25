@@ -34,6 +34,7 @@ void UI_UpdateMenu( float realtime )
 	gameui.globals->frametime = host.realframetime;
 	gameui.globals->demoplayback = cls.demoplayback;
 	gameui.globals->demorecording = cls.demorecording;
+	gameui.globals->allow_console = host.allow_console;
 
 	gameui.dllFuncs.pfnRedraw( realtime );
 	UI_UpdateUserinfo();
@@ -140,7 +141,7 @@ static void UI_DrawLogo( const char *filename, float x, float y, float width, fl
 	
 		// run cinematic if not
 		Q_snprintf( path, sizeof( path ), "media/%s", filename );
-		FS_DefaultExtension( path, ".avi" );
+		COM_DefaultExtension( path, ".avi" );
 		fullpath = FS_GetDiskPath( path, false );
 
 		if( FS_FileExists( path, false ) && !fullpath )
@@ -369,11 +370,11 @@ static HIMAGE pfnPIC_Load( const char *szPicName, const byte *image_buf, long im
 	}
 
 	// add default parms to image
-	flags |= TF_IMAGE;
+	SetBits( flags, TF_IMAGE );
 
-	host.decal_loading = true; // allow decal images for menu
+	Image_SetForceFlags( IL_LOAD_DECAL ); // allow decal images for menu
 	tx = GL_LoadTexture( szPicName, image_buf, image_size, flags, NULL );
-	host.decal_loading = false;
+	Image_ClearForceFlags();
 
 	return tx;
 }
@@ -552,7 +553,7 @@ pfnPlaySound
 */
 static void pfnPlaySound( const char *szSound )
 {
-	if( !szSound || !*szSound ) return;
+	if( !COM_CheckString( szSound )) return;
 	S_StartLocalSound( szSound, VOL_NORM, false );
 }
 
@@ -656,9 +657,21 @@ for drawing playermodel previews
 */
 static void pfnSetPlayerModel( cl_entity_t *ent, const char *path )
 {
-	Mod_RegisterModel( path, MAX_MODELS - 1 );
-	ent->curstate.modelindex = MAX_MODELS - 1;
-	ent->model = Mod_Handle( MAX_MODELS - 1 );
+	ent->model = Mod_ForName( path, false, false );
+	ent->curstate.modelindex = MAX_MODELS; // unreachable index
+}
+
+/*
+====================
+pfnClearScene
+
+for drawing playermodel previews
+====================
+*/
+static void pfnClearScene( void )
+{
+	R_PushScene();
+	R_ClearScene();
 }
 
 /*
@@ -680,6 +693,7 @@ static void pfnRenderScene( const ref_viewpass_t *rvp )
 	R_Set2DMode( false );
 	R_RenderFrame( rvp );
 	R_Set2DMode( true );
+	R_PopScene();
 }
 
 /*
@@ -840,11 +854,11 @@ int pfnCheckGameDll( void )
 {
 	void	*hInst;
 
-	if( SV_Active( )) return true;
+	if( SV_Initialized( )) return true;
 
-	if(( hInst = Com_LoadLibrary( GI->game_dll, true )) != NULL )
+	if(( hInst = COM_LoadLibrary( GI->game_dll, true, false )) != NULL )
 	{
-		Com_FreeLibrary( hInst );
+		COM_FreeLibrary( hInst );
 		return true;
 	}
 	return false;
@@ -866,18 +880,6 @@ static void pfnChangeInstance( const char *newInstance, const char *szFinalMessa
 
 /*
 =========
-pfnHostNewGame
-
-=========
-*/
-static void pfnHostNewGame( const char *mapName )
-{
-	if( !mapName || !*mapName ) return;
-	Host_NewGame( mapName, false );
-}
-
-/*
-=========
 pfnHostEndGame
 
 =========
@@ -885,7 +887,7 @@ pfnHostEndGame
 static void pfnHostEndGame( const char *szFinalMessage )
 {
 	if( !szFinalMessage ) szFinalMessage = "";
-	Host_EndGame( szFinalMessage );
+	Host_EndGame( true, szFinalMessage );
 }
 
 /*
@@ -896,14 +898,7 @@ pfnStartBackgroundTrack
 */
 static void pfnStartBackgroundTrack( const char *introTrack, const char *mainTrack )
 {
-	S_StartBackgroundTrack( introTrack, mainTrack, 0 );
-
-	// HACKHACK to remove glitches from background track while new game is started.
-	if( !introTrack && !mainTrack )
-	{
-		S_Activate( 0, host.hWnd );
-		S_Activate( 1, host.hWnd );
-	}
+	S_StartBackgroundTrack( introTrack, mainTrack, 0, false );
 }
 
 // engine callbacks
@@ -948,7 +943,7 @@ static ui_enginefuncs_t gEngfuncs =
 	Con_DefaultColor,
 	pfnGetPlayerModel,
 	pfnSetPlayerModel,
-	R_ClearScene,	
+	pfnClearScene,	
 	pfnRenderScene,
 	pfnAddEntity,
 	Host_Error,
@@ -974,8 +969,8 @@ static ui_enginefuncs_t gEngfuncs =
 	pfnGetGameInfo,
 	pfnGetGamesList,
 	pfnGetFilesList,
-	SV_GetComment,
-	CL_GetComment,
+	SV_GetSaveComment,
+	CL_GetDemoComment,
 	pfnCheckGameDll,
 	pfnGetClipboardData,
 	Sys_ShellExecute,
@@ -990,6 +985,8 @@ static ui_enginefuncs_t gEngfuncs =
 	GL_ProcessTexture,
 	COM_CompareFileTime,
 	VID_GetModeString,
+	COM_SaveFile,
+	FS_Delete,
 };
 
 void UI_UnloadProgs( void )
@@ -1001,7 +998,7 @@ void UI_UnloadProgs( void )
 
 	Cvar_FullSet( "host_gameuiloaded", "0", FCVAR_READ_ONLY );
 
-	Com_FreeLibrary( gameui.hInstance );
+	COM_FreeLibrary( gameui.hInstance );
 	Mem_FreePool( &gameui.mempool );
 	memset( &gameui, 0, sizeof( gameui ));
 
@@ -1020,22 +1017,15 @@ qboolean UI_LoadProgs( void )
 	// setup globals
 	gameui.globals = &gpGlobals;
 
-	if(!( gameui.hInstance = Com_LoadLibrary( va( "%s/menu.dll", GI->dll_path ), false )))
+	if(( gameui.hInstance = COM_LoadLibrary( va( "%s/menu.dll", GI->dll_path ), false, false )) == NULL )
 	{
-		FS_AllowDirectPaths( true );
-
-		if(!( gameui.hInstance = Com_LoadLibrary( "../menu.dll", false )))
-		{
-			FS_AllowDirectPaths( false );
+		if(( gameui.hInstance = COM_LoadLibrary( "menu.dll", false, true )) == NULL )
 			return false;
-		}
-
-		FS_AllowDirectPaths( false );
 	}
 
-	if(!( GetMenuAPI = (MENUAPI)Com_GetProcAddress( gameui.hInstance, "GetMenuAPI" )))
+	if(( GetMenuAPI = (MENUAPI)COM_GetProcAddress( gameui.hInstance, "GetMenuAPI" )) == NULL )
 	{
-		Com_FreeLibrary( gameui.hInstance );
+		COM_FreeLibrary( gameui.hInstance );
 		MsgDev( D_NOTE, "UI_LoadProgs: can't init menu API\n" );
 		gameui.hInstance = NULL;
 		return false;
@@ -1048,7 +1038,7 @@ qboolean UI_LoadProgs( void )
 
 	if( !GetMenuAPI( &gameui.dllFuncs, &gpEngfuncs, gameui.globals ))
 	{
-		Com_FreeLibrary( gameui.hInstance );
+		COM_FreeLibrary( gameui.hInstance );
 		MsgDev( D_NOTE, "UI_LoadProgs: can't init menu API\n" );
 		Mem_FreePool( &gameui.mempool );
 		gameui.hInstance = NULL;
@@ -1067,7 +1057,7 @@ qboolean UI_LoadProgs( void )
 	UI_ConvertGameInfo( &gameui.gameInfo, SI.GameInfo ); // current gameinfo
 
 	// setup globals
-	gameui.globals->developer = host.developer;
+	gameui.globals->allow_console = host.allow_console;
 
 	// initialize game
 	gameui.dllFuncs.pfnInit();

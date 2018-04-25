@@ -16,9 +16,6 @@ GNU General Public License for more details.
 #ifndef VGUI_MAIN_H
 #define VGUI_MAIN_H
 
-#include "utlvector.h"
-#include "utlrbtree.h"
-
 #include<VGUI.h>
 #include<VGUI_App.h>
 #include<VGUI_Font.h>
@@ -31,106 +28,36 @@ GNU General Public License for more details.
 
 using namespace vgui;
 
-class FontCache
+struct PaintStack
 {
-public:
-	FontCache();
-	~FontCache() { }
-
-	// returns a texture ID and a pointer to an array of 4 texture coords for the given character & font
-	// uploads more texture if necessary
-	bool GetTextureForChar( Font *font, char ch, int *textureID, float **texCoords );
-private:
-	// NOTE: If you change this, change s_pFontPageSize
-	enum
-	{
-		FONT_PAGE_SIZE_16,
-		FONT_PAGE_SIZE_32,
-		FONT_PAGE_SIZE_64,
-		FONT_PAGE_SIZE_128,
-		FONT_PAGE_SIZE_COUNT,
-	};
-
-	// a single character in the cache
-	typedef unsigned short HCacheEntry;
-	struct CacheEntry_t
-	{
-		Font		*font;
-		char		ch;
-		byte		page;
-		float		texCoords[4];
-
-		HCacheEntry	nextEntry;	// doubly-linked list for use in the LRU
-		HCacheEntry	prevEntry;
-	};
-	
-	// a single texture page
-	struct Page_t
-	{
-		short		textureID;
-		short		fontHeight;
-		short		wide, tall;	// total size of the page
-		short		nextX, nextY;	// position to draw any new character positions
-	};
-
-	// allocates a new page for a given character
-	bool AllocatePageForChar( int charWide, int charTall, int &pageIndex, int &drawX, int &drawY, int &twide, int &ttall );
-
-	// Computes the page size given a character height
-	int ComputePageType( int charTall ) const;
-
-	static bool CacheEntryLessFunc( const CacheEntry_t &lhs, const CacheEntry_t &rhs );
-
-	// cache
-	typedef CUtlVector<Page_t> FontPageList_t;
-
-	CUtlRBTree<CacheEntry_t, HCacheEntry> m_CharCache;
-	FontPageList_t m_PageList;
-	int m_pCurrPage[FONT_PAGE_SIZE_COUNT];
-	HCacheEntry m_LRUListHeadIndex;
-
-	static int s_pFontPageSize[FONT_PAGE_SIZE_COUNT];
+	Panel	*m_pPanel;
+	int	iTranslateX;
+	int	iTranslateY;
+	int	iScissorLeft;
+	int	iScissorRight;
+	int	iScissorTop;
+	int	iScissorBottom;
 };
 
 class CEngineSurface : public SurfaceBase
 {
 private:
-	struct paintState_t
-	{
-		Panel	*m_pPanel;
-		int	iTranslateX;
-		int	iTranslateY;
-		int	iScissorLeft;
-		int	iScissorRight;
-		int	iScissorTop;
-		int	iScissorBottom;
-	};
-
-	// point translation for current panel
-	int		_translateX;
-	int		_translateY;
-
-	// the size of the window to draw into
-	int		_surfaceExtents[4];
-
-	CUtlVector <paintState_t> _paintStack;
-
-	void SetupPaintState( const paintState_t &paintState );
 	void InitVertex( vpoint_t &vertex, int x, int y, float u, float v );
 public:
 	CEngineSurface( Panel *embeddedPanel );
 	~CEngineSurface();	
 public:
-	virtual Panel *getEmbeddedPanel( void );
-	virtual bool setFullscreenMode( int wide, int tall, int bpp );
-	virtual void setWindowedMode( void );
+	// not used in engine instance
+	virtual bool setFullscreenMode( int wide, int tall, int bpp ) { return false; }
+	virtual void setWindowedMode( void ) { }
 	virtual void setTitle( const char *title ) { }
 	virtual void createPopup( Panel* embeddedPanel ) { }
 	virtual bool isWithin( int x, int y ) { return true; }
+	void SetupPaintState( const PaintStack *paintState );
 #ifdef NEW_VGUI_DLL
-	virtual void GetMousePos( int &x, int &y );
+	virtual void GetMousePos( int &x, int &y ) { }
 #endif
-	virtual bool hasFocus( void );
+	virtual bool hasFocus( void ) { return true; }
 protected:
 	virtual int createNewTextureID( void );
 	virtual void drawSetColor( int r, int g, int b, int a );
@@ -143,44 +70,42 @@ protected:
 	virtual void drawSetTextureRGBA( int id, const char* rgba, int wide, int tall );
 	virtual void drawSetTexture( int id );
 	virtual void drawTexturedRect( int x0, int y0, int x1, int y1 );
-	virtual bool createPlat( void ) { return false; }
-	virtual bool recreateContext( void ) { return false; }
+	virtual void drawPrintChar( int x, int y, int wide, int tall, float s0, float t0, float s1, float t1, int color[4] );
+	virtual void addCharToBuffer( const vpoint_t *ul, const vpoint_t *lr, int color[4] );
 	virtual void setCursor( Cursor* cursor );
 	virtual void pushMakeCurrent( Panel* panel, bool useInsets );
 	virtual void popMakeCurrent( Panel* panel );
-
 	// not used in engine instance
+	virtual bool createPlat( void ) { return false; }
+	virtual bool recreateContext( void ) { return false; }
 	virtual void enableMouseCapture( bool state ) { }
 	virtual void invalidate( Panel *panel ) { }
 	virtual void setAsTopMost( bool state ) { }
 	virtual void applyChanges( void ) { }
 	virtual void swapBuffers( void ) { }
+	virtual void flushBuffer( void );
 protected:
-	Font* _hCurrentFont;
-	Cursor* _hCurrentCursor;
 	int _drawTextPos[2];
 	int _drawColor[4];
 	int _drawTextColor[4];
-	friend class App;
-	friend class Panel;
+	int _translateX, _translateY;
+	int _currentTexture;
 };
 
 // initialize VGUI::App as external (part of engine)
 class CEngineApp : public App
 {
 public:
-	CEngineApp( bool externalMain = true ) : App( externalMain ) { }
-	virtual void main( int argc, char* argv[] ) { } // stub
-	virtual void setCursorPos( int x, int y ); // we need to recompute abs position to window
+	virtual void main( int argc, char* argv[] ) { }
+	virtual void setCursorPos( int x, int y );	// we need to recompute abs position to window
 	virtual void getCursorPos( int &x,int &y );
+protected: 
+	virtual void platTick(void) { }
 };
 
-class CEnginePanel : public Panel
-{
-public:
-	virtual SurfaceBase* getSurfaceBase( void );
-	virtual App* getApp( void );
-};
+extern Panel		*rootPanel;
+extern CEngineSurface	*engSurface;
+extern CEngineApp		*engApp;
 
 //
 // vgui_input.cpp

@@ -17,6 +17,7 @@ GNU General Public License for more details.
 #include "client.h"
 #include "gl_local.h"
 #include "mod_local.h"
+#include "shake.h"
 
 typedef struct
 {
@@ -64,7 +65,6 @@ static const dmaterial_t detail_table[] =
 { "car",		"dt_metal%i",	'M', 1, 2 },
 { "circuit",	"dt_metal%i",	'M', 1, 2 },
 { "steel",	"dt_ssteel1",	'M', 0, 0 },
-{ "reflect",	"dt_ssteel1",	'G', 0, 0 },
 { "dirt",		"dt_ground%i",	'D', 1, 5 },	// dirt
 { "drt",		"dt_ground%i",	'D', 1, 5 },
 { "out",		"dt_ground%i",	'D', 1, 5 },
@@ -456,10 +456,35 @@ void R_NewMap( void )
 		string	mapname, filepath;
 
 		Q_strncpy( mapname, cl.worldmodel->name, sizeof( mapname ));
-		FS_StripExtension( mapname );
+		COM_StripExtension( mapname );
 		Q_sprintf( filepath, "%s_detail.txt", mapname );
 
 		R_ParseDetailTextures( filepath );
+	}
+
+	if( v_dark->value )
+	{
+		screenfade_t		*sf = &clgame.fade;
+		client_textmessage_t	*title;
+
+		title = CL_TextMessageGet( "GAMETITLE" );
+
+		if( title )
+		{
+			// get settings from titles.txt
+			sf->fadeEnd = title->holdtime + title->fadeout;
+			sf->fadeReset = title->fadeout;
+		}
+		else sf->fadeEnd = sf->fadeReset = 5.0f;
+	
+		sf->fadeFlags = FFADE_IN;
+		sf->fader = sf->fadeg = sf->fadeb = 0;
+		sf->fadealpha = 255;
+		sf->fadeSpeed = (float)sf->fadealpha / sf->fadeReset;
+		sf->fadeReset += cl.time;
+		sf->fadeEnd += sf->fadeReset;
+
+		Cvar_SetValue( "v_dark", 0.0f );
 	}
 
 	// clear out efrags in case the level hasn't been reloaded

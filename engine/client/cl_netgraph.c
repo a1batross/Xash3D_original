@@ -632,7 +632,7 @@ void SCR_DrawNetGraph( void )
 	int	ping_count;
 	int	w, x, y;
 
-	if( !host.developer )
+	if( !host.allow_console )
 		return;
 
 	if( cls.state != ca_active )

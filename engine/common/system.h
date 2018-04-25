@@ -82,6 +82,7 @@ void Sys_SetClipboardData( const byte *buffer, size_t size );
 #define Sys_GetParmFromCmdLine( parm, out ) _Sys_GetParmFromCmdLine( parm, out, sizeof( out ))
 qboolean _Sys_GetParmFromCmdLine( char *parm, char *out, size_t size );
 void Sys_ShellExecute( const char *path, const char *parms, qboolean exit );
+const char *Sys_GetMachineKey( int *nLength );
 void Sys_SendKeyEvents( void );
 void Sys_Print( const char *pMsg );
 void Sys_PrintLog( const char *pMsg );
@@ -102,7 +103,7 @@ void Con_DisableInput( void );
 char *Con_Input( void );
 
 // text messages
-void Msg( const char *pMsg, ... );
+#define Msg	Con_Printf
 void MsgDev( int level, const char *pMsg, ... );
 
 #ifdef __cplusplus

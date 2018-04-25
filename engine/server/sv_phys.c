@@ -24,7 +24,6 @@ typedef int (*PHYSICAPI)( int, server_physics_api_t*, physics_interface_t* );
 extern triangleapi_t gTriApi;
 
 /*
-
 pushmove objects do not obey gravity, and do not interact with each other or trigger fields,
 but block normal movement and push normal objects when they move.
 
@@ -80,19 +79,13 @@ void SV_CheckAllEnts( void )
 	nextcheck = Sys_DoubleTime() + 5.0;
 
 	// check edicts errors
-	for( i = svgame.globals->maxClients + 1; i < svgame.numEntities; i++ )
+	for( i = svs.maxclients + 1; i < svgame.numEntities; i++ )
 	{
 		e = EDICT_NUM( i );
 
-		// DEBUG: check 'gamestate' for using by mods
-		if( e->v.gamestate != 0 )
-		{
-			MsgDev( D_INFO, "Entity %s[%i] uses gamestate %i\n", SV_ClassName( e ), NUM_FOR_EDICT( e ), e->v.gamestate );
-		}
-
 		if( e->free && e->pvPrivateData != NULL )
 		{
-			MsgDev( D_ERROR, "Freed entity %s (%i) has private data.\n", SV_ClassName( e ), i );
+			Con_Printf( S_ERROR "Freed entity %s (%i) has private data.\n", SV_ClassName( e ), i );
 			continue;
 		}
 
@@ -101,14 +94,14 @@ void SV_CheckAllEnts( void )
 
 		if( !e->v.pContainingEntity || e->v.pContainingEntity != e )
 		{
-			MsgDev( D_ERROR, "Entity %s (%i) has invalid container, fixed.\n", SV_ClassName( e ), i );
+			Con_Printf( S_ERROR "Entity %s (%i) has invalid container, fixed.\n", SV_ClassName( e ), i );
 			e->v.pContainingEntity = e;
 			continue;
 		}
 
 		if( !e->pvPrivateData || !Mem_IsAllocatedExt( svgame.mempool, e->pvPrivateData ))
 		{
-			MsgDev( D_ERROR, "Entity %s (%i) trashed private data.\n", SV_ClassName( e ), i );
+			Con_Printf( S_ERROR "Entity %s (%i) trashed private data.\n", SV_ClassName( e ), i );
 			e->pvPrivateData = NULL;
 			continue;
 		}
@@ -134,14 +127,14 @@ void SV_CheckVelocity( edict_t *ent )
 		if( IS_NAN( ent->v.velocity[i] ))
 		{
 			if( sv_check_errors->value )
-				MsgDev( D_INFO, "Got a NaN velocity on %s\n", STRING( ent->v.classname ));
+				Con_Printf( "Got a NaN velocity on %s\n", STRING( ent->v.classname ));
 			ent->v.velocity[i] = 0.0f;
 		}
 
 		if( IS_NAN( ent->v.origin[i] ))
 		{
 			if( sv_check_errors->value )
-				MsgDev( D_INFO, "Got a NaN origin on %s\n", STRING( ent->v.classname ));
+				Con_Printf( "Got a NaN origin on %s\n", STRING( ent->v.classname ));
 			ent->v.origin[i] = 0.0f;
 		}
 	}
@@ -153,7 +146,7 @@ void SV_CheckVelocity( edict_t *ent )
 	{
 		wishspd = sqrt( wishspd );
 		if( sv_check_errors->value )
-			MsgDev( D_INFO, "Got a velocity too high on %s ( %.2f > %.2f )\n", STRING( ent->v.classname ), wishspd, sqrt( maxspd ));
+			Con_Printf( "Got a velocity too high on %s ( %.2f > %.2f )\n", STRING( ent->v.classname ), wishspd, sqrt( maxspd ));
 		wishspd = sv_maxvelocity.value / wishspd;
 		VectorScale( ent->v.velocity, wishspd, ent->v.velocity );
 	}
@@ -257,10 +250,7 @@ qboolean SV_PlayerRunThink( edict_t *ent, float frametime, double time )
 	}
 
 	if( FBitSet( ent->v.flags, FL_KILLME ))
-	{
-		MsgDev( D_ERROR, "client can't be deleted!\n" );
 		ClearBits( ent->v.flags, FL_KILLME );
-          }
 
 	return !ent->free;
 }
@@ -281,8 +271,10 @@ void SV_Impact( edict_t *e1, edict_t *e2, trace_t *trace )
 
 	if( e1->v.groupinfo && e2->v.groupinfo )
 	{
-		if(( !svs.groupop && !( e1->v.groupinfo & e2->v.groupinfo )) ||
-		( svs.groupop == 1 && ( e1->v.groupinfo & e2->v.groupinfo )))
+		if( svs.groupop == GROUP_OP_AND && !FBitSet( e1->v.groupinfo, e2->v.groupinfo ))
+			return;
+
+		if( svs.groupop == GROUP_OP_NAND && FBitSet( e1->v.groupinfo, e2->v.groupinfo ))
 			return;
 	}
 
@@ -374,19 +366,19 @@ SV_RecursiveWaterLevel
 recursively recalculating the middle
 =============
 */
-float SV_RecursiveWaterLevel( vec3_t origin, float mins, float maxs, int depth )
+float SV_RecursiveWaterLevel( vec3_t origin, float out, float in, int count )
 {
 	vec3_t	point;
-	float	waterlevel;
+	float	offset;
 
-	waterlevel = ((mins - maxs) * 0.5f) + maxs;
-	if( ++depth > 5 ) return waterlevel;
+	offset = ((out - in) * 0.5) + in;
+	if( ++count > 5 ) return offset;
 
-	VectorSet( point, origin[0], origin[1], origin[2] + waterlevel );
+	VectorSet( point, origin[0], origin[1], origin[2] + offset );
 
 	if( SV_PointContents( point ) == CONTENTS_WATER )
-		return SV_RecursiveWaterLevel( origin, mins, waterlevel, depth );
-	return SV_RecursiveWaterLevel( origin, waterlevel, maxs, depth );
+		return SV_RecursiveWaterLevel( origin, out, offset, count );
+	return SV_RecursiveWaterLevel( origin, offset, in, count );
 }
 
 /*
@@ -398,31 +390,29 @@ determine how deep the entity is
 */
 float SV_Submerged( edict_t *ent )
 {
+	float	start, bottom;
 	vec3_t	point;
-	vec3_t	halfmax;
-	float	waterlevel;
+	vec3_t	center;
 
-	VectorAverage( ent->v.absmin, ent->v.absmax, halfmax );
-	waterlevel = ent->v.absmin[2] - halfmax[2];
+	VectorAverage( ent->v.absmin, ent->v.absmax, center );
+	start = ent->v.absmin[2] - center[2];
 
 	switch( ent->v.waterlevel )
 	{
 	case 1:
-		return SV_RecursiveWaterLevel( halfmax, 0.0f, waterlevel, 0 ) - waterlevel;
+		bottom = SV_RecursiveWaterLevel( center, 0.0f, start, 0 );
+		return bottom - start;
 	case 3:
-		VectorSet( point, halfmax[0], halfmax[1], ent->v.absmax[2] );
+		VectorSet( point, center[0], center[1], ent->v.absmax[2] );
 		svs.groupmask = ent->v.groupinfo;
-
 		if( SV_PointContents( point ) == CONTENTS_WATER )
-		{
 			return (ent->v.maxs[2] - ent->v.mins[2]);
-		}
-		// intentionally fallthrough
-	case 2:
-		return SV_RecursiveWaterLevel( halfmax, ent->v.absmax[2] - halfmax[2], 0.0f, 0 ) - waterlevel;
-	default:
-		return 0.0f;
+	case 2:	// intentionally fallthrough
+		bottom = SV_RecursiveWaterLevel( center, ent->v.absmax[2] - center[2], 0.0f, 0 );
+		return bottom - start;
 	}
+
+	return 0.0f;
 }
 
 /*
@@ -453,12 +443,7 @@ qboolean SV_CheckWater( edict_t *ent )
 		ent->v.watertype = cont;
 		ent->v.waterlevel = 1;
 
-		if( ent->v.absmin[2] == ent->v.absmax[2] )
-		{
-			// a point entity
-			ent->v.waterlevel = 3;
-		}
-		else
+		if( ent->v.absmin[2] != ent->v.absmax[2] )
 		{
 			point[2] = (ent->v.absmin[2] + ent->v.absmax[2]) * 0.5f;
 
@@ -470,7 +455,6 @@ qboolean SV_CheckWater( edict_t *ent )
 				ent->v.waterlevel = 2;
 
 				VectorAdd( point, ent->v.view_ofs, point );
-
 				svs.groupmask = ent->v.groupinfo;
 				cont = SV_PointContents( point );
 
@@ -478,11 +462,16 @@ qboolean SV_CheckWater( edict_t *ent )
 					ent->v.waterlevel = 3;
 			}
 		}
+		else
+		{
+			// a point entity
+			ent->v.waterlevel = 3;
+		}
 
 		// Quake2 feature. Probably never was used in Half-Life...
 		if( truecont <= CONTENTS_CURRENT_0 && truecont >= CONTENTS_CURRENT_DOWN )
 		{
-			float speed = 50.0f * ent->v.waterlevel;
+			float speed = 150.0f * ent->v.waterlevel / 3.0f;
 			const float *dir = current_table[CONTENTS_CURRENT_0 - truecont];
 
 			VectorMA( ent->v.basevelocity, speed, dir, ent->v.basevelocity );
@@ -611,8 +600,8 @@ int SV_FlyMove( edict_t *ent, float time, trace_t *steptrace )
 		if( trace.fraction == 1.0f )
 			 break; // moved the entire distance
 
-		if( !trace.ent )
-			MsgDev( D_ERROR, "SV_FlyMove: trace.ent == NULL\n" );
+		if( !SV_IsValidEdict( trace.ent ))
+			break; // g-cont. this should never happens
 
 		if( trace.plane.normal[2] > 0.7f )
 		{
@@ -621,7 +610,7 @@ int SV_FlyMove( edict_t *ent, float time, trace_t *steptrace )
          			if( trace.ent->v.solid == SOLID_BSP || trace.ent->v.solid == SOLID_SLIDEBOX ||
 			trace.ent->v.movetype == MOVETYPE_PUSHSTEP || (trace.ent->v.flags & FL_CLIENT))
 			{
-				ent->v.flags |= FL_ONGROUND;
+				SetBits( ent->v.flags, FL_ONGROUND );
 				ent->v.groundentity = trace.ent;
 			}
 		}
@@ -767,14 +756,18 @@ qboolean SV_AllowPushRotate( edict_t *ent )
 {
 	model_t	*mod;
 
-	mod = Mod_Handle( ent->v.modelindex );
+	mod = SV_ModelHandle( ent->v.modelindex );
+
 	if( !mod || mod->type != mod_brush )
 		return true;
 
 	if( !FBitSet( host.features, ENGINE_PHYSICS_PUSHER_EXT ))
 		return false;
 
-	return (mod->flags & MODEL_HAS_ORIGIN) ? true : false;
+	if( FBitSet( mod->flags, MODEL_HAS_ORIGIN ))
+		return true;
+
+	return false;
 }
 
 /*
@@ -1226,7 +1219,6 @@ void SV_Physics_Follow( edict_t *ent )
 
 	if( !SV_IsValidEdict( parent ))
 	{
-		MsgDev( D_ERROR, "%s have MOVETYPE_FOLLOW with no corresponding ent!\n", SV_ClassName( ent ));
 		ent->v.movetype = MOVETYPE_NONE;
 		return;
 	}
@@ -1255,7 +1247,6 @@ void SV_Physics_Compound( edict_t *ent )
 
 	if( !SV_IsValidEdict( parent ))
 	{
-		MsgDev( D_ERROR, "%s have MOVETYPE_COMPOUND with no corresponding ent!", SV_ClassName( ent ));
 		ent->v.movetype = MOVETYPE_NONE;
 		return;
 	}
@@ -1354,15 +1345,15 @@ SV_CheckWaterTransition
 */
 void SV_CheckWaterTransition( edict_t *ent )
 {
+	vec3_t	point;
 	int	cont;
-	vec3_t	halfmax;
 
-	halfmax[0] = (ent->v.absmax[0] + ent->v.absmin[0]) * 0.5f;
-	halfmax[1] = (ent->v.absmax[1] + ent->v.absmin[1]) * 0.5f;
-	halfmax[2] = (ent->v.absmin[2] + 1.0f);
+	point[0] = (ent->v.absmax[0] + ent->v.absmin[0]) * 0.5f;
+	point[1] = (ent->v.absmax[1] + ent->v.absmin[1]) * 0.5f;
+	point[2] = (ent->v.absmin[2] + 1.0f);
 
 	svs.groupmask = ent->v.groupinfo;
-	cont = SV_PointContents( halfmax );
+	cont = SV_PointContents( point );
 
 	if( !ent->v.watertype )
 	{
@@ -1372,51 +1363,50 @@ void SV_CheckWaterTransition( edict_t *ent )
 		return;
 	}
 
-	if( cont > CONTENTS_WATER || cont <= CONTENTS_TRANSLUCENT )
+	if( cont <= CONTENTS_WATER && cont > CONTENTS_TRANSLUCENT )
+	{
+		if( ent->v.watertype == CONTENTS_EMPTY )
+		{	
+			// just crossed into water
+			SV_StartSound( ent, CHAN_AUTO, "player/pl_wade1.wav", 1.0f, ATTN_NORM, 0, 100 );
+			ent->v.velocity[2] *= 0.5;
+		}		
+
+		ent->v.watertype = cont;
+		ent->v.waterlevel = 1;
+
+		if( ent->v.absmin[2] != ent->v.absmax[2] )
+		{
+			point[2] = (ent->v.absmin[2] + ent->v.absmax[2]) * 0.5f;
+			svs.groupmask = ent->v.groupinfo;
+			cont = SV_PointContents( point );
+
+			if( cont <= CONTENTS_WATER && cont > CONTENTS_TRANSLUCENT )
+			{
+				ent->v.waterlevel = 2;
+				VectorAdd( point, ent->v.view_ofs, point );
+				svs.groupmask = ent->v.groupinfo;
+				cont = SV_PointContents( point );
+				if( cont <= CONTENTS_WATER && cont > CONTENTS_TRANSLUCENT )
+					ent->v.waterlevel = 3;
+			}
+		}
+		else
+		{
+			// point entity
+			ent->v.waterlevel = 3;
+		}
+	}
+	else
 	{
 		if( ent->v.watertype != CONTENTS_EMPTY )
-		{
+		{	
+			// just crossed into water
 			SV_StartSound( ent, CHAN_AUTO, "player/pl_wade2.wav", 1.0f, ATTN_NORM, 0, 100 );
-		}
-
+		}		
 		ent->v.watertype = CONTENTS_EMPTY;
 		ent->v.waterlevel = 0;
-		return;
 	}
-
-	if( ent->v.watertype == CONTENTS_EMPTY )
-	{
-		SV_StartSound( ent, CHAN_AUTO, "player/pl_wade1.wav", 1.0f, ATTN_NORM, 0, 100 );
-		ent->v.velocity[2] *= 0.5f;
-	}
-
-	ent->v.watertype = cont;
-	ent->v.waterlevel = 1;
-
-	if( ent->v.absmin[2] == ent->v.absmax[2] )
-	{
-		// a point entity
-		ent->v.waterlevel = 3;
-	}
-
-	halfmax[2] = (ent->v.absmin[2] + ent->v.absmax[2]) * 0.5f;
-
-	svs.groupmask = ent->v.groupinfo;
-	cont = SV_PointContents( halfmax );
-
-	if( cont > CONTENTS_WATER || cont <= CONTENTS_TRANSLUCENT )
-		return;
-
-	ent->v.waterlevel = 2;
-	VectorAdd( halfmax, ent->v.view_ofs, halfmax );
-
-	svs.groupmask = ent->v.groupinfo;
-	cont = SV_PointContents( halfmax );
-
-	if( cont > CONTENTS_WATER || cont <= CONTENTS_TRANSLUCENT )
-		return;
-
-	ent->v.waterlevel = 3;
 }
 
 /*
@@ -1654,7 +1644,7 @@ void SV_Physics_Step( edict_t *ent )
 
 		for( x = 0; x <= 1; x++ )
 		{
-			if( ent->v.flags & FL_ONGROUND )
+			if( FBitSet( ent->v.flags, FL_ONGROUND ))
 				break;
 
 			for( y = 0; y <= 1; y++ )
@@ -1666,7 +1656,7 @@ void SV_Physics_Step( edict_t *ent )
 
 				if( trace.startsolid )
 				{
-					ent->v.flags |= FL_ONGROUND;
+					SetBits( ent->v.flags, FL_ONGROUND );
 					ent->v.groundentity = trace.ent;
 					ent->v.friction = 1.0f;
 					break;
@@ -1768,7 +1758,7 @@ static void SV_Physics_Entity( edict_t *ent )
 
 	// g-cont. don't alow free entities during loading because
 	// this produce a corrupted baselines
-	if( sv.state == ss_active && ent->v.flags & FL_KILLME )
+	if( sv.state == ss_active && FBitSet( ent->v.flags, FL_KILLME ))
 		SV_FreeEdict( ent );
 }
 
@@ -1798,7 +1788,7 @@ void SV_Physics( void )
 		if( !SV_IsValidEdict( ent ))
 			continue;
 
-		if( i > 0 && i <= svgame.globals->maxClients )
+		if( i > 0 && i <= svs.maxclients )
                    		continue;
 
 		SV_Physics_Entity( ent );
@@ -1813,12 +1803,8 @@ void SV_Physics( void )
 	// animate lightstyles (used for GetEntityIllum)
 	SV_RunLightStyles ();
 
-	if( sv_skyspeed.value )
-	{
-		// evaluate sky rotation.
-		float skyAngle = sv_skyangle.value + sv_skyspeed.value * sv.frametime;
-		Cvar_SetValue( "sv_skyangle", anglemod( skyAngle ));
-	}
+	// increase framecount
+	sv.framecount++;
 
 	// decrement svgame.numEntities if the highest number entities died
 	for( ; EDICT_NUM( svgame.numEntities - 1 )->free; svgame.numEntities-- );
@@ -2014,7 +2000,7 @@ static server_physics_api_t gPhysicsAPI =
 	SV_LinkEdict,
 	SV_GetServerTime,
 	SV_GetFrameTime,
-	Mod_Handle,
+	SV_ModelHandle,
 	SV_GetHeadNode,
 	SV_ServerState,
 	Host_Error,
@@ -2055,7 +2041,7 @@ qboolean SV_InitPhysicsAPI( void )
 {
 	static PHYSICAPI	pPhysIface;
 
-	pPhysIface = (PHYSICAPI)Com_GetProcAddress( svgame.hInstance, "Server_GetPhysicsInterface" );
+	pPhysIface = (PHYSICAPI)COM_GetProcAddress( svgame.hInstance, "Server_GetPhysicsInterface" );
 	if( pPhysIface )
 	{
 		if( pPhysIface( SV_PHYSICS_INTERFACE_VERSION, &gPhysicsAPI, &svgame.physFuncs ))

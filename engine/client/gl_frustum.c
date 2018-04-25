@@ -19,7 +19,7 @@ GNU General Public License for more details.
 
 void GL_FrustumEnablePlane( gl_frustum_t *out, int side )
 {
-	ASSERT( side >= 0 && side < FRUSTUM_PLANES );
+	Assert( side >= 0 && side < FRUSTUM_PLANES );
 
 	// make sure what plane is ready
 	if( !VectorIsNull( out->planes[side].normal ))
@@ -28,13 +28,13 @@ void GL_FrustumEnablePlane( gl_frustum_t *out, int side )
 
 void GL_FrustumDisablePlane( gl_frustum_t *out, int side )
 {
-	ASSERT( side >= 0 && side < FRUSTUM_PLANES );
+	Assert( side >= 0 && side < FRUSTUM_PLANES );
 	ClearBits( out->clipFlags, BIT( side ));
 }
 
 void GL_FrustumSetPlane( gl_frustum_t *out, int side, const vec3_t vecNormal, float flDist )
 {
-	ASSERT( side >= 0 && side < FRUSTUM_PLANES );
+	Assert( side >= 0 && side < FRUSTUM_PLANES );
 
 	out->planes[side].type = PlaneTypeForNormal( vecNormal );
 	out->planes[side].signbits = SignbitsForPlane( vecNormal );
@@ -48,7 +48,7 @@ void GL_FrustumNormalizePlane( gl_frustum_t *out, int side )
 {
 	float	length;
 
-	ASSERT( side >= 0 && side < FRUSTUM_PLANES );
+	Assert( side >= 0 && side < FRUSTUM_PLANES );
 
 	// normalize
 	length = VectorLength( out->planes[side].normal );
@@ -101,7 +101,7 @@ void GL_FrustumInitProj( gl_frustum_t *out, float flZNear, float flZFar, float f
 	VectorMA( RI.cullorigin, flZFar, RI.cull_vforward, farpoint );
 	GL_FrustumSetPlane( out, FRUSTUM_FAR, iforward, DotProduct( iforward, farpoint ));
 
-	// no need to setup backplane for general view. It's only used for portals and mirrors
+	// no need to setup backplane for general view.
 	if( flZNear == 0.0f ) return;
 
 	// setup near plane

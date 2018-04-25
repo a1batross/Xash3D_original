@@ -114,7 +114,7 @@ freeze application for some time
 */
 void Sys_Sleep( int msec )
 {
-	msec = bound( 1, msec, 1000 );
+	msec = bound( 0, msec, 1000 );
 	Sleep( msec );
 }
 
@@ -141,6 +141,33 @@ char *Sys_GetCurrentUser( void )
 	}
 
 	return sys_user_name;
+}
+
+/*
+=================
+Sys_GetMachineKey
+=================
+*/
+const char *Sys_GetMachineKey( int *nLength )
+{
+	HINSTANCE		rpcrt4_dll = LoadLibrary( "rpcrt4.dll" );
+	RPC_STATUS	(_stdcall *pUuidCreateSequential)( UUID __RPC_FAR *Uuid ) = NULL;
+	static byte	key[32];
+	byte		mac[8];
+	UUID		uuid;
+	int		i;
+
+	if( rpcrt4_dll ) pUuidCreateSequential = (void *)GetProcAddress( rpcrt4_dll, "UuidCreateSequential" );
+	if( pUuidCreateSequential ) pUuidCreateSequential( &uuid );	// ask OS to create UUID
+	if( rpcrt4_dll ) FreeLibrary( rpcrt4_dll ); // no need anymore...
+
+	for( i = 2; i < 8; i++ ) // bytes 2 through 7 inclusive are MAC address
+		mac[i-2] = uuid.Data4[i];
+
+	Q_snprintf( key, sizeof( key ), "%02X-%02X-%02X-%02X-%02X-%02X", mac[0], mac[1], mac[2], mac[3], mac[4], mac[5] );
+
+	if( nLength ) *nLength = Q_strlen( key );
+	return key;
 }
 
 /*
@@ -287,7 +314,9 @@ int Sys_CheckParm( const char *parm )
 
 	for( i = 1; i < host.argc; i++ )
 	{
-		if( !host.argv[i] ) continue;
+		if( !host.argv[i] )
+			continue;
+
 		if( !Q_stricmp( parm, host.argv[i] ))
 			return i;
 	}
@@ -395,7 +424,7 @@ qboolean Sys_FreeLibrary( dll_info_t *dll )
 	if( !dll || !dll->link )
 		return false;
 
-	if( host.state == HOST_CRASHED )
+	if( host.status == HOST_CRASHED )
 	{
 		// we need to hold down all modules, while MSVC can find error
 		MsgDev( D_NOTE, "Sys_FreeLibrary: hold %s for debugging\n", dll->name );
@@ -439,7 +468,7 @@ void Sys_WaitForQuit( void )
 long _stdcall Sys_Crash( PEXCEPTION_POINTERS pInfo )
 {
 	// save config
-	if( host.state != HOST_CRASHED )
+	if( host.status != HOST_CRASHED )
 	{
 		// check to avoid recursive call
 		error_on_exit = true;
@@ -447,20 +476,20 @@ long _stdcall Sys_Crash( PEXCEPTION_POINTERS pInfo )
 
 		if( host.type == HOST_NORMAL )
 			CL_Crashed(); // tell client about crash
-		else host.state = HOST_CRASHED;
+		else host.status = HOST_CRASHED;
 
-		Msg( "Sys_Crash: call %p at address %p\n", pInfo->ExceptionRecord->ExceptionAddress, pInfo->ExceptionRecord->ExceptionCode );
+		Con_Printf( "unhandled exception: %p at address %p\n", pInfo->ExceptionRecord->ExceptionAddress, pInfo->ExceptionRecord->ExceptionCode );
 
-		if( host.developer <= 0 )
+		if( !host_developer.value )
 		{
-			// no reason to call debugger in release build - just exit
+			// for non-development mode
 			Sys_Quit();
 			return EXCEPTION_CONTINUE_EXECUTION;
 		}
 
 		// all other states keep unchanged to let debugger find bug
 		Con_DestroyConsole();
-          }
+	}
 
 	if( host.oldFilter )
 		return host.oldFilter( pInfo );
@@ -480,14 +509,14 @@ void Sys_Error( const char *error, ... )
 	va_list	argptr;
 	char	text[MAX_SYSPATH];
          
-	if( host.state == HOST_ERR_FATAL )
+	if( host.status == HOST_ERR_FATAL )
 		return; // don't multiple executes
 
 	// make sure what console received last message
 	if( host.change_game ) Sys_Sleep( 200 );
 
 	error_on_exit = true;
-	host.state = HOST_ERR_FATAL;	
+	host.status = HOST_ERR_FATAL;	
 	va_start( argptr, error );
 	Q_vsprintf( text, error, argptr );
 	va_end( argptr );
@@ -499,7 +528,7 @@ void Sys_Error( const char *error, ... )
 		if( host.hWnd ) ShowWindow( host.hWnd, SW_HIDE );
 	}
 
-	if( host.developer > 0 )
+	if( host_developer.value )
 	{
 		Con_ShowConsole( true );
 		Con_DisableInput();	// disable input line for dedicated server
@@ -541,9 +570,6 @@ void Sys_Print( const char *pMsg )
 	char		*b = buffer;
 	char		*c = logbuf;	
 	int		i = 0;
-
-	if( pMsg[0] == '0' && pMsg[1] == '\n' && pMsg[2] == '\0' )
-		return; // hlrally spam
 
 	if( host.type == HOST_NORMAL )
 		Con_Print( pMsg );
@@ -601,42 +627,24 @@ void Sys_Print( const char *pMsg )
 
 /*
 ================
-Msg
-
-formatted message
-================
-*/
-void Msg( const char *pMsg, ... )
-{
-	static char	text[MAX_PRINT_MSG];
-	va_list		argptr;	
-
-	va_start( argptr, pMsg );
-	Q_vsnprintf( text, sizeof( text ) - 1, pMsg, argptr );
-	va_end( argptr );
-
-	Sys_Print( text );
-}
-
-/*
-================
 MsgDev
 
 formatted developer message
 ================
 */
-void MsgDev( int level, const char *pMsg, ... )
+void MsgDev( int type, const char *pMsg, ... )
 {
 	static char	text[MAX_PRINT_MSG];
 	va_list		argptr;
 
-	if( host.developer < level ) return;
+	if( type >= D_REPORT && host_developer.value < DEV_EXTENDED )
+		return;
 
 	va_start( argptr, pMsg );
 	Q_vsnprintf( text, sizeof( text ) - 1, pMsg, argptr );
 	va_end( argptr );
 
-	switch( level )
+	switch( type )
 	{
 	case D_WARN:
 		Sys_Print( va( "^3Warning:^7 %s", text ));

@@ -97,10 +97,10 @@ typedef struct
 
 typedef struct sfx_s
 {
-	string 		name;
+	char		name[MAX_QPATH];
 	wavdata_t		*cache;
 
-	int		touchFrame;
+	int		servercount;
 	uint		hashValue;
 	struct sfx_s	*hashNext;
 } sfx_t;
@@ -238,6 +238,8 @@ int SNDDMA_GetSoundtime( void );
 void SNDDMA_Shutdown( void );
 void SNDDMA_BeginPainting( void );
 void SNDDMA_Submit( void );
+void SNDDMA_LockSound( void );
+void SNDDMA_UnlockSound( void );
 
 //====================================================================
 
@@ -269,7 +271,6 @@ void S_InitScaletable( void );
 wavdata_t *S_LoadSound( sfx_t *sfx );
 float S_GetMasterVolume( void );
 float S_GetMusicVolume( void );
-void S_PrintDeviceName( void );
 
 //
 // s_main.c

@@ -20,6 +20,31 @@ GNU General Public License for more details.
 #include "client.h"
 #include "library.h"
 
+const char *file_exts[10] =
+{
+	".cfg",
+	".lst",
+	".exe",
+	".vbs",
+	".com",
+	".bat",
+	".dll",
+	".ini",
+	".log",
+	".sys",
+};
+
+#ifdef _DEBUG
+void DBG_AssertFunction( qboolean fExpr, const char* szExpr, const char* szFile, int szLine, const char* szMessage )
+{
+	if( fExpr ) return;
+
+	if( szMessage != NULL )
+		MsgDev( at_error, "ASSERT FAILED:\n %s \n(%s@%d)\n%s\n", szExpr, szFile, szLine, szMessage );
+	else MsgDev( at_error, "ASSERT FAILED:\n %s \n(%s@%d)\n", szExpr, szFile, szLine );
+}
+#endif	// DEBUG
+
 static long idum = 0;
 
 #define MAX_RANDOM_RANGE	0x7FFFFFFFUL
@@ -123,6 +148,455 @@ long COM_RandomLong( long lLow, long lHigh )
 }
 
 /*
+===============================================================================
+
+	LZSS Compression
+
+===============================================================================
+*/
+#define LZSS_ID		(('S'<<24)|('S'<<16)|('Z'<<8)|('L'))
+#define LZSS_LOOKSHIFT	4
+#define LZSS_WINDOW_SIZE	4096
+#define LZSS_LOOKAHEAD	BIT( LZSS_LOOKSHIFT )
+
+
+typedef struct
+{
+	unsigned int	id;
+	unsigned int	size;
+} lzss_header_t;
+
+// expected to be sixteen bytes
+typedef struct lzss_node_s
+{
+	const byte	*data;
+	struct lzss_node_s	*prev;
+	struct lzss_node_s	*next;
+	char		pad[4];
+} lzss_node_t;
+
+typedef struct
+{
+	lzss_node_t	*start;
+	lzss_node_t	*end;
+} lzss_list_t;
+
+typedef struct
+{
+	lzss_list_t	*hash_table;	
+	lzss_node_t	*hash_node;
+	int		window_size;
+} lzss_state_t;
+
+qboolean LZSS_IsCompressed( const byte *source )
+{
+	lzss_header_t	*phdr = (lzss_header_t *)source;
+
+	if( phdr && phdr->id == LZSS_ID )
+		return true;
+	return false;
+}
+
+uint LZSS_GetActualSize( const byte *source )
+{
+	lzss_header_t	*phdr = (lzss_header_t *)source;
+
+	if( phdr && phdr->id == LZSS_ID )
+		return phdr->size;
+	return 0;
+}
+
+static void LZSS_BuildHash( lzss_state_t *state, const byte *source )
+{
+	lzss_list_t	*list;
+	lzss_node_t	*node;
+	unsigned int	targetindex = (uint)source & ( state->window_size - 1 );
+
+	node = &state->hash_node[targetindex];
+
+	if( node->data )
+	{
+		list = &state->hash_table[*node->data];
+		if( node->prev )
+		{
+			list->end = node->prev;
+			node->prev->next = NULL;
+		}
+		else
+		{
+			list->start = NULL;
+			list->end = NULL;
+		}
+	}
+
+	list = &state->hash_table[*source];
+	node->data = source;
+	node->prev = NULL;
+	node->next = list->start;
+	if( list->start )
+		list->start->prev = node;
+	else list->end = node;
+	list->start = node;
+}
+
+byte *LZSS_CompressNoAlloc( lzss_state_t *state, byte *pInput, int input_length, byte *pOutputBuf, uint *pOutputSize )
+{
+	byte		*pStart = pOutputBuf; // allocate the output buffer, compressed buffer is expected to be less, caller will free
+	byte		*pEnd = pStart + input_length - sizeof( lzss_header_t ) - 8; // prevent compression failure
+	lzss_header_t	*header = (lzss_header_t *)pStart;
+	byte		*pOutput = pStart + sizeof( lzss_header_t );
+	const byte	*pEncodedPosition = NULL;
+	byte		*pLookAhead = pInput; 
+	byte		*pWindow = pInput;
+	int		i, putCmdByte = 0;
+	byte		*pCmdByte = NULL;
+
+	if( input_length <= sizeof( lzss_header_t ) + 8 )
+		return NULL;
+
+	// set LZSS header
+	header->id = LZSS_ID;
+	header->size = input_length;
+
+	// create the compression work buffers, small enough (~64K) for stack
+	state->hash_table = (lzss_list_t *)_alloca( 256 * sizeof( lzss_list_t ));
+	memset( state->hash_table, 0, 256 * sizeof( lzss_list_t ));
+	state->hash_node = (lzss_node_t *)_alloca( state->window_size * sizeof( lzss_node_t ));
+	memset( state->hash_node, 0, state->window_size * sizeof( lzss_node_t ));
+
+	while( input_length > 0 )
+	{
+		int		lookAheadLength = input_length < LZSS_LOOKAHEAD ? input_length : LZSS_LOOKAHEAD;
+		lzss_node_t	*hash = state->hash_table[pLookAhead[0]].start;
+		int		encoded_length = 0;
+
+		pWindow = pLookAhead - state->window_size;
+
+		if( pWindow < pInput )
+			pWindow = pInput;
+
+		if( !putCmdByte )
+		{
+			pCmdByte = pOutput++;
+			*pCmdByte = 0;
+		}
+
+		putCmdByte = ( putCmdByte + 1 ) & 0x07;
+
+		while( hash != NULL )
+		{
+			int	length = lookAheadLength;
+			int	match_length = 0;
+
+			while( length-- && hash->data[match_length] == pLookAhead[match_length] )
+				match_length++;
+
+			if( match_length > encoded_length )
+			{
+				encoded_length = match_length;
+				pEncodedPosition = hash->data;
+			}
+
+			if( match_length == lookAheadLength )
+				break;
+
+			hash = hash->next;
+		}
+
+		if ( encoded_length >= 3 )
+		{
+			*pCmdByte = (*pCmdByte >> 1) | 0x80;
+			*pOutput++ = (( pLookAhead - pEncodedPosition - 1 ) >> LZSS_LOOKSHIFT );
+			*pOutput++ = (( pLookAhead - pEncodedPosition - 1 ) << LZSS_LOOKSHIFT ) | ( encoded_length - 1 );
+		} 
+		else 
+		{ 
+			*pCmdByte = ( *pCmdByte >> 1 );
+			*pOutput++ = *pLookAhead;
+			encoded_length = 1;
+		}
+
+		for( i = 0; i < encoded_length; i++ )
+		{
+			LZSS_BuildHash( state, pLookAhead++ );
+		}
+
+		input_length -= encoded_length;
+
+		if( pOutput >= pEnd )
+		{
+			// compression is worse, abandon
+			return NULL;
+		}
+	}
+
+	if( input_length != 0 )
+	{
+		// unexpected failure
+		Assert( 0 );
+		return NULL;
+	}
+
+	if( !putCmdByte )
+	{
+		pCmdByte = pOutput++;
+		*pCmdByte = 0x01;
+	}
+	else
+	{
+		*pCmdByte = (( *pCmdByte >> 1 ) | 0x80 ) >> ( 7 - putCmdByte );
+	}
+
+	// put two ints at end of buffer
+	*pOutput++ = 0;
+	*pOutput++ = 0;
+
+	if( pOutputSize )
+		*pOutputSize = pOutput - pStart;
+
+	return pStart;
+}
+
+byte *LZSS_Compress( byte *pInput, int inputLength, uint *pOutputSize )
+{
+	byte		*pStart = (byte *)malloc( inputLength );
+	byte		*pFinal = NULL;
+	lzss_state_t	state;
+
+	memset( &state, 0, sizeof( state ));
+	state.window_size = LZSS_WINDOW_SIZE;
+
+	pFinal = LZSS_CompressNoAlloc( &state, pInput, inputLength, pStart, pOutputSize );
+
+	if( !pFinal )
+	{
+		free( pStart );
+		return NULL;
+	}
+
+	return pStart;
+}
+
+uint LZSS_Decompress( const byte *pInput, byte *pOutput )
+{
+	uint	totalBytes = 0;
+	int	getCmdByte = 0;
+	int	cmdByte = 0;
+	uint	actualSize = LZSS_GetActualSize( pInput );
+
+	if( !actualSize )
+		return 0;
+
+	pInput += sizeof( lzss_header_t );
+
+	while( 1 )
+	{
+		if( !getCmdByte ) 
+			cmdByte = *pInput++;
+		getCmdByte = ( getCmdByte + 1 ) & 0x07;
+
+		if( cmdByte & 0x01 )
+		{
+			int	position = *pInput++ << LZSS_LOOKSHIFT;
+			int	i, count;
+			byte	*pSource;
+
+			position |= ( *pInput >> LZSS_LOOKSHIFT );
+			count = ( *pInput++ & 0x0F ) + 1;
+
+			if( count == 1 ) 
+				break;
+
+			pSource = pOutput - position - 1;
+			for( i = 0; i < count; i++ )
+				*pOutput++ = *pSource++;
+			totalBytes += count;
+		} 
+		else 
+		{
+			*pOutput++ = *pInput++;
+			totalBytes++;
+		}
+		cmdByte = cmdByte >> 1;
+	}
+
+	if( totalBytes != actualSize )
+	{
+		Assert( 0 );
+		return 0;
+	}
+	return totalBytes;
+}
+
+/*
+============
+COM_FileBase
+
+Extracts the base name of a file (no path, no extension, assumes '/' as path separator)
+============
+*/
+void COM_FileBase( const char *in, char *out )
+{
+	int	len, start, end;
+
+	len = Q_strlen( in );
+	if( !len ) return;
+	
+	// scan backward for '.'
+	end = len - 1;
+
+	while( end && in[end] != '.' && in[end] != '/' && in[end] != '\\' )
+		end--;
+	
+	if( in[end] != '.' )
+		end = len-1; // no '.', copy to end
+	else end--; // found ',', copy to left of '.'
+
+	// scan backward for '/'
+	start = len - 1;
+
+	while( start >= 0 && in[start] != '/' && in[start] != '\\' )
+		start--;
+
+	if( start < 0 || ( in[start] != '/' && in[start] != '\\' ))
+		start = 0;
+	else start++;
+
+	// length of new sting
+	len = end - start + 1;
+
+	// Copy partial string
+	Q_strncpy( out, &in[start], len + 1 );
+	out[len] = 0;
+}
+
+/*
+============
+COM_FileExtension
+============
+*/
+const char *COM_FileExtension( const char *in )
+{
+	const char *separator, *backslash, *colon, *dot;
+
+	separator = Q_strrchr( in, '/' );
+	backslash = Q_strrchr( in, '\\' );
+
+	if( !separator || separator < backslash )
+		separator = backslash;
+
+	colon = Q_strrchr( in, ':' );
+
+	if( !separator || separator < colon )
+		separator = colon;
+
+	dot = Q_strrchr( in, '.' );
+
+	if( dot == NULL || ( separator && ( dot < separator )))
+		return "";
+
+	return dot + 1;
+}
+
+/*
+============
+COM_FileWithoutPath
+============
+*/
+const char *COM_FileWithoutPath( const char *in )
+{
+	const char *separator, *backslash, *colon;
+
+	separator = Q_strrchr( in, '/' );
+	backslash = Q_strrchr( in, '\\' );
+
+	if( !separator || separator < backslash )
+		separator = backslash;
+
+	colon = Q_strrchr( in, ':' );
+
+	if( !separator || separator < colon )
+		separator = colon;
+
+	return separator ? separator + 1 : in;
+}
+
+/*
+============
+COM_ExtractFilePath
+============
+*/
+void COM_ExtractFilePath( const char *path, char *dest )
+{
+	const char *src = path + Q_strlen( path ) - 1;
+
+	// back up until a \ or the start
+	while( src != path && !(*(src - 1) == '\\' || *(src - 1) == '/' ))
+		src--;
+
+	if( src != path )
+	{
+		memcpy( dest, path, src - path );
+		dest[src - path - 1] = 0; // cutoff backslash
+	}
+	else Q_strcpy( dest, "" ); // file without path
+}
+
+/*
+============
+COM_StripExtension
+============
+*/
+void COM_StripExtension( char *path )
+{
+	size_t	length;
+
+	length = Q_strlen( path ) - 1;
+	while( length > 0 && path[length] != '.' )
+	{
+		length--;
+		if( path[length] == '/' || path[length] == '\\' || path[length] == ':' )
+			return; // no extension
+	}
+
+	if( length ) path[length] = 0;
+}
+
+/*
+==================
+COM_DefaultExtension
+==================
+*/
+void COM_DefaultExtension( char *path, const char *extension )
+{
+	const char	*src;
+
+	// if path doesn't have a .EXT, append extension
+	// (extension should include the .)
+	src = path + Q_strlen( path ) - 1;
+
+	while( *src != '/' && src != path )
+	{
+		// it has an extension
+		if( *src == '.' ) return;                 
+		src--;
+	}
+
+	Q_strcat( path, extension );
+}
+
+/*
+==================
+COM_ReplaceExtension
+==================
+*/
+void COM_ReplaceExtension( char *path, const char *extension )
+{
+	COM_StripExtension( path );
+	COM_DefaultExtension( path, extension );
+}
+
+/*
 ==============
 COM_IsSingleChar
 
@@ -131,7 +605,10 @@ interpert this character as single
 */
 static int COM_IsSingleChar( char c )
 {
-	if( c == '{' || c == '}' || c == ')' || c == '(' || c == '\'' || c == ',' )
+	if( c == '{' || c == '}' || c == '\'' || c == ',' )
+		return true;
+
+	if( !host.com_ignorebracket && ( c == ')' || c == '(' ))
 		return true;
 
 	if( host.com_handlecolon && c == ':' )
@@ -286,6 +763,19 @@ qboolean COM_ParseVector( char **pfile, float *v, size_t size )
 
 /*
 =============
+COM_CheckString
+
+=============
+*/
+int COM_CheckString( const char *string )
+{
+	if( !string || (byte)*string <= ' ' )
+		return 0;
+	return 1;
+}
+
+/*
+=============
 COM_FileSize
 
 =============
@@ -303,16 +793,7 @@ COM_AddAppDirectoryToSearchPath
 */
 void COM_AddAppDirectoryToSearchPath( const char *pszBaseDir, const char *appName )
 {
-	string	dir;
-
-	if( !pszBaseDir || !appName )
-	{
-		MsgDev( D_ERROR, "COM_AddDirectorySearchPath: bad directory or appname\n" );
-		return;
-	}
-
-	Q_snprintf( dir, sizeof( dir ), "%s/%s", pszBaseDir, appName );
-	FS_AddGameDirectory( dir, FS_GAMEDIR_PATH );
+	FS_AddGameHierarchy( pszBaseDir, FS_NOWRITE_PATH );
 }
 
 /*
@@ -328,7 +809,7 @@ int COM_ExpandFilename( const char *fileName, char *nameOutBuffer, int nameOutBu
 	const char	*path;
 	char		result[MAX_SYSPATH];
 
-	if( !fileName || !*fileName || !nameOutBuffer || nameOutBufferSize <= 0 )
+	if( !COM_CheckString( fileName ) || !nameOutBuffer || nameOutBufferSize <= 0 )
 		return 0;
 
 	// filename examples:
@@ -395,6 +876,55 @@ void COM_FixSlashes( char *pname )
 		if( *pname == '\\' )
 			*pname = '/';
 		pname++;
+	}
+}
+
+/*
+==================
+COM_Nibble
+
+Returns the 4 bit nibble for a hex character
+==================
+*/
+byte COM_Nibble( char c )
+{
+	if(( c >= '0' ) && ( c <= '9' ))
+	{
+		 return (byte)(c - '0');
+	}
+
+	if(( c >= 'A' ) && ( c <= 'F' ))
+	{
+		 return (byte)(c - 'A' + 0x0a);
+	}
+
+	if(( c >= 'a' ) && ( c <= 'f' ))
+	{
+		 return (byte)(c - 'a' + 0x0a);
+	}
+
+	return '0';
+}
+
+/*
+==================
+COM_HexConvert
+
+Converts pszInput Hex string to nInputLength/2 binary
+==================
+*/
+void COM_HexConvert( const char *pszInput, int nInputLength, byte *pOutput )
+{
+	const char	*pIn;
+	byte		*p = pOutput;
+	int		i;
+
+
+	for( i = 0; i < nInputLength; i += 2 )
+	{
+		pIn = &pszInput[i];
+		*p = COM_Nibble( pIn[0] ) << 4 | COM_Nibble( pIn[1] );		
+		p++;
 	}
 }
 
@@ -481,7 +1011,7 @@ byte* COM_LoadFileForMe( const char *filename, int *pLength )
 	byte	*file, *pfile;
 	int	iLength;
 
-	if( !filename || !*filename )
+	if( !COM_CheckString( filename ))
 	{
 		if( pLength )
 			*pLength = 0;
@@ -529,7 +1059,7 @@ COM_LoadFile
 int COM_SaveFile( const char *filename, const void *data, long len )
 {
 	// check for empty filename
-	if( !filename || !*filename )
+	if( !COM_CheckString( filename ))
 		return false;
 
 	// check for null data
@@ -596,7 +1126,6 @@ void pfnGetModelBounds( model_t *mod, float *mins, float *maxs )
 	}
 	else
 	{
-		MsgDev( D_ERROR, "Mod_GetBounds: NULL model\n" );
 		if( mins ) VectorClear( mins );
 		if( maxs ) VectorClear( maxs );
 	}
@@ -638,8 +1167,8 @@ pfnCvar_RegisterVariable
 cvar_t *pfnCvar_RegisterClientVariable( const char *szName, const char *szValue, int flags )
 {
 	if( FBitSet( flags, FCVAR_GLCONFIG ))
-		return (cvar_t *)Cvar_Get( szName, szValue, flags, va( "enable or disable %s", szName ));
-	return (cvar_t *)Cvar_Get( szName, szValue, flags|FCVAR_CLIENTDLL, "client cvar" );
+		return (cvar_t *)Cvar_Get( szName, szValue, flags, va( CVAR_GLCONFIG_DESCRIPTION, szName ));
+	return (cvar_t *)Cvar_Get( szName, szValue, flags|FCVAR_CLIENTDLL, Cvar_BuildAutoDescription( flags|FCVAR_CLIENTDLL ));
 }
 
 /*
@@ -651,8 +1180,8 @@ pfnCvar_RegisterVariable
 cvar_t *pfnCvar_RegisterGameUIVariable( const char *szName, const char *szValue, int flags )
 {
 	if( FBitSet( flags, FCVAR_GLCONFIG ))
-		return (cvar_t *)Cvar_Get( szName, szValue, flags, va( "enable or disable %s", szName ));
-	return (cvar_t *)Cvar_Get( szName, szValue, flags|FCVAR_GAMEUIDLL, "GameUI cvar" );
+		return (cvar_t *)Cvar_Get( szName, szValue, flags, va( CVAR_GLCONFIG_DESCRIPTION, szName ));
+	return (cvar_t *)Cvar_Get( szName, szValue, flags|FCVAR_GAMEUIDLL, Cvar_BuildAutoDescription( flags|FCVAR_GAMEUIDLL ));
 }
 
 /*
@@ -677,48 +1206,6 @@ allow to set cvar directly
 void pfnCVarDirectSet( cvar_t *var, const char *szValue )
 {
 	Cvar_DirectSet( (convar_t *)var, szValue );
-}
-
-/*
-=============
-Con_Printf
-
-=============
-*/
-void Con_Printf( char *szFmt, ... )
-{
-	static char	buffer[16384];	// must support > 1k messages
-	va_list		args;
-
-	if( host.developer < D_INFO )
-		return;
-
-	va_start( args, szFmt );
-	Q_vsnprintf( buffer, sizeof( buffer ), szFmt, args );
-	va_end( args );
-
-	Sys_Print( buffer );
-}
-
-/*
-=============
-Con_DPrintf
-
-=============
-*/
-void Con_DPrintf( char *szFmt, ... )
-{
-	static char	buffer[16384];	// must support > 1k messages
-	va_list		args;
-
-	if( host.developer < D_ERROR )
-		return;
-
-	va_start( args, szFmt );
-	Q_vsnprintf( buffer, sizeof( buffer ), szFmt, args );
-	va_end( args );
-
-	Sys_Print( buffer );
 }
 
 /*
@@ -751,6 +1238,37 @@ int COM_CompareFileTime( const char *filename1, const char *filename2, int *iCom
 
 /*
 =============
+COM_CheckParm
+
+=============
+*/
+int COM_CheckParm( char *parm, char **ppnext )
+{
+	int	i = Sys_CheckParm( parm );
+
+	if( ppnext )
+	{
+		if( i != 0 && i < host.argc - 1 )
+			*ppnext = (char *)host.argv[i + 1];
+		else *ppnext = NULL;
+	}
+
+	return i;
+}
+
+/*
+=============
+pfnTime
+
+=============
+*/
+float pfnTime( void )
+{
+	return (float)Sys_DoubleTime();
+}
+
+/*
+=============
 pfnGetGameDir
 
 =============
@@ -761,98 +1279,46 @@ void pfnGetGameDir( char *szGetGameDir )
 	Q_sprintf( szGetGameDir, "%s/%s", host.rootdir, GI->gamedir );
 }
 
-/*
-=============
-pfnSequenceGet
-
-used by CS:CZ
-=============
-*/
-void *pfnSequenceGet( const char *fileName, const char *entryName )
+qboolean COM_IsSafeFileToDownload( const char *filename )
 {
-	Msg( "Sequence_Get: file %s, entry %s\n", fileName, entryName );
-	return NULL;
-}
+	char		lwrfilename[4096];
+	const char	*first, *last;
+	const char	*ext;
+	int		i;
 
-/*
-=============
-pfnSequencePickSentence
+	if( !COM_CheckString( filename ))
+		return false;
 
-used by CS:CZ
-=============
-*/
-void *pfnSequencePickSentence( const char *groupName, int pickMethod, int *picked )
-{
-	Msg( "Sequence_PickSentence: group %s, pickMethod %i\n", groupName, pickMethod );
-	*picked = 0;
+	if( !Q_strncmp( filename, "!MD5", 4 ))
+		return true;
 
-	return NULL;
-}
+	Q_strnlwr( filename, lwrfilename, sizeof( lwrfilename ));
 
-/*
-=============
-pfnIsCareerMatch
+	if( Q_strstr( lwrfilename, "\\" ) || Q_strstr( lwrfilename, ":" ) || Q_strstr( lwrfilename, ".." ) || Q_strstr( lwrfilename, "~" ))
+		return false;
 
-used by CS:CZ (client stub)
-=============
-*/
-int pfnIsCareerMatch( void )
-{
-	return 0;
-}
+	if( lwrfilename[0] == '/' )
+		return false;
 
-/*
-=============
-pfnRegisterTutorMessageShown
+	first = Q_strchr( lwrfilename, '.' );
+	last = Q_strrchr( lwrfilename, '.' );
 
-only exists in PlayStation version
-=============
-*/
-void pfnRegisterTutorMessageShown( int mid )
-{
-}
+	if( first == NULL || last == NULL )
+		return false;
 
-/*
-=============
-pfnGetTimesTutorMessageShown
+	if( first != last )
+		return false;
 
-only exists in PlayStation version
-=============
-*/
-int pfnGetTimesTutorMessageShown( int mid )
-{
-	return 0;
-}
+	if( Q_strlen( first ) != 4 )
+		return false;
 
-/*
-=============
-pfnProcessTutorMessageDecayBuffer
+	ext = COM_FileExtension( lwrfilename );
 
-only exists in PlayStation version
-=============
-*/
-void pfnProcessTutorMessageDecayBuffer( int *buffer, int bufferLength )
-{
-}
+	for( i = 0; i < ARRAYSIZE( file_exts ); i++ )
+	{
+		if( !Q_stricmp( ext, file_exts[i] ))
+			return false;
+	}
 
-/*
-=============
-pfnConstructTutorMessageDecayBuffer
-
-only exists in PlayStation version
-=============
-*/
-void pfnConstructTutorMessageDecayBuffer( int *buffer, int bufferLength )
-{
-}
-
-/*
-=============
-pfnResetTutorMessageDecayData
-
-only exists in PlayStation version
-=============
-*/
-void pfnResetTutorMessageDecayData( void )
-{
+	return true;
 }

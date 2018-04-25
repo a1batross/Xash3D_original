@@ -44,7 +44,7 @@ void S_SoundList_f( void )
 
 	for( i = 0, sfx = s_knownSfx; i < s_numSfx; i++, sfx++ )
 	{
-		if( !sfx->touchFrame )
+		if( !sfx->servercount )
 			continue;
 
 		sc = sfx->cache;
@@ -52,17 +52,17 @@ void S_SoundList_f( void )
 		{
 			totalSize += sc->size;
 
-			if( sc->loopStart >= 0 ) Msg( "L" );
-			else Msg( " " );
-			Msg( " (%2db) %s : sound/%s\n", sc->width * 8, Q_memprint( sc->size ), sfx->name );
+			if( sc->loopStart >= 0 ) Con_Printf( "L" );
+			else Con_Printf( " " );
+			Con_Printf( " (%2db) %s : sound/%s\n", sc->width * 8, Q_memprint( sc->size ), sfx->name );
 			totalSfx++;
 		}
 	}
 
-	Msg( "-------------------------------------------\n" );
-	Msg( "%i total sounds\n", totalSfx );
-	Msg( "%s total memory\n", Q_memprint( totalSize ));
-	Msg( "\n" );
+	Con_Printf( "-------------------------------------------\n" );
+	Con_Printf( "%i total sounds\n", totalSfx );
+	Con_Printf( "%s total memory\n", Q_memprint( totalSize ));
+	Con_Printf( "\n" );
 }
 
 // return true if char 'c' is one of 1st 2 characters in pch
@@ -166,7 +166,7 @@ sfx_t *S_FindName( const char *pname, int *pfInCache )
 	uint	i, hash;
 	string	name;
 
-	if( !pname || !pname[0] || !dma.initialized )
+	if( !COM_CheckString( pname ) || !dma.initialized )
 		return NULL;
 
 	if( Q_strlen( pname ) >= MAX_STRING )
@@ -179,7 +179,7 @@ sfx_t *S_FindName( const char *pname, int *pfInCache )
 	COM_FixSlashes( name );
 
 	// see if already loaded
-	hash = Com_HashKey( name, MAX_SFX_HASH );
+	hash = COM_HashKey( name, MAX_SFX_HASH );
 	for( sfx = s_sfxHashList[hash]; sfx; sfx = sfx->hashNext )
 	{
 		if( !Q_strcmp( sfx->name, name ))
@@ -190,7 +190,7 @@ sfx_t *S_FindName( const char *pname, int *pfInCache )
 				*pfInCache = ( sfx->cache != NULL ) ? true : false;
 			}
 			// prolonge registration
-			sfx->touchFrame = s_registration_sequence;
+			sfx->servercount = s_registration_sequence;
 			return sfx;
 		}
 	}
@@ -213,8 +213,8 @@ sfx_t *S_FindName( const char *pname, int *pfInCache )
 	memset( sfx, 0, sizeof( *sfx ));
 	if( pfInCache ) *pfInCache = false;
 	Q_strncpy( sfx->name, name, MAX_STRING );
-	sfx->touchFrame = s_registration_sequence;
-	sfx->hashValue = Com_HashKey( sfx->name, MAX_SFX_HASH );
+	sfx->servercount = s_registration_sequence;
+	sfx->hashValue = COM_HashKey( sfx->name, MAX_SFX_HASH );
 
 	// link it in
 	sfx->hashNext = s_sfxHashList[sfx->hashValue];
@@ -297,13 +297,14 @@ void S_EndRegistration( void )
 	sfx_t	*sfx;
 	int	i;
 
-	if( !dma.initialized ) return;
+	if( !s_registering || !dma.initialized )
+		return;
 	
 	// free any sounds not from this registration sequence
 	for( i = 0, sfx = s_knownSfx; i < s_numSfx; i++, sfx++ )
 	{
 		if( !sfx->name[0] ) continue;
-		if( sfx->touchFrame != s_registration_sequence )
+		if( sfx->servercount != s_registration_sequence )
 			S_FreeSound( sfx ); // don't need this sound
 	}
 
@@ -326,7 +327,8 @@ sound_t S_RegisterSound( const char *name )
 {
 	sfx_t	*sfx;
 
-	if( !dma.initialized ) return 0;
+	if( !COM_CheckString( name ) || !dma.initialized )
+		return -1;
 
 	if( S_TestSoundChar( name, '!' ))
 	{
@@ -341,7 +343,7 @@ sound_t S_RegisterSound( const char *name )
 	sfx = S_FindName( name, NULL );
 	if( !sfx ) return -1;
 
-	sfx->touchFrame = s_registration_sequence;
+	sfx->servercount = s_registration_sequence;
 	if( !s_registering ) S_LoadSound( sfx );
 
 	return sfx - s_knownSfx;
@@ -349,7 +351,7 @@ sound_t S_RegisterSound( const char *name )
 
 sfx_t *S_GetSfxByHandle( sound_t handle )
 {
-	if( !dma.initialized )
+	if( handle == -1 || !dma.initialized )
 		return NULL;
 
 	if( handle == SENTENCE_INDEX )

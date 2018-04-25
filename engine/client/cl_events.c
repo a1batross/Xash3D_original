@@ -28,7 +28,7 @@ CL_ResetEvent
 void CL_ResetEvent( event_info_t *ei )
 {
 	ei->index = 0;
-	memset( &ei->args, 0, sizeof( ei->args ) );
+	memset( &ei->args, 0, sizeof( ei->args ));
 	ei->fire_time = 0.0;
 	ei->flags = 0;
 }
@@ -135,7 +135,7 @@ word CL_EventIndex( const char *name )
 {
 	int	i;
 	
-	if( !name || !name[0] )
+	if( !COM_CheckString( name ))
 		return 0;
 
 	for( i = 1; i < MAX_EVENTS && cl.event_precache[i][0]; i++ )
@@ -144,20 +144,6 @@ word CL_EventIndex( const char *name )
 			return i;
 	}
 	return 0;
-}
-
-/*
-=============
-CL_EventIndex
-
-=============
-*/
-const char *CL_IndexEvent( word index )
-{
-	if( index < 0 || index >= MAX_EVENTS )
-		return 0;
-
-	return cl.event_precache[index];
 }
 
 /*
@@ -184,7 +170,7 @@ void CL_RegisterEvent( int lastnum, const char *szEvName, pfnEventHook func )
 	ev = clgame.events[lastnum];
 
 	// NOTE: ev->index will be set later
-	Q_strncpy( ev->name, szEvName, CS_SIZE );
+	Q_strncpy( ev->name, szEvName, MAX_QPATH );
 	ev->func = func;
 }
 

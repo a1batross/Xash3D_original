@@ -89,10 +89,10 @@ void V_SetupViewModel( void )
 	view->curstate.colormap = (info->topcolor & 0xFFFF)|((info->bottomcolor << 8) & 0xFFFF);
 	view->curstate.number = cl.playernum + 1;
 	view->index = cl.playernum + 1;
-	view->model = Mod_Handle( cl.local.viewmodel );
+	view->model = CL_ModelHandle( cl.local.viewmodel );
 	view->curstate.modelindex = cl.local.viewmodel;
 	view->curstate.sequence = cl.local.weaponsequence;
-	view->curstate.rendermode = kRenderNormal;	// EXPERIMENTAL!!!
+	view->curstate.rendermode = kRenderNormal;
 
 	// alias models has another animation methods
 	if( view->model && view->model->type == mod_studio )
@@ -143,7 +143,11 @@ void V_SetRefParams( ref_params_t *fd )
 	fd->demoplayback = cls.demoplayback;
 	fd->hardware = 1; // OpenGL
 
-	if( cl.first_frame ) fd->smoothing = true;	// NOTE: currently this used to prevent ugly un-duck effect while level is changed
+	if( cl.first_frame )
+	{
+		cl.first_frame = false;		// now can be unlocked
+		fd->smoothing = true;		// NOTE: currently this used to prevent ugly un-duck effect while level is changed
+	}
 	else fd->smoothing = cl.local.pushmsec;		// enable smoothing in multiplayer by server request (AMX uses)
 
 	// get pointers to movement vars and user cmd
@@ -271,10 +275,10 @@ qboolean V_PreRender( void )
 	if( !glw_state.initialized )
 		return false;
 
-	if( host.state == HOST_NOFOCUS )
+	if( host.status == HOST_NOFOCUS )
 		return false;
 
-	if( host.state == HOST_SLEEP )
+	if( host.status == HOST_SLEEP )
 		return false;
 
 	// if the screen is disabled (loading plaque is up)
@@ -353,11 +357,11 @@ void V_PostRender( void )
 	R_AllowFog( false );
 	R_Set2DMode( true );
 
-	if( cls.state == ca_active && cls.scrshot_action != scrshot_mapshot )
+	if( cls.state == ca_active && cls.signon == SIGNONS && cls.scrshot_action != scrshot_mapshot )
 	{
 		SCR_TileClear();
 		CL_DrawHUD( CL_ACTIVE );
-		VGui_Paint();
+		VGui_Paint( true );
 	}
 
 	switch( cls.scrshot_action )

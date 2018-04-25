@@ -19,15 +19,12 @@ GNU General Public License for more details.
 #include "common.h"
 #include "edict.h"
 #include "eiface.h"
-#include "com_model.h"
 
 // 1/32 epsilon to keep floating point happy
 #define DIST_EPSILON		(1.0f / 32.0f)
 #define FRAC_EPSILON		(1.0f / 1024.0f)
 #define BACKFACE_EPSILON		0.01f
 #define MAX_BOX_LEAFS		256
-#define DVIS_PVS			0
-#define DVIS_PHS			1
 #define ANIM_CYCLE			2
 #define MOD_FRAMES			20
 
@@ -42,15 +39,20 @@ GNU General Public License for more details.
 #define PANTS_HUE_START		96
 #define PANTS_HUE_END		112
 
-#define LM_SAMPLE_SIZE		world.lm_sample_size	// lightmap resoultion
+#define LM_SAMPLE_SIZE		16
+#define LM_SAMPLE_EXTRASIZE		8
+
+#define MAX_MAP_WADS		256	// max wads that can be referenced per one map
 
 #define CHECKVISBIT( vis, b )		((b) >= 0 ? (byte)((vis)[(b) >> 3] & (1 << ((b) & 7))) : (byte)false )
 #define SETVISBIT( vis, b )( void )	((b) >= 0 ? (byte)((vis)[(b) >> 3] |= (1 << ((b) & 7))) : (byte)false )
 #define CLEARVISBIT( vis, b )( void )	((b) >= 0 ? (byte)((vis)[(b) >> 3] &= ~(1 << ((b) & 7))) : (byte)false )
 
-#define REFPVS_RADIUS		2.0f			// radius for rendering
-#define FATPVS_RADIUS		8.0f			// FatPVS use radius smaller than the FatPHS
+#define REFPVS_RADIUS		2.0f	// radius for rendering
+#define FATPVS_RADIUS		8.0f	// FatPVS use radius smaller than the FatPHS
 #define FATPHS_RADIUS		16.0f
+
+#define WORLD_INDEX			(1)	// world index is always 1
 
 // model flags (stored in model_t->flags)
 #define MODEL_CONVEYOR		BIT( 0 )
@@ -59,43 +61,59 @@ GNU General Public License for more details.
 #define MODEL_TRANSPARENT		BIT( 3 )	// have transparent surfaces
 #define MODEL_COLORED_LIGHTING	BIT( 4 )	// lightmaps stored as RGB
 
+#define MODEL_WORLD			BIT( 29 )	// it's a worldmodel
 #define MODEL_CLIENT		BIT( 30 )	// client sprite
 
-typedef struct wadlist_s
-{
-	char		wadnames[256][32];
-	int		count;
-} wadlist_t;
+// goes into world.flags
+#define FWORLD_SKYSPHERE		BIT( 0 )
+#define FWORLD_CUSTOM_SKYBOX		BIT( 1 )
+#define FWORLD_WATERALPHA		BIT( 2 )
+#define FWORLD_HAS_DELUXEMAP		BIT( 3 )
 
-typedef struct leaflist_s
+typedef struct consistency_s
 {
-	int		count;
-	int		maxcount;
-	qboolean		overflowed;
-	short		*list;
-	vec3_t		mins, maxs;
-	int		topnode;		// for overflows where each leaf can't be stored individually
-} leaflist_t;
+	const char	*filename;
+	int		orig_index;
+	int		check_type;
+	qboolean		issound;
+	int		value;
+	vec3_t		mins;
+	vec3_t		maxs;
+} consistency_t;
+
+#define FCRC_SHOULD_CHECKSUM	BIT( 0 )
+#define FCRC_CHECKSUM_DONE	BIT( 1 )
 
 typedef struct
 {
-	int		version;		// bsp version
-	int		mapversion;	// map version (an key-value in worldspawn settings)
-	uint		checksum;		// current map checksum
-	int		load_sequence;	// increace each map change
-	msurface_t	**draw_surfaces;	// used for sorting translucent surfaces
-	int		max_surfaces;	// max surfaces per submodel (for all models)
+	int		flags;
+	CRC32_t		initialCRC;
+} model_info_t;
 
+// values for model_t's needload
+#define NL_UNREFERENCED	0		// this model can be freed after sequence precaching is done
+#define NL_NEEDS_LOADED	1
+#define NL_PRESENT		2
+
+typedef struct
+{
+	msurface_t	*surf;
+	int		cull;
+} sortedface_t;
+
+typedef struct
+{
 	qboolean		loading;		// true if worldmodel is loading
-	qboolean		sky_sphere;	// true when quake sky-sphere is used
-	qboolean		has_mirrors;	// one or more brush models contain reflective textures
-	qboolean		custom_skybox;	// if sky_sphere is active and custom skybox set
-	qboolean		water_alpha;	// allow translucency water
-	int		lm_sample_size;	// defaulting to 16 (BSP31 uses 8)
-	int		block_size;	// lightmap blocksize
-	color24		*deluxedata;	// deluxemap data pointer
+	int		flags;		// misc flags
+
+	// mapstats info
 	char		message[2048];	// just for debug
 	char		compiler[256];	// map compiler
+	char		generator[256];	// map editor
+
+	// translucent sorted array
+	sortedface_t	*draw_surfaces;	// used for sorting translucent surfaces
+	int		max_surfaces;	// max surfaces per submodel (for all models)
 
 	// visibility info
 	byte		*visdata;		// uncompressed visdata
@@ -103,13 +121,7 @@ typedef struct
 	size_t		fatbytes;		// fatpvs size
 	int		visclusters;	// num visclusters
 
-	// world stats
-	size_t		visdatasize;	// actual size of the visdata
-	size_t		litdatasize;	// actual size of the lightdata
-	size_t		vecdatasize;	// actual size of the deluxdata
-	size_t		entdatasize;	// actual size of the entity string
-	size_t		texdatasize;	// actual size of the textures lump
-
+	// world bounds
 	vec3_t		mins;		// real accuracy world bounds
 	vec3_t		maxs;
 	vec3_t		size;
@@ -119,43 +131,45 @@ extern world_static_t	world;
 extern byte		*com_studiocache;
 extern model_t		*loadmodel;
 extern convar_t		*mod_studiocache;
-extern int		bmodel_version;	// only actual during loading
+extern convar_t		*r_wadtextures;
 
 //
 // model.c
 //
 void Mod_Init( void );
-void Mod_ClearAll( qboolean keep_playermodel );
+void Mod_FreeAll( void );
 void Mod_Shutdown( void );
 void Mod_ClearUserData( void );
-void Mod_PrintBSPFileSizes( void );
-void Mod_GetBounds( int handle, vec3_t mins, vec3_t maxs );
-void Mod_GetFrames( int handle, int *numFrames );
-void Mod_LoadWorld( const char *name, uint *checksum, qboolean multiplayer );
-int Mod_FrameCount( model_t *mod );
-void Mod_FreeUnused( void );
+model_t *Mod_LoadWorld( const char *name, qboolean preload );
 void *Mod_Calloc( int number, size_t size );
 void *Mod_CacheCheck( struct cache_user_s *c );
 void Mod_LoadCacheFile( const char *path, struct cache_user_s *cu );
 void *Mod_AliasExtradata( model_t *mod );
 void *Mod_StudioExtradata( model_t *mod );
-model_t *Mod_FindName( const char *name, qboolean create );
-model_t *Mod_LoadModel( model_t *mod, qboolean world );
-model_t *Mod_ForName( const char *name, qboolean world );
-qboolean Mod_RegisterModel( const char *name, int index );
-mleaf_t *Mod_PointInLeaf( const vec3_t p, mnode_t *node );
-qboolean Mod_HeadnodeVisible( mnode_t *node, const byte *visbits, short *lastleaf );
-int Mod_BoxLeafnums( const vec3_t mins, const vec3_t maxs, short *list, int listsize, int *lastleaf );
+model_t *Mod_FindName( const char *name, qboolean trackCRC );
+model_t *Mod_LoadModel( model_t *mod, qboolean crash );
+model_t *Mod_ForName( const char *name, qboolean crash, qboolean trackCRC );
+qboolean Mod_ValidateCRC( const char *name, CRC32_t crc );
+void Mod_NeedCRC( const char *name, qboolean needCRC );
+void Mod_FreeUnused( void );
+
+//
+// mod_bmodel.c
+//
+void Mod_LoadBrushModel( model_t *mod, const void *buffer, qboolean *loaded );
+qboolean Mod_TestBmodelLumps( const char *name, const byte *mod_base, qboolean silent );
+qboolean Mod_HeadnodeVisible( mnode_t *node, const byte *visbits, int *lastleaf );
 int Mod_FatPVS( const vec3_t org, float radius, byte *visbuffer, int visbytes, qboolean merge, qboolean fullvis );
 qboolean Mod_BoxVisible( const vec3_t mins, const vec3_t maxs, const byte *visbits );
 int Mod_CheckLump( const char *filename, const int lump, int *lumpsize );
 int Mod_ReadLump( const char *filename, const int lump, void **lumpdata, int *lumpsize );
 int Mod_SaveLump( const char *filename, const int lump, void *lumpdata, int lumpsize );
+mleaf_t *Mod_PointInLeaf( const vec3_t p, mnode_t *node );
 void Mod_AmbientLevels( const vec3_t p, byte *pvolumes );
 int Mod_SampleSizeForFace( msurface_t *surf );
 byte *Mod_GetPVSForPoint( const vec3_t p );
-modtype_t Mod_GetType( int handle );
-model_t *Mod_Handle( int handle );
+void Mod_UnloadBrushModel( model_t *mod );
+void Mod_PrintWorldStats_f( void );
 
 //
 // mod_studio.c
@@ -163,6 +177,7 @@ model_t *Mod_Handle( int handle );
 void Mod_InitStudioAPI( void );
 void Mod_InitStudioHull( void );
 void Mod_ResetStudioAPI( void );
+const char *Mod_StudioTexName( const char *modname );
 qboolean Mod_GetStudioBounds( const char *name, vec3_t mins, vec3_t maxs );
 void Mod_StudioGetAttachment( const edict_t *e, int iAttachment, float *org, float *ang );
 void Mod_GetBonePosition( const edict_t *e, int iBone, float *org, float *ang );
@@ -172,6 +187,9 @@ void R_StudioCalcBoneQuaternion( int frame, float s, void *pbone, void *panim, f
 void R_StudioCalcBonePosition( int frame, float s, void *pbone, void *panim, vec3_t adj, vec3_t pos );
 void *R_StudioGetAnim( void *m_pStudioHeader, void *m_pSubModel, void *pseqdesc );
 void Mod_StudioComputeBounds( void *buffer, vec3_t mins, vec3_t maxs, qboolean ignore_sequences );
+void Mod_StudioLoadTextures( model_t *mod, void *data );
+void Mod_StudioUnloadTextures( void *data );
 int Mod_HitgroupForStudioHull( int index );
+void Mod_ClearStudioCache( void );
 
 #endif//MOD_LOCAL_H

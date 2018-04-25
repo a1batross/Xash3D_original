@@ -19,20 +19,28 @@ GNU General Public License for more details.
 
 #define MAX_CMD_BUFFER	32768
 #define MAX_CMD_LINE	2048
+#define MAX_ALIAS_NAME	32
+
+typedef struct cmdalias_s
+{
+	struct cmdalias_s	*next;
+	char		name[MAX_ALIAS_NAME];
+	char		*value;
+} cmdalias_t;
 
 typedef struct
 {
-	byte	*data;
-	int	cursize;
-	int	maxsize;
+	byte		*data;
+	int		cursize;
+	int		maxsize;
 } cmdbuf_t;
 
-qboolean		cmd_wait;
-cmdbuf_t		cmd_text;
-byte		cmd_text_buf[MAX_CMD_BUFFER];
-cmdalias_t	*cmd_alias;
-uint		cmd_condition;
-int		cmd_condlevel;
+qboolean			cmd_wait;
+cmdbuf_t			cmd_text;
+byte			cmd_text_buf[MAX_CMD_BUFFER];
+cmdalias_t		*cmd_alias;
+uint			cmd_condition;
+int			cmd_condlevel;
 
 /*
 =============================================================================
@@ -73,7 +81,7 @@ void *Cbuf_GetSpace( cmdbuf_t *buf, int length )
 {
 	void    *data;
 	
-	if( buf->cursize + length > buf->maxsize )
+	if(( buf->cursize + length ) > buf->maxsize )
 	{
 		buf->cursize = 0;
 		Host_Error( "Cbuf_GetSpace: overflow\n" );
@@ -96,7 +104,7 @@ void Cbuf_AddText( const char *text )
 {
 	int	l = Q_strlen( text );
 
-	if( cmd_text.cursize + l >= cmd_text.maxsize )
+	if(( cmd_text.cursize + l ) >= cmd_text.maxsize )
 	{
 		MsgDev( D_WARN, "Cbuf_AddText: overflow\n" );
 	}
@@ -118,7 +126,7 @@ void Cbuf_InsertText( const char *text )
 {
 	int	l = Q_strlen( text );
 
-	if( cmd_text.cursize + l >= cmd_text.maxsize )
+	if(( cmd_text.cursize + l ) >= cmd_text.maxsize )
 	{
 		MsgDev( D_WARN, "Cbuf_InsertText: overflow\n" );
 	}
@@ -285,8 +293,8 @@ Cmd_StuffCmds_f
 
 Adds command line parameters as script statements
 Commands lead with a +, and continue until a - or another +
-xash -dev 3 +map c1a0d
-xash -nosound -game bshift
+hl.exe -dev 3 +map c1a0d
+hl.exe -nosound -game bshift
 ===============
 */
 void Cmd_StuffCmds_f( void )
@@ -320,8 +328,8 @@ void Cmd_Echo_f( void )
 	int	i;
 	
 	for( i = 1; i < Cmd_Argc(); i++ )
-		Sys_Print( Cmd_Argv( i ));
-	Sys_Print( "\n" );
+		Con_Printf( "%s", Cmd_Argv( i ));
+	Con_Printf( "\n" );
 }
 
 /*
@@ -340,9 +348,9 @@ void Cmd_Alias_f( void )
 
 	if( Cmd_Argc() == 1 )
 	{
-		Msg( "Current alias commands:\n" );
+		Con_Printf( "Current alias commands:\n" );
 		for( a = cmd_alias; a; a = a->next )
-			Msg( "^2%s^7 : ^3%s^7\n", a->name, a->value );
+			Con_Printf( "^2%s^7 : ^3%s^7\n", a->name, a->value );
 		return;
 	}
 
@@ -350,7 +358,7 @@ void Cmd_Alias_f( void )
 
 	if( Q_strlen( s ) >= MAX_ALIAS_NAME )
 	{
-		Msg( "Alias name is too long\n" );
+		Con_Printf( "Alias name is too long\n" );
 		return;
 	}
 
@@ -410,7 +418,7 @@ static void Cmd_UnAlias_f ( void )
 
 	if( Cmd_Argc() == 1 )
 	{
-		Msg( "Usage: unalias alias1 [alias2 ...]\n" );
+		Con_Printf( S_USAGE "unalias alias1 [alias2 ...]\n" );
 		return;
 	}
 
@@ -432,7 +440,7 @@ static void Cmd_UnAlias_f ( void )
 			}
 		}
 
-		if( !a ) Msg( "unalias: %s alias not found\n", s );
+		if( !a ) Con_Printf( "%s not found\n", s );
 	}
 }
 
@@ -492,47 +500,6 @@ char *Cmd_Args( void )
 
 /*
 ============
-Cmd_AliasGetList
-============
-*/
-struct cmdalias_s *Cmd_AliasGetList( void )
-{
-	return cmd_alias;
-}
-
-/*
-============
-Cmd_GetList
-============
-*/
-struct cmd_s *Cmd_GetFirstFunctionHandle( void )
-{
-	return cmd_functions;
-}
-
-/*
-============
-Cmd_GetNext
-============
-*/
-struct cmd_s *Cmd_GetNextFunctionHandle( struct cmd_s *cmd )
-{
-	return (cmd) ? cmd->next : NULL;
-}
-
-
-/*
-============
-Cmd_GetName
-============
-*/
-char *Cmd_GetName( struct cmd_s *cmd )
-{
-	return cmd->name;
-}
-
-/*
-============
 Cmd_TokenizeString
 
 Parses the given string into command line tokens.
@@ -575,8 +542,11 @@ void Cmd_TokenizeString( char *text )
 	
 		if( cmd_argc == 1 )
 			 cmd_args = text;
-			
+
+		host.com_ignorebracket = true;			
 		text = COM_ParseFile( text, cmd_token );
+		host.com_ignorebracket = false;
+
 		if( !text ) return;
 
 		if( cmd_argc < MAX_CMD_TOKENS )
@@ -599,14 +569,14 @@ void Cmd_AddCommand( const char *cmd_name, xcommand_t function, const char *cmd_
 	// fail if the command is a variable name
 	if( Cvar_FindVar( cmd_name ))
 	{
-		MsgDev( D_INFO, "Cmd_AddCommand: %s already defined as a var\n", cmd_name );
+		Con_Printf( S_ERROR "Cmd_AddCommand: %s already defined as a var\n", cmd_name );
 		return;
 	}
 	
 	// fail if the command already exists
 	if( Cmd_Exists( cmd_name ))
 	{
-		MsgDev( D_INFO, "Cmd_AddCommand: %s already defined\n", cmd_name );
+		Con_Printf( S_ERROR "Cmd_AddCommand: %s already defined\n", cmd_name );
 		return;
 	}
 
@@ -851,14 +821,14 @@ void Cmd_If_f( void )
 	// usage
 	if( cmd_argc == 1 )
 	{
-		Msg( "Usage: if <op1> [ <operator> <op2> ]\n");
-		Msg( ":<action1>\n" );
-		Msg( ":<action2>\n" );
-		Msg( "else\n" );
-		Msg( ":<action3>\n" );
-		Msg( "operands are string or float values\n" );
-		Msg( "and substituted cvars like '$cl_lw'\n" );
-		Msg( "operator is '='', '==', '>', '<', '>=', '<=' or '!='\n" );
+		Con_Printf( S_USAGE "if <op1> [ <operator> <op2> ]\n");
+		Con_Printf( ":<action1>\n" );
+		Con_Printf( ":<action2>\n" );
+		Con_Printf( "else\n" );
+		Con_Printf( ":<action3>\n" );
+		Con_Printf( "operands are string or float values\n" );
+		Con_Printf( "and substituted cvars like '$cl_lw'\n" );
+		Con_Printf( "operator is '='', '==', '>', '<', '>=', '<=' or '!='\n" );
 		return;
 	}
 
@@ -1016,7 +986,7 @@ void Cmd_ExecuteString( char *text )
 	else if( text[0] != '@' && host.type == HOST_NORMAL )
 	{
 		// commands with leading '@' are hidden system commands
-		MsgDev( D_INFO, "Unknown command \"%s\"\n", text );
+		Con_Printf( S_WARN "Unknown command \"%s\"\n", text );
 	}
 }
 
@@ -1040,14 +1010,14 @@ void Cmd_ForwardToServer( void )
 		return;
 	}
 
-	if( cls.state != ca_connected && cls.state != ca_active )
+	if( cls.state < ca_connected || cls.state > ca_active )
 	{
 		if( Q_stricmp( Cmd_Argv( 0 ), "setinfo" ))
-			MsgDev( D_INFO, "Can't \"%s\", not connected\n", Cmd_Argv( 0 ));
+			Con_Printf( "Can't \"%s\", not connected\n", Cmd_Argv( 0 ));
 		return; // not connected
 	}
 
-	MSG_WriteByte( &cls.netchan.message, clc_stringcmd );
+	MSG_BeginClientCmd( &cls.netchan.message, clc_stringcmd );
 
 	str[0] = 0;
 	if( Q_stricmp( Cmd_Argv( 0 ), "cmd" ))
@@ -1085,11 +1055,11 @@ void Cmd_List_f( void )
 		if( match && !Q_stricmpext( match, cmd->name ))
 			continue;
 
-		Msg( " %-*s ^3%s^7\n", 32, cmd->name, cmd->desc );
+		Con_Printf( " %-*s ^3%s^7\n", 32, cmd->name, cmd->desc );
 		i++;
 	}
 
-	Msg( "%i commands\n", i );
+	Con_Printf( "%i commands\n", i );
 }
 
 /*
@@ -1106,22 +1076,13 @@ void Cmd_Unlink( int group )
 	int	count = 0;
 
 	if( Cvar_VariableInteger( "host_gameloaded" ) && FBitSet( group, CMD_SERVERDLL ))
-	{
-		MsgDev( D_INFO, "can't unlink commands while server is loaded\n" );
 		return;
-	}
 
 	if( Cvar_VariableInteger( "host_clientloaded" ) && FBitSet( group, CMD_CLIENTDLL ))
-	{
-		MsgDev( D_INFO, "can't unlink commands while client is loaded\n" );
 		return;
-	}
 
 	if( Cvar_VariableInteger( "host_gameuiloaded" ) && FBitSet( group, CMD_GAMEUIDLL ))
-	{
-		MsgDev( D_INFO, "can't unlink commands while GameUI is loaded\n" );
 		return;
-	}
 
 	prev = &cmd_functions;
 
@@ -1145,6 +1106,8 @@ void Cmd_Unlink( int group )
 		Mem_Free( cmd );
 		count++;
 	}
+
+	Con_Reportf( "unlink %i commands\n", count );
 }
 
 /*

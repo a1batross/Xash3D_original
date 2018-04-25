@@ -206,7 +206,7 @@ static void UI_Main_ActivateFunc( void )
 	if ( !CL_IsActive( ))
 		uiMain.resumeGame.generic.flags |= QMF_HIDDEN;
 
-	if( gpGlobals->developer )
+	if( gpGlobals->allow_console )
 	{
 		uiMain.console.generic.y = CL_IsActive() ? 180 : 230;
 		UI_ScaleCoords( NULL, &uiMain.console.generic.y, NULL, NULL );
@@ -567,7 +567,7 @@ static void UI_Main_Init( void )
 
 	UI_AddItem( &uiMain.menu, (void *)&uiMain.background );
 
-	if ( gpGlobals->developer )
+	if ( gpGlobals->allow_console )
 		UI_AddItem( &uiMain.menu, (void *)&uiMain.console );
 
 	UI_AddItem( &uiMain.menu, (void *)&uiMain.resumeGame );

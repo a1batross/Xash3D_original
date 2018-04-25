@@ -16,18 +16,8 @@ GNU General Public License for more details.
 #include "common.h"
 #include "math.h"	// fabs...
 
-convar_t	*cvar_vars; // head of list
+convar_t	*cvar_vars = NULL; // head of list
 convar_t	*cmd_scripting;
-
-/*
-============
-Cvar_GetListHead
-============
-*/
-cvar_t *Cvar_GetListHead( void )
-{
-	return (cvar_t *)cvar_vars;
-}
 
 /*
 ============
@@ -53,6 +43,40 @@ convar_t *Cvar_FindVarExt( const char *var_name, int ignore_group )
 	}
 
 	return NULL;
+}
+
+/*
+============
+Cvar_BuildAutoDescription
+
+build cvar auto description that based on the setup flags
+============
+*/
+const char *Cvar_BuildAutoDescription( int flags )
+{
+	static char	desc[128];
+
+	desc[0] = '\0';
+
+	if( FBitSet( flags, FCVAR_EXTDLL ))
+		Q_strncpy( desc, "game ", sizeof( desc ));
+	else if( FBitSet( flags, FCVAR_CLIENTDLL ))
+		Q_strncpy( desc, "client ", sizeof( desc ));
+	else if( FBitSet( flags, FCVAR_GAMEUIDLL ))
+		Q_strncpy( desc, "GameUI ", sizeof( desc ));
+
+	if( FBitSet( flags, FCVAR_SERVER ))
+		Q_strncat( desc, "server ", sizeof( desc ));
+
+	if( FBitSet( flags, FCVAR_USERINFO ))
+		Q_strncat( desc, "user ", sizeof( desc ));
+
+	if( FBitSet( flags, FCVAR_ARCHIVE ))
+		Q_strncat( desc, "archived ", sizeof( desc ));
+
+	Q_strncat( desc, "cvar", sizeof( desc ));
+
+	return desc;
 }
 
 /*
@@ -89,12 +113,12 @@ static qboolean Cvar_UpdateInfo( convar_t *var, const char *value, qboolean noti
 			if( FBitSet( var->flags, FCVAR_PROTECTED ))
 			{
 				Log_Printf( "Server cvar \"%s\" = \"%s\"\n", var->name, "***PROTECTED***" );
-				SV_BroadcastPrintf( NULL, PRINT_HIGH, "\"%s\" changed to \"%s\"\n", var->name, "***PROTECTED***" );
+				SV_BroadcastPrintf( NULL, "\"%s\" changed to \"%s\"\n", var->name, "***PROTECTED***" );
 			}
 			else
 			{
 				Log_Printf( "Server cvar \"%s\" = \"%s\"\n", var->name, value );
-				SV_BroadcastPrintf( NULL, PRINT_HIGH, "\"%s\" changed to \"%s\"\n", var->name, value );
+				SV_BroadcastPrintf( NULL, "\"%s\" changed to \"%s\"\n", var->name, value );
 			}
 		}
 	}
@@ -169,6 +193,58 @@ const char *Cvar_ValidateString( convar_t *var, const char *value )
 
 /*
 ============
+Cvar_UnlinkVar
+
+unlink the variable
+============
+*/
+int Cvar_UnlinkVar( const char *var_name, int group )
+{
+	int	count = 0;
+	convar_t	**prev;
+	convar_t	*var;
+
+	prev = &cvar_vars;
+
+	while( 1 )
+	{
+		var = *prev;
+		if( !var ) break;
+
+		// do filter by name
+		if( var_name && Q_strcmp( var->name, var_name ))
+		{
+			prev = &var->next;
+			continue;
+		}
+
+		// do filter by specified group
+		if( group && !FBitSet( var->flags, group ))
+		{
+			prev = &var->next;
+			continue;
+		}
+
+		// unlink variable from list
+		freestring( var->string );
+		*prev = var->next;
+
+		// only allocated cvars can throw these fields
+		if( FBitSet( var->flags, FCVAR_ALLOCATED ))
+		{
+			freestring( var->name );
+			freestring( var->def_string );
+			freestring( var->desc );
+			Mem_Free( var );
+		}
+		count++;
+	}
+
+	return count;
+}
+
+/*
+============
 Cvar_Changed
 
 Tell the engine parts about cvar changing
@@ -176,7 +252,7 @@ Tell the engine parts about cvar changing
 */
 static void Cvar_Changed( convar_t *var )
 {
-	ASSERT( var != NULL );
+	Assert( var != NULL );
 
 	// tell about changes
 	SetBits( var->flags, FCVAR_CHANGED );
@@ -239,7 +315,7 @@ convar_t *Cvar_Get( const char *name, const char *value, int flags, const char *
 {
 	convar_t	*cur, *find, *var;
 	
-	ASSERT( name != NULL );
+	ASSERT( name && *name );
 
 	// check for command coexisting
 	if( Cmd_Exists( name ))
@@ -323,15 +399,23 @@ Adds a freestanding variable to the variable list.
 */
 void Cvar_RegisterVariable( convar_t *var )
 {
-	convar_t	*cur, *find;
+	convar_t	*cur, *find, *dup;
 
 	ASSERT( var != NULL );
 
 	// first check to see if it has allready been defined
-	if( Cvar_FindVar( var->name ))
+	dup = Cvar_FindVar( var->name );
+
+	if( dup )
 	{
-		MsgDev( D_ERROR, "can't register variable '%s', is already defined\n", var->name );
-		return;
+		if( !FBitSet( dup->flags, FCVAR_TEMPORARY ))
+		{
+			MsgDev( D_ERROR, "can't register variable '%s', is already defined\n", var->name );
+			return;
+		}
+
+		// time to replace temp variable with real
+		Cvar_UnlinkVar( var->name, FCVAR_TEMPORARY );
 	}
 
 	// check for overlap with a command
@@ -398,26 +482,26 @@ void Cvar_DirectSet( convar_t *var, const char *value )
 
 	if( FBitSet( var->flags, FCVAR_READ_ONLY|FCVAR_GLCONFIG ))
 	{
-		MsgDev( D_INFO, "%s is read-only.\n", var->name );
+		Con_Printf( "%s is read-only.\n", var->name );
 		return;
 	}
 	
 	if( FBitSet( var->flags, FCVAR_CHEAT ) && !host.allow_cheats )
 	{
-		MsgDev( D_INFO, "%s is cheat protected.\n", var->name );
+		Con_Printf( "%s is cheat protected.\n", var->name );
 		return;
 	}
 
 	// just tell user about deferred changes
 	if( FBitSet( var->flags, FCVAR_LATCH ) && ( SV_Active() || CL_Active( )))
-		MsgDev( D_INFO, "%s will be changed upon restarting.\n", var->name );
+		Con_Printf( "%s will be changed upon restarting.\n", var->name );
 
 	// check value
 	if( !value )
 	{
 		if( !FBitSet( var->flags, FCVAR_EXTENDED|FCVAR_ALLOCATED ))
 		{
-			MsgDev( D_INFO, "%s has no default value and can't be reset.\n", var->name );
+			Con_Printf( "%s has no default value and can't be reset.\n", var->name );
 			return;
 		}
 
@@ -597,6 +681,13 @@ qboolean Cvar_Command( void )
 {
 	convar_t	*v;
 
+	// special case for setup opengl configuration
+	if( host.apply_opengl_config )
+	{
+		Cvar_FullSet( Cmd_Argv( 0 ), Cmd_Argv( 1 ), FCVAR_GLCONFIG );
+		return true;
+	}
+
 	// check variables
 	v = Cvar_FindVar( Cmd_Argv( 0 ));
 	if( !v ) return false;
@@ -605,8 +696,8 @@ qboolean Cvar_Command( void )
 	if( Cmd_Argc() == 1 )
 	{
 		if( FBitSet( v->flags, FCVAR_ALLOCATED|FCVAR_EXTENDED ))
-			Msg( "\"%s\" is \"%s\" ( ^3\"%s\"^7 )\n", v->name, v->string, v->def_string );
-		else Msg( "\"%s\" is \"%s\"\n", v->name, v->string );
+			Con_Printf( "\"%s\" is \"%s\" ( ^3\"%s\"^7 )\n", v->name, v->string, v->def_string );
+		else Con_Printf( "\"%s\" is \"%s\"\n", v->name, v->string );
 
 		return true;
 	}
@@ -619,7 +710,7 @@ qboolean Cvar_Command( void )
 
 	if( FBitSet( v->flags, FCVAR_SPONLY ) && CL_GetMaxClients() > 1 )
 	{
-		Msg( "can't set \"%s\" in multiplayer\n", v->name );
+		Con_Printf( "can't set \"%s\" in multiplayer\n", v->name );
 		return false;
 	}
 	else
@@ -663,31 +754,13 @@ void Cvar_Toggle_f( void )
 
 	if( Cmd_Argc() != 2 )
 	{
-		Msg( "Usage: toggle <variable>\n" );
+		Con_Printf( S_USAGE "toggle <variable>\n" );
 		return;
 	}
 
 	v = !Cvar_VariableInteger( Cmd_Argv( 1 ));
 
 	Cvar_Set( Cmd_Argv( 1 ), va( "%i", v ));
-}
-
-/*
-============
-Cvar_SetR_f
-
-keep for legacy configs
-============
-*/
-void Cvar_SetR_f( void )
-{
-	if( Cmd_Argc() != 3 )
-	{
-		Msg( "Usage: setr <variable> <value>\n" );
-		return;
-	}
-
-	Cvar_Set( Cmd_Argv( 1 ), Cmd_Argv( 2 ));
 }
 
 /*
@@ -701,7 +774,7 @@ void Cvar_SetGL_f( void )
 {
 	if( Cmd_Argc() != 3 )
 	{
-		Msg( "Usage: setgl <variable> <value>\n" );
+		Con_Printf( S_USAGE "setgl <variable> <value>\n" );
 		return;
 	}
 
@@ -717,7 +790,7 @@ void Cvar_Reset_f( void )
 {
 	if( Cmd_Argc() != 2 )
 	{
-		Msg( "Usage: reset <variable>\n" );
+		Con_Printf( S_USAGE "reset <variable>\n" );
 		return;
 	}
 
@@ -752,13 +825,13 @@ void Cvar_List_f( void )
 		else value = va( "\"^2%s^7\"", var->string );
 
 		if( FBitSet( var->flags, FCVAR_EXTENDED|FCVAR_ALLOCATED ))
-			Msg( " %-*s %s ^3%s^7\n", 32, var->name, value, var->desc );
-		else Msg( " %-*s %s\n", 32, var->name, value );
+			Con_Printf( " %-*s %s ^3%s^7\n", 32, var->name, value, var->desc );
+		else Con_Printf( " %-*s %s ^3%s^7\n", 32, var->name, value, Cvar_BuildAutoDescription( var->flags ));
 
 		count++;
 	}
 
-	Msg( "\n%i cvars\n", count );
+	Con_Printf( "\n%i cvars\n", count );
 }
 
 /*
@@ -770,58 +843,19 @@ unlink all cvars with specified flag
 */
 void Cvar_Unlink( int group )
 {
-	convar_t	*var;
-	convar_t	**prev;
-	int	count = 0;
+	int	count;
 
 	if( Cvar_VariableInteger( "host_gameloaded" ) && FBitSet( group, FCVAR_EXTDLL ))
-	{
-		MsgDev( D_INFO, "can't unlink variables while game is loaded\n" );
 		return;
-	}
 
 	if( Cvar_VariableInteger( "host_clientloaded" ) && FBitSet( group, FCVAR_CLIENTDLL ))
-	{
-		MsgDev( D_INFO, "can't unlink variables while client is loaded\n" );
 		return;
-	}
 
 	if( Cvar_VariableInteger( "host_gameuiloaded" ) && FBitSet( group, FCVAR_GAMEUIDLL ))
-	{
-		MsgDev( D_INFO, "can't unlink variables while GameUI is loaded\n" );
 		return;
-	}
 
-	prev = &cvar_vars;
-
-	while( 1 )
-	{
-		var = *prev;
-		if( !var ) break;
-
-		// do filter by specified group
-		if( group && !FBitSet( var->flags, group ))
-		{
-			prev = &var->next;
-			continue;
-		}
-
-		// unlink variable from list
-		freestring( var->string );
-		*prev = var->next;
-
-		// only allocated cvars can throw these fields
-		if( FBitSet( var->flags, FCVAR_ALLOCATED ))
-		{
-			freestring( var->name );
-			freestring( var->def_string );
-			freestring( var->desc );
-			Mem_Free( var );
-		}
-		count++;
-	}
-
-	MsgDev( D_INFO, "unlink %i cvars\n", count );
+	count = Cvar_UnlinkVar( NULL, group );
+	Con_Reportf( "unlink %i cvars\n", count );
 }
 
 /*
@@ -835,9 +869,9 @@ void Cvar_Init( void )
 {
 	cvar_vars = NULL;
 	cmd_scripting = Cvar_Get( "cmd_scripting", "0", FCVAR_ARCHIVE, "enable simple condition checking and variable operations" );
+	Cvar_RegisterVariable (&host_developer); // early registering for dev 
 
-	Cmd_AddCommand( "setr", Cvar_SetR_f, "create or change the value of a renderinfo variable" );
-	Cmd_AddCommand( "setgl", Cvar_SetGL_f, "create or change the value of a opengl variable" );
+	Cmd_AddCommand( "setgl", Cvar_SetGL_f, "create or change the value of a opengl variable" );	// OBSOLETE
 	Cmd_AddCommand( "toggle", Cvar_Toggle_f, "toggles a console variable's values (use for more info)" );
 	Cmd_AddCommand( "reset", Cvar_Reset_f, "reset any type variable to initial value" );
 	Cmd_AddCommand( "cvarlist", Cvar_List_f, "display all console variables beginning with the specified prefix" );

@@ -12,6 +12,7 @@
 
 namespace vgui
 {
+class Panel;
 
 class RepaintSignal
 {

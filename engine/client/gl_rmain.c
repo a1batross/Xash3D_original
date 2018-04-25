@@ -29,9 +29,9 @@ const char	*r_debug_hitbox;
 float		gldepthmin, gldepthmax;
 ref_instance_t	RI;
 
-static int R_RankForRenderMode( cl_entity_t *ent )
+static int R_RankForRenderMode( int rendermode )
 {
-	switch( ent->curstate.rendermode )
+	switch( rendermode )
 	{
 	case kRenderTransTexture:
 		return 1;	// draw second
@@ -63,40 +63,6 @@ void R_AllowFog( int allowed )
 
 /*
 ===============
-R_StaticEntity
-
-Static entity is the brush which has no custom origin and not rotated
-typically is a func_wall, func_breakable, func_ladder etc
-===============
-*/
-qboolean R_StaticEntity( cl_entity_t *ent )
-{
-	if( !gl_allow_static->value )
-		return false;
-
-	if( ent->curstate.rendermode != kRenderNormal )
-		return false;
-
-	if( ent->model->type != mod_brush )
-		return false;
-
-	if( ent->curstate.effects & ( EF_NOREFLECT|EF_REFLECTONLY ))
-		return false;
-
-	if( ent->curstate.frame || ent->model->flags & MODEL_CONVEYOR )
-		return false;
-
-	if( ent->curstate.scale ) // waveheight specified
-		return false;
-
-	if( !VectorIsNull( ent->origin ) || !VectorIsNull( ent->angles ))
-		return false;
-
-	return true;
-}
-
-/*
-===============
 R_OpaqueEntity
 
 Opaque entity can be brush or studio model but sprite
@@ -104,15 +70,8 @@ Opaque entity can be brush or studio model but sprite
 */
 static qboolean R_OpaqueEntity( cl_entity_t *ent )
 {
-	if( ent->curstate.rendermode == kRenderNormal )
+	if( R_GetEntityRenderMode( ent ) == kRenderNormal )
 		return true;
-#if 0
-	if( ent->model->type != mod_brush )
-		return false;
-
-	if( ent->curstate.rendermode == kRenderTransAlpha )
-		return true;
-#endif
 	return false;
 }
 
@@ -128,12 +87,16 @@ static int R_TransEntityCompare( const cl_entity_t **a, const cl_entity_t **b )
 	cl_entity_t	*ent1, *ent2;
 	vec3_t		vecLen, org;
 	float		dist1, dist2;
+	int		rendermode1;
+	int		rendermode2;
 
 	ent1 = (cl_entity_t *)*a;
 	ent2 = (cl_entity_t *)*b;
+	rendermode1 = R_GetEntityRenderMode( ent1 );
+	rendermode2 = R_GetEntityRenderMode( ent2 );
 
 	// sort by distance
-	if( ent1->model->type != mod_brush || ent1->curstate.rendermode != kRenderTransAlpha )
+	if( ent1->model->type != mod_brush || rendermode1 != kRenderTransAlpha )
 	{
 		VectorAverage( ent1->model->mins, ent1->model->maxs, org );
 		VectorAdd( ent1->origin, org, org );
@@ -142,7 +105,7 @@ static int R_TransEntityCompare( const cl_entity_t **a, const cl_entity_t **b )
 	}
 	else dist1 = 1000000000;
 
-	if( ent2->model->type != mod_brush || ent2->curstate.rendermode != kRenderTransAlpha )
+	if( ent2->model->type != mod_brush || rendermode2 != kRenderTransAlpha )
 	{
 		VectorAverage( ent2->model->mins, ent2->model->maxs, org );
 		VectorAdd( ent2->origin, org, org );
@@ -157,9 +120,9 @@ static int R_TransEntityCompare( const cl_entity_t **a, const cl_entity_t **b )
 		return 1;
 
 	// then sort by rendermode
-	if( R_RankForRenderMode( ent1 ) > R_RankForRenderMode( ent2 ))
+	if( R_RankForRenderMode( rendermode1 ) > R_RankForRenderMode( rendermode2 ))
 		return 1;
-	if( R_RankForRenderMode( ent1 ) < R_RankForRenderMode( ent2 ))
+	if( R_RankForRenderMode( rendermode1 ) < R_RankForRenderMode( rendermode2 ))
 		return -1;
 
 	return 0;
@@ -231,14 +194,39 @@ void R_ScreenToWorld( const vec3_t screen, vec3_t point )
 
 /*
 ===============
+R_PushScene
+===============
+*/
+void R_PushScene( void )
+{
+	if( ++tr.draw_stack_pos >= MAX_DRAW_STACK )
+		Host_Error( "draw stack overflow\n" );
+
+	tr.draw_list = &tr.draw_stack[tr.draw_stack_pos];
+}
+
+/*
+===============
+R_PushScene
+===============
+*/
+void R_PopScene( void )
+{
+	if( --tr.draw_stack_pos < 0 )
+		Host_Error( "draw stack underflow\n" );
+	tr.draw_list = &tr.draw_stack[tr.draw_stack_pos];
+}
+
+/*
+===============
 R_ClearScene
 ===============
 */
 void R_ClearScene( void )
 {
-	tr.num_solid_entities = tr.num_trans_entities = 0;
-	tr.num_static_entities = tr.num_mirror_entities = 0;
-	cl.num_custombeams = 0;
+	tr.draw_list->num_solid_entities = 0;
+	tr.draw_list->num_trans_entities = 0;
+	tr.draw_list->num_beam_entities = 0;
 }
 
 /*
@@ -265,33 +253,21 @@ qboolean R_AddEntity( struct cl_entity_s *clent, int type )
 
 	if( R_OpaqueEntity( clent ))
 	{
-		if( R_StaticEntity( clent ))
-		{
-			// opaque static
-			if( tr.num_static_entities >= MAX_VISIBLE_PACKET )
-				return false;
+		// opaque
+		if( tr.draw_list->num_solid_entities >= MAX_VISIBLE_PACKET )
+			return false;
 
-			tr.static_entities[tr.num_static_entities] = clent;
-			tr.num_static_entities++;
-		}
-		else
-		{
-			// opaque moving
-			if( tr.num_solid_entities >= MAX_VISIBLE_PACKET )
-				return false;
-
-			tr.solid_entities[tr.num_solid_entities] = clent;
-			tr.num_solid_entities++;
-		}
+		tr.draw_list->solid_entities[tr.draw_list->num_solid_entities] = clent;
+		tr.draw_list->num_solid_entities++;
 	}
 	else
 	{
 		// translucent
-		if( tr.num_trans_entities >= MAX_VISIBLE_PACKET )
+		if( tr.draw_list->num_trans_entities >= MAX_VISIBLE_PACKET )
 			return false;
 
-		tr.trans_entities[tr.num_trans_entities] = clent;
-		tr.num_trans_entities++;
+		tr.draw_list->trans_entities[tr.draw_list->num_trans_entities] = clent;
+		tr.draw_list->num_trans_entities++;
 	}
 
 	return true;
@@ -416,13 +392,7 @@ R_SetupModelviewMatrix
 */
 static void R_SetupModelviewMatrix( matrix4x4 m )
 {
-#if 0
-	Matrix4x4_LoadIdentity( m );
-	Matrix4x4_ConcatRotate( m, -90, 1, 0, 0 );
-	Matrix4x4_ConcatRotate( m, 90, 0, 0, 1 );
-#else
 	Matrix4x4_CreateModelview( m );
-#endif
 	Matrix4x4_ConcatRotate( m, -RI.viewangles[2], 1, 0, 0 );
 	Matrix4x4_ConcatRotate( m, -RI.viewangles[0], 0, 1, 0 );
 	Matrix4x4_ConcatRotate( m, -RI.viewangles[1], 0, 0, 1 );
@@ -455,7 +425,7 @@ void R_RotateForEntity( cl_entity_t *e )
 {
 	float	scale = 1.0f;
 
-	if( e == clgame.entities || R_StaticEntity( e ))
+	if( e == clgame.entities )
 	{
 		R_LoadIdentity();
 		return;
@@ -481,7 +451,7 @@ void R_TranslateForEntity( cl_entity_t *e )
 {
 	float	scale = 1.0f;
 
-	if( e == clgame.entities || R_StaticEntity( e ))
+	if( e == clgame.entities )
 	{
 		R_LoadIdentity();
 		return;
@@ -522,7 +492,7 @@ static void R_SetupFrame( void )
 	if( !gl_nosort->value )
 	{
 		// sort translucents entities by rendermode and distance
-		qsort( tr.trans_entities, tr.num_trans_entities, sizeof( cl_entity_t* ), R_TransEntityCompare );
+		qsort( tr.draw_list->trans_entities, tr.draw_list->num_trans_entities, sizeof( cl_entity_t* ), R_TransEntityCompare );
 	}
 
 	// current viewleaf
@@ -618,7 +588,7 @@ static gltexture_t *R_RecursiveFindWaterTexture( const mnode_t *node, const mnod
 	// assure the initial node is not null
 	// we could check it here, but we would rather check it 
 	// outside the call to get rid of one additional recursion level
-	ASSERT( node != NULL );
+	Assert( node != NULL );
 
 	// ignore solid nodes
 	if( node->contents == CONTENTS_SOLID )
@@ -705,13 +675,15 @@ static void R_CheckFog( void )
 		return;
 	}
 
-	// special hack fog Spirit 1.9 that used direct calls of glFog-functions
+#ifdef HACKS_RELATED_HLMODS
+	// special condition for Spirit 1.9 that used direct calls of glFog-functions
 	if(( !RI.fogEnabled && !RI.fogCustom ) && pglIsEnabled( GL_FOG ) && VectorIsNull( RI.fogColor ))
 	{
+		// fill the fog color from GL-state machine
 		pglGetFloatv( GL_FOG_COLOR, RI.fogColor );
 		RI.fogSkybox = true;
 	}
-
+#endif
 	RI.fogEnabled = false;
 
 	if( RI.onlyClientDraw || cl.local.waterlevel < 3 || !RI.drawWorld || !RI.viewleaf )
@@ -811,13 +783,13 @@ void R_DrawEntitiesOnList( void )
 	GL_CheckForErrors();
 
 	// first draw solid entities
-	for( i = 0; i < tr.num_solid_entities && !RI.onlyClientDraw; i++ )
+	for( i = 0; i < tr.draw_list->num_solid_entities && !RI.onlyClientDraw; i++ )
 	{
-		RI.currententity = tr.solid_entities[i];
+		RI.currententity = tr.draw_list->solid_entities[i];
 		RI.currentmodel = RI.currententity->model;
 
-		ASSERT( RI.currententity != NULL );
-		ASSERT( RI.currententity->model != NULL );
+		Assert( RI.currententity != NULL );
+		Assert( RI.currentmodel != NULL );
 
 		switch( RI.currentmodel->type )
 		{
@@ -843,13 +815,13 @@ void R_DrawEntitiesOnList( void )
 	GL_CheckForErrors();
 
 	// draw sprites seperately, because of alpha blending
-	for( i = 0; i < tr.num_solid_entities && !RI.onlyClientDraw; i++ )
+	for( i = 0; i < tr.draw_list->num_solid_entities && !RI.onlyClientDraw; i++ )
 	{
-		RI.currententity = tr.solid_entities[i];
+		RI.currententity = tr.draw_list->solid_entities[i];
 		RI.currentmodel = RI.currententity->model;
 
-		ASSERT( RI.currententity != NULL );
-		ASSERT( RI.currententity->model != NULL );
+		Assert( RI.currententity != NULL );
+		Assert( RI.currentmodel != NULL );
 
 		switch( RI.currentmodel->type )
 		{
@@ -874,15 +846,20 @@ void R_DrawEntitiesOnList( void )
 	GL_CheckForErrors();
 
 	// then draw translucent entities
-	for( i = 0; i < tr.num_trans_entities && !RI.onlyClientDraw; i++ )
+	for( i = 0; i < tr.draw_list->num_trans_entities && !RI.onlyClientDraw; i++ )
 	{
-		RI.currententity = tr.trans_entities[i];
+		RI.currententity = tr.draw_list->trans_entities[i];
 		RI.currentmodel = RI.currententity->model;
-		tr.blend = CL_FxBlend( RI.currententity ) / 255.0f;
+
+		// handle studiomodels with custom rendermodes on texture
+		if( RI.currententity->curstate.rendermode != kRenderNormal )
+			tr.blend = CL_FxBlend( RI.currententity ) / 255.0f;
+		else tr.blend = 1.0f; // draw as solid but sorted by distance
+
 		if( tr.blend <= 0.0f ) continue;
 	
-		ASSERT( RI.currententity != NULL );
-		ASSERT( RI.currententity->model != NULL );
+		Assert( RI.currententity != NULL );
+		Assert( RI.currentmodel != NULL );
 
 		switch( RI.currentmodel->type )
 		{
@@ -1107,6 +1084,9 @@ void R_RenderFrame( const ref_viewpass_t *rvp )
 	if( gl_finish->value && RI.drawWorld )
 		pglFinish();
 
+	if( glConfig.max_multisamples > 1 )
+		pglEnable( GL_MULTISAMPLE_ARB );
+
 	// completely override rendering
 	if( clgame.drawFuncs.GL_RenderFrame != NULL )
 	{
@@ -1123,15 +1103,8 @@ void R_RenderFrame( const ref_viewpass_t *rvp )
 	tr.fCustomRendering = false;
 	if( !RI.onlyClientDraw )
 		R_RunViewmodelEvents();
+
 	tr.realframecount++; // right called after viewmodel events
-
-	if( gl_allow_mirrors->value )
-	{
-		// render mirrors
-		R_FindMirrors ();
-		R_DrawMirrors ();
-	}
-
 	R_RenderScene();
 }
 
@@ -1146,10 +1119,7 @@ void R_EndFrame( void )
 	R_Set2DMode( false );
 
 	if( !pwglSwapBuffers( glw_state.hDC ))
-	{
-		Msg( "Error: WGL: failed to swap buffers\n" );
-		Host_NewInstance( va("#%s", GI->gamefolder ), "stopped" );
-	}
+		Sys_Error( "failed to swap buffers\nCheck your video driver and as possible of reinstall it" );
 }
 
 /*
@@ -1209,8 +1179,13 @@ static int GL_RenderGetParm( int parm, int arg )
 	case PARM_TEX_DEPTH:
 		glt = R_GetTexture( arg );
 		return glt->depth;
+	case PARM_BSP2_SUPPORTED:
+#ifdef SUPPORT_BSP2_FORMAT
+		return 1;
+#endif
+		return 0;
 	case PARM_TEX_SKYBOX:
-		ASSERT( arg >= 0 && arg < 6 );
+		Assert( arg >= 0 && arg < 6 );
 		return tr.skyboxTextures[arg];
 	case PARM_TEX_SKYTEXNUM:
 		return tr.skytexturenum;
@@ -1218,11 +1193,7 @@ static int GL_RenderGetParm( int parm, int arg )
 		arg = bound( 0, arg, MAX_LIGHTMAPS - 1 );
 		return tr.lightmapTextures[arg];
 	case PARM_SKY_SPHERE:
-		return world.sky_sphere && !world.custom_skybox;
-	case PARM_WORLD_VERSION:
-		if( cls.state != ca_active )
-			return bmodel_version;
-		return world.version;
+		return FBitSet( world.flags, FWORLD_SKYSPHERE ) && !FBitSet( world.flags, FWORLD_CUSTOM_SKYBOX );
 	case PARM_WIDESCREEN:
 		return glState.wideScreen;
 	case PARM_FULLSCREEN:
@@ -1231,8 +1202,6 @@ static int GL_RenderGetParm( int parm, int arg )
 		return glState.width;
 	case PARM_SCREEN_HEIGHT:
 		return glState.height;
-	case PARM_MAP_HAS_MIRRORS:
-		return world.has_mirrors;
 	case PARM_CLIENT_INGAME:
 		return CL_IsInGame();
 	case PARM_MAX_ENTITIES:
@@ -1254,7 +1223,7 @@ static int GL_RenderGetParm( int parm, int arg )
 		arg = bound( 0, arg, MAX_LIGHTSTYLES - 1 );
 		return tr.lightstylevalue[arg];
 	case PARM_MAP_HAS_DELUXE:
-		return (world.deluxedata != NULL);
+		return FBitSet( world.flags, FWORLD_HAS_DELUXEMAP );
 	case PARM_MAX_IMAGE_UNITS:
 		return GL_MaxTextureUnits();
 	case PARM_CLIENT_ACTIVE:
@@ -1274,7 +1243,7 @@ static int GL_RenderGetParm( int parm, int arg )
 	case PARM_STENCIL_ACTIVE:
 		return glState.stencilEnabled;
 	case PARM_WATER_ALPHA:
-		return world.water_alpha;
+		return FBitSet( world.flags, FWORLD_WATERALPHA );
 	}
 	return 0;
 }
@@ -1362,19 +1331,19 @@ static int R_FatPVS( const vec3_t org, float radius, byte *visbuffer, qboolean m
 
 static lightstyle_t *CL_GetLightStyle( int number )
 {
-	ASSERT( number >= 0 && number < MAX_LIGHTSTYLES );
+	Assert( number >= 0 && number < MAX_LIGHTSTYLES );
 	return &cl.lightstyles[number];
 }
 
 static dlight_t *CL_GetDynamicLight( int number )
 {
-	ASSERT( number >= 0 && number < MAX_DLIGHTS );
+	Assert( number >= 0 && number < MAX_DLIGHTS );
 	return &cl_dlights[number];
 }
 
 static dlight_t *CL_GetEntityLight( int number )
 {
-	ASSERT( number >= 0 && number < MAX_ELIGHTS );
+	Assert( number >= 0 && number < MAX_ELIGHTS );
 	return &cl_elights[number];
 }
 
@@ -1446,6 +1415,31 @@ static char **pfnGetFilesList( const char *pattern, int *numFiles, int gamediron
 	if( numFiles ) *numFiles = t->numfilenames;
 	return t->filenames;
 }
+
+static uint pfnFileBufferCRC32( const void *buffer, const int length )
+{
+	uint	modelCRC = 0;
+
+	if( !buffer || length <= 0 )
+		return modelCRC;
+
+	CRC32_Init( &modelCRC );
+	CRC32_ProcessBuffer( &modelCRC, buffer, length );
+	return CRC32_Final( modelCRC );
+}
+
+/*
+=============
+CL_GenericHandle
+
+=============
+*/
+const char *CL_GenericHandle( int fileindex )
+{
+	if( fileindex < 0 || fileindex >= MAX_CUSTOM )
+		return 0;
+	return cl.files_precache[fileindex];
+}
 	
 static render_api_t gRenderAPI =
 {
@@ -1479,6 +1473,9 @@ static render_api_t gRenderAPI =
 	R_UploadStretchRaw,
 	AVI_FreeVideo,
 	AVI_IsActive,
+	NULL,
+	NULL,
+	NULL,
 	GL_Bind,
 	GL_SelectTexture,
 	GL_LoadTexMatrixExt,
@@ -1493,16 +1490,24 @@ static render_api_t gRenderAPI =
 	NULL,
 	CL_DrawParticlesExternal,
 	R_EnvShot,
-	COM_CompareFileTime,
-	Host_Error,
 	pfnSPR_LoadExt,
+	R_LightVec,
 	R_StudioGetTexture,
 	GL_GetOverviewParms,
-	S_FadeMusicVolume,
-	COM_SetRandomSeed,
+	CL_GenericHandle,
+	NULL,
+	NULL,
 	R_Mem_Alloc,
 	R_Mem_Free,
 	pfnGetFilesList,
+	pfnFileBufferCRC32,
+	COM_CompareFileTime,
+	Host_Error,
+	CL_ModelHandle,
+	pfnTime,
+	Cvar_Set,
+	S_FadeMusicVolume,
+	COM_SetRandomSeed,
 };
 
 /*

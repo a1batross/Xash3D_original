@@ -18,6 +18,7 @@ GNU General Public License for more details.
 #include "gl_local.h"
 #include "vgui_draw.h"
 #include "qfont.h"
+#include "input.h"
 
 convar_t *scr_centertime;
 convar_t *scr_loading;
@@ -27,7 +28,7 @@ convar_t *cl_testlights;
 convar_t *cl_allow_levelshots;
 convar_t *cl_levelshot_name;
 convar_t *cl_envshot_size;
-convar_t *scr_dark;
+convar_t *v_dark;
 
 typedef struct
 {
@@ -122,10 +123,10 @@ void SCR_NetSpeeds( void )
 	int		cur_clfps = 0;
 	rgba_t		color;
 
-	if( !host.developer )
+	if( !host.allow_console )
 		return;
 
-	if( !net_speeds->value || cls.demoplayback || cls.state != ca_active )
+	if( !net_speeds->value || cls.state != ca_active )
 		return;
 
 	// prevent to get too big values at max
@@ -177,7 +178,7 @@ void SCR_RSpeeds( void )
 {
 	char	msg[MAX_SYSPATH];
 
-	if( !host.developer )
+	if( !host.allow_console )
 		return;
 
 	if( R_SpeedsMessage( msg, sizeof( msg )))
@@ -316,15 +317,19 @@ void SCR_BeginLoadingPlaque( qboolean is_background )
 			SCR_UpdateScreen();
 	}
 
-	if( cls.disable_screen ) return;		// already set
-	if( cls.state == ca_disconnected ) return;	// if at console, don't bring up the plaque
-	if( cls.key_dest == key_console ) return;
+	if( cls.state == ca_disconnected || cls.disable_screen )
+		return; // already set
 
-	cls.draw_changelevel = is_background ? false : true;
+	if( cls.key_dest == key_console )
+		return;
+
+	if( is_background ) IN_MouseSavePos( );
+	cls.draw_changelevel = !is_background;
 	SCR_UpdateScreen();
 	cls.disable_screen = host.realtime;
 	cls.disable_servercount = cl.servercount;
 	cl.background = is_background;		// set right state before svc_serverdata is came
+//	SNDDMA_LockSound();
 }
 
 /*
@@ -336,6 +341,7 @@ void SCR_EndLoadingPlaque( void )
 {
 	cls.disable_screen = 0.0f;
 	Con_ClearNotify();
+//	SNDDMA_UnlockSound();
 }
 
 /*
@@ -455,12 +461,15 @@ void SCR_UpdateScreen( void )
 	switch( cls.state )
 	{
 	case ca_disconnected:
+		Con_RunConsole ();
 		break;
 	case ca_connecting:
 	case ca_connected:
+	case ca_validate:
 		SCR_DrawPlaque();
 		break;
 	case ca_active:
+		Con_RunConsole ();
 		V_RenderView();
 		break;
 	case ca_cinematic:
@@ -545,7 +554,13 @@ qboolean SCR_LoadVariableWidthFont( const char *fontname )
 	return true;
 }
 
+/*
+================
+SCR_LoadCreditsFont
 
+INTERNAL RESOURCE
+================
+*/
 void SCR_LoadCreditsFont( void )
 {
 	if( !SCR_LoadVariableWidthFont( "gfx.wad/creditsfont.fnt" ))
@@ -555,6 +570,13 @@ void SCR_LoadCreditsFont( void )
 	}
 }
 
+/*
+================
+SCR_InstallParticlePalette
+
+INTERNAL RESOURCE
+================
+*/
 void SCR_InstallParticlePalette( void )
 {
 	rgbdata_t	*pic;
@@ -589,6 +611,13 @@ void SCR_InstallParticlePalette( void )
 	}
 }
 
+/*
+================
+SCR_RegisterTextures
+
+INTERNAL RESOURCE
+================
+*/
 void SCR_RegisterTextures( void )
 {
 	// register gfx.wad images
@@ -656,7 +685,7 @@ void SCR_VidInit( void )
 
 	VGui_Startup ();
 
-	clgame.load_sequence++; // now all hud sprites are invalid
+	CL_ClearSpriteTextures(); // now all hud sprites are invalid
 	
 	// vid_state has changed
 	if( gameui.hInstance ) gameui.dllFuncs.pfnVidInit();
@@ -680,10 +709,10 @@ void SCR_Init( void )
 	cl_levelshot_name = Cvar_Get( "cl_levelshot_name", "*black", 0, "contains path to current levelshot" );
 	cl_allow_levelshots = Cvar_Get( "allow_levelshots", "0", FCVAR_ARCHIVE, "allow engine to use indivdual levelshots instead of 'loading' image" );
 	scr_loading = Cvar_Get( "scr_loading", "0", 0, "loading bar progress" );
-	scr_download = Cvar_Get( "scr_download", "0", 0, "downloading bar progress" );
+	scr_download = Cvar_Get( "scr_download", "-1", 0, "downloading bar progress" );
 	cl_testlights = Cvar_Get( "cl_testlights", "0", 0, "test dynamic lights" );
 	cl_envshot_size = Cvar_Get( "cl_envshot_size", "256", FCVAR_ARCHIVE, "envshot size of cube side" );
-	scr_dark = Cvar_Get( "v_dark", "0", 0, "starts level from dark screen" );
+	v_dark = Cvar_Get( "v_dark", "0", 0, "starts level from dark screen" );
 	scr_viewsize = Cvar_Get( "viewsize", "120", FCVAR_ARCHIVE, "screen size" );
 	
 	// register our commands
@@ -695,8 +724,8 @@ void SCR_Init( void )
 
 	if( !UI_LoadProgs( ))
 	{
-		Msg( "^1Error: ^7can't initialize gameui.dll\n" ); // there is non fatal for us
-		if( !host.developer ) host.developer = 1; // we need console, because menu is missing
+		Con_Printf( S_ERROR "can't initialize gameui.dll\n" ); // there is non fatal for us
+		host.allow_console = true; // we need console, because menu is missing
 	}
 
 	SCR_LoadCreditsFont ();
@@ -706,7 +735,7 @@ void SCR_Init( void )
 	CL_InitNetgraph();
 	SCR_VidInit();
 
-	if( host.developer && Sys_CheckParm( "-toconsole" ))
+	if( host.allow_console && Sys_CheckParm( "-toconsole" ))
 		Cbuf_AddText( "toggleconsole\n" );
 	else UI_SetActiveMenu( true );
 

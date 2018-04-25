@@ -469,7 +469,7 @@ void VOX_LoadSound( channel_t *pchan, const char *pszin )
 
 	if( !psz )
 	{
-		MsgDev( D_ERROR, "VOX_LoadSound: no sentence named %s\n", pszin );
+		Con_DPrintf( S_ERROR "VOX_LoadSound: no such sentence %s\n", pszin );
 		return;
 	}
 
@@ -671,7 +671,7 @@ void VOX_Init( void )
 	memset( g_Sentences, 0, sizeof( g_Sentences ));
 	g_numSentences = 0;
 
-	VOX_ReadSentenceFile( "sound/sentences.txt" );
+	VOX_ReadSentenceFile( DEFAULT_SOUNDPATH "sentences.txt" );
 }
 
 

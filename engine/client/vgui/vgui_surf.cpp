@@ -18,19 +18,43 @@ GNU General Public License for more details.
 #include "vgui_draw.h"
 #include "vgui_main.h"
 
-static FontCache g_FontCache;
+#define MAXVERTEXBUFFERS	1024
+#define MAX_PAINT_STACK	8
+#define FONT_SIZE		512
+#define FONT_PAGES		8
+
+static char staticRGBA[FONT_SIZE * FONT_SIZE * 4];
+static vpoint_t g_VertexBuffer[MAXVERTEXBUFFERS];
+static int g_iVertexBufferEntriesUsed = 0;
+static int staticContextCount = 0;
+
+struct FontInfo
+{
+	int	id;
+	int	pageCount;
+	int	pageForChar[256];
+	int	bindIndex[FONT_PAGES];
+	float	texCoord[256][FONT_PAGES];
+	int	contextCount;
+};
+
+static Font* staticFont = NULL;
+static FontInfo* staticFontInfo;
+static Dar<FontInfo*> staticFontInfoDar;
+static PaintStack paintStack[MAX_PAINT_STACK];
+static staticPaintStackPos = 0;
 
 CEngineSurface :: CEngineSurface( Panel *embeddedPanel ):SurfaceBase( embeddedPanel )
 {
-	_embeddedPanel = embeddedPanel;
-	_drawColor[0] = _drawColor[1] = _drawColor[2] = _drawColor[3] = 255;
 	_drawTextColor[0] = _drawTextColor[1] = _drawTextColor[2] = _drawTextColor[3] = 255;
+	_drawColor[0] = _drawColor[1] = _drawColor[2] = _drawColor[3] = 255;
+	_drawTextPos[0] = _drawTextPos[1] = _currentTexture = 0;
 
-	_surfaceExtents[0] = _surfaceExtents[1] = 0;
-	_surfaceExtents[2] = gameui.globals->scrWidth;
-	_surfaceExtents[3] = gameui.globals->scrHeight;
-	_drawTextPos[0] = _drawTextPos[1] = 0;
-	_hCurrentFont = null;
+	staticFont = NULL;
+	staticFontInfo = NULL;
+	staticFontInfoDar.setCount( 0 );
+	staticPaintStackPos = 0;
+	staticContextCount++;
 
 	VGUI_InitCursors ();
 }
@@ -39,16 +63,6 @@ CEngineSurface :: ~CEngineSurface( void )
 {
 	VGUI_DrawShutdown ();
 }
-
-Panel *CEngineSurface :: getEmbeddedPanel( void )
-{
-	return _embeddedPanel;
-}
-
-bool CEngineSurface :: hasFocus( void )
-{
-	return host.state != HOST_NOFOCUS;
-}
 	
 void CEngineSurface :: setCursor( Cursor *cursor )
 {
@@ -56,25 +70,11 @@ void CEngineSurface :: setCursor( Cursor *cursor )
 	VGUI_CursorSelect( cursor );
 }
 
-#ifdef NEW_VGUI_DLL
-void CEngineSurface :: GetMousePos( int &x, int &y )
+void CEngineSurface :: SetupPaintState( const PaintStack *paintState )
 {
-	POINT	curpos;
-
-	GetCursorPos( &curpos );
-	ScreenToClient( host.hWnd, &curpos );
-
-	x = curpos.x;
-	y = curpos.y;
-}
-#endif
-
-void CEngineSurface :: SetupPaintState( const paintState_t &paintState )
-{
-	_translateX = paintState.iTranslateX;
-	_translateY = paintState.iTranslateY;
-	SetScissorRect( paintState.iScissorLeft, paintState.iScissorTop, 
-	paintState.iScissorRight, paintState.iScissorBottom );
+	_translateX = paintState->iTranslateX;
+	_translateY = paintState->iTranslateY;
+	SetScissorRect( paintState->iScissorLeft, paintState->iScissorTop, paintState->iScissorRight, paintState->iScissorBottom );
 }
 
 void CEngineSurface :: InitVertex( vpoint_t &vertex, int x, int y, float u, float v )
@@ -138,7 +138,101 @@ void CEngineSurface :: drawOutlinedRect( int x0, int y0, int x1, int y1 )
 	
 void CEngineSurface :: drawSetTextFont( Font *font )
 {
-	_hCurrentFont = font;
+	staticFont = font;
+
+	if( font )
+	{
+		bool	buildFont = false;
+
+		staticFontInfo = NULL;
+
+		for( int i = 0; i < staticFontInfoDar.getCount(); i++ )
+		{
+			if( staticFontInfoDar[i]->id == font->getId( ))
+			{
+				staticFontInfo = staticFontInfoDar[i];
+				if( staticFontInfo->contextCount != staticContextCount )
+					buildFont = true;
+			}
+		}
+
+		if( !staticFontInfo || buildFont )
+		{
+			staticFontInfo = new FontInfo;
+			staticFontInfo->id = 0;
+			staticFontInfo->pageCount = 0;
+			staticFontInfo->bindIndex[0] = 0;
+			staticFontInfo->bindIndex[1] = 0;
+			staticFontInfo->bindIndex[2] = 0;
+			staticFontInfo->bindIndex[3] = 0;
+			memset( staticFontInfo->pageForChar, 0, sizeof( staticFontInfo->pageForChar ));
+			staticFontInfo->contextCount = -1;
+			staticFontInfo->id = staticFont->getId();
+			staticFontInfoDar.putElement( staticFontInfo );
+			staticFontInfo->contextCount = staticContextCount;
+
+			int currentPage = 0;
+			int x = 0, y = 0;
+
+			memset( staticRGBA, 0, sizeof( staticRGBA ));
+
+			for( int i = 0; i < 256; i++ )
+			{
+				int abcA, abcB, abcC;
+				staticFont->getCharABCwide( i, abcA, abcB, abcC );
+
+				int wide = abcB;
+
+				if( isspace( i )) continue;
+
+				int tall = staticFont->getTall();
+
+				if( x + wide + 1 > FONT_SIZE )
+				{
+					x = 0;
+					y += tall + 1;
+				}
+
+				if( y + tall + 1 > FONT_SIZE )
+				{
+					if( !staticFontInfo->bindIndex[currentPage] )
+					{
+						int bindIndex = createNewTextureID();
+						staticFontInfo->bindIndex[currentPage] = bindIndex;
+					}
+
+					drawSetTextureRGBA( staticFontInfo->bindIndex[currentPage], staticRGBA, FONT_SIZE, FONT_SIZE );
+					currentPage++;
+
+					if( currentPage == FONT_PAGES )
+						break;
+
+					memset( staticRGBA, 0, sizeof( staticRGBA ));
+					x = y = 0;
+				}
+
+				staticFont->getCharRGBA( i, x, y, FONT_SIZE, FONT_SIZE, (byte *)staticRGBA );
+				staticFontInfo->pageForChar[i] = currentPage;
+				staticFontInfo->texCoord[i][0] = (float)((double)x / (double)FONT_SIZE );
+				staticFontInfo->texCoord[i][1] = (float)((double)y / (double)FONT_SIZE );
+				staticFontInfo->texCoord[i][2] = (float)((double)(x + wide)/(double)FONT_SIZE );
+				staticFontInfo->texCoord[i][3] = (float)((double)(y + tall)/(double)FONT_SIZE );
+				x += wide + 1;
+			}
+
+			if( currentPage != FONT_PAGES )
+			{
+				if( !staticFontInfo->bindIndex[currentPage] )
+				{
+					int bindIndex = createNewTextureID();
+					staticFontInfo->bindIndex[currentPage] = bindIndex;
+				}
+
+				drawSetTextureRGBA( staticFontInfo->bindIndex[currentPage], staticRGBA, FONT_SIZE, FONT_SIZE );
+			}
+			staticFontInfo->pageCount = currentPage + 1;
+		}
+	}
 }
 
 void CEngineSurface :: drawSetTextPos( int x, int y )
@@ -147,31 +241,109 @@ void CEngineSurface :: drawSetTextPos( int x, int y )
 	_drawTextPos[1] = y;
 }
 
-void CEngineSurface :: drawPrintText( const char* text, int textLen )
+void CEngineSurface :: addCharToBuffer( const vpoint_t *ul, const vpoint_t *lr, int color[4] )
+{
+	if( g_iVertexBufferEntriesUsed >= MAXVERTEXBUFFERS )
+		flushBuffer();
+
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 0].coord[0] = ul->coord[0];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 0].coord[1] = ul->coord[1];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 0].point[0] = ul->point[0];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 0].point[1] = ul->point[1];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 0].color[0] = color[0];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 0].color[1] = color[1];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 0].color[2] = color[2];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 0].color[3] = 255 - color[3];
+
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 1].coord[0] = lr->coord[0];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 1].coord[1] = ul->coord[1];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 1].point[0] = lr->point[0];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 1].point[1] = ul->point[1];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 1].color[0] = color[0];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 1].color[1] = color[1];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 1].color[2] = color[2];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 1].color[3] = 255 - color[3];
+
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 2].coord[0] = lr->coord[0];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 2].coord[1] = lr->coord[1];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 2].point[0] = lr->point[0];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 2].point[1] = lr->point[1];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 2].color[0] = color[0];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 2].color[1] = color[1];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 2].color[2] = color[2];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 2].color[3] = 255 - color[3];
+
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 3].coord[0] = ul->coord[0];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 3].coord[1] = lr->coord[1];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 3].point[0] = ul->point[0];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 3].point[1] = lr->point[1];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 3].color[0] = color[0];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 3].color[1] = color[1];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 3].color[2] = color[2];
+	g_VertexBuffer[g_iVertexBufferEntriesUsed + 3].color[3] = 255 - color[3];
+
+	g_iVertexBufferEntriesUsed += 4;
+}
+
+void CEngineSurface :: flushBuffer( void )
+{
+	if( g_iVertexBufferEntriesUsed <= 0 )
+		return;
+
+	VGUI_DrawBuffer( g_VertexBuffer, g_iVertexBufferEntriesUsed );
+	g_iVertexBufferEntriesUsed = 0;
+}
+
+void CEngineSurface :: drawPrintChar( int x, int y, int wide, int tall, float s0, float t0, float s1, float t1, int color[4] )
+{
+	vpoint_t	ul, lr;
+
+	ul.point[0] = x;
+	ul.point[1] = y;
+	lr.point[0] = x + wide;
+	lr.point[1] = y + tall;
+
+	// gets at the texture coords for this character in its texture page
+	ul.coord[0] = s0;
+	ul.coord[1] = t0;
+	lr.coord[0] = s1;
+	lr.coord[1] = t1;
+
+	vpoint_t clippedRect[2];
+
+	if( !ClipRect( ul, lr, &clippedRect[0], &clippedRect[1] ))
+		return;
+#if 1
+	// TESTTEST: needs to be more tested
+	addCharToBuffer( &clippedRect[0], &clippedRect[1], color );
+#else                                        
+	VGUI_SetupDrawingImage( color );
+	VGUI_DrawQuad( &clippedRect[0], &clippedRect[1] ); // draw the letter
+#endif
+}
+
+void CEngineSurface :: drawPrintText( const char *text, int textLen )
 {
 	static bool hasColor = 0;
 	static int numColor = 7;
 
-	if( !text || !_hCurrentFont || _drawTextColor[3] >= 255 )
+	if( !text || !staticFont || !staticFontInfo )
 		return;
 
 	int x = _drawTextPos[0] + _translateX;
 	int y = _drawTextPos[1] + _translateY;
-
-	int iTall = _hCurrentFont->getTall();
-
-	int j, iTotalWidth = 0;
+	int tall = staticFont->getTall();
 	int curTextColor[4];
 
 	//  HACKHACK: allow color strings in VGUI
 	if( numColor != 7 && vgui_colorstrings->value )
 	{
-		for( j = 0; j < 3; j++ ) // grab predefined color
+		for( int j = 0; j < 3; j++ ) // grab predefined color
 			curTextColor[j] = g_color_table[numColor][j];
           }
           else
           {
-		for( j = 0; j < 3; j++ ) // revert default color
+		for( int j = 0; j < 3; j++ ) // revert default color
 			curTextColor[j] = _drawTextColor[j];
 	}
 	curTextColor[3] = _drawTextColor[3]; // copy alpha
@@ -194,61 +366,38 @@ void CEngineSurface :: drawPrintText( const char* text, int textLen )
 
 	for( int i = 0; i < textLen; i++ )
 	{
-		char ch = text[i];
+		int abcA, abcB, abcC;
+		int curCh = (byte)text[i];
 
-		int abcA,abcB,abcC;
-		_hCurrentFont->getCharABCwide( ch, abcA, abcB, abcC );
+		staticFont->getCharABCwide( curCh, abcA, abcB, abcC );
 
-		iTotalWidth += abcA;
-		int iWide = abcB;
+		float s0 = staticFontInfo->texCoord[curCh][0];
+		float t0 = staticFontInfo->texCoord[curCh][1];
+		float s1 = staticFontInfo->texCoord[curCh][2];
+		float t1 = staticFontInfo->texCoord[curCh][3];
+		int wide = abcB;
 
-		if( !iswspace( ch ))
-		{
-			// get the character texture from the cache
-			int iTexId = 0;
-			float *texCoords = NULL;
-
-			if( !g_FontCache.GetTextureForChar( _hCurrentFont, ch, &iTexId, &texCoords ))
-				continue;
-
-			Assert( texCoords != NULL );
-
-			vpoint_t ul, lr;
-
-			ul.point[0] = x + iTotalWidth;
-			ul.point[1] = y;
-			lr.point[0] = ul.point[0] + iWide;
-			lr.point[1] = ul.point[1] + iTall;
-
-			// gets at the texture coords for this character in its texture page
-			ul.coord[0] = texCoords[0];
-			ul.coord[1] = texCoords[1];
-			lr.coord[0] = texCoords[2];
-			lr.coord[1] = texCoords[3];
-
-			vpoint_t clippedRect[2];
-
-			if( !ClipRect( ul, lr, &clippedRect[0], &clippedRect[1] ))
-				continue;
-                                        
-			drawSetTexture( iTexId );
-			VGUI_SetupDrawingText( curTextColor );
-			VGUI_DrawQuad(  &clippedRect[0], &clippedRect[1] ); // draw the letter
-		}
-
-		iTotalWidth += iWide + abcC;
+		drawSetTexture( staticFontInfo->bindIndex[staticFontInfo->pageForChar[curCh]] );
+		drawPrintChar( x, y, wide, tall, s0, t0, s1, t1, curTextColor );
+		x += abcA + abcB + abcC;
 	}
 
-	_drawTextPos[0] += iTotalWidth;
+	_drawTextPos[0] += x;
 }
 
 void CEngineSurface :: drawSetTextureRGBA( int id, const char* rgba, int wide, int tall )
 {
 	VGUI_UploadTexture( id, rgba, wide, tall );
+	_currentTexture = id;
 }
 	
 void CEngineSurface :: drawSetTexture( int id )
 {
+	if( _currentTexture != id )
+	{
+		_currentTexture = id;
+		flushBuffer();
+	}
 	VGUI_BindTexture( id );
 }
 	
@@ -270,62 +419,47 @@ void CEngineSurface :: drawTexturedRect( int x0, int y0, int x1, int y1 )
 	
 void CEngineSurface :: pushMakeCurrent( Panel* panel, bool useInsets )
 {
-	int inSets[4] = { 0, 0, 0, 0 };
+	int insets[4] = { 0, 0, 0, 0 };
 	int absExtents[4];
 	int clipRect[4];
 
 	if( useInsets )
-	{
-		panel->getInset( inSets[0], inSets[1], inSets[2], inSets[3] );
-	}
-
+		panel->getInset( insets[0], insets[1], insets[2], insets[3] );
 	panel->getAbsExtents( absExtents[0], absExtents[1], absExtents[2], absExtents[3] );
 	panel->getClipRect( clipRect[0], clipRect[1], clipRect[2], clipRect[3] );
 
-	int i = _paintStack.AddToTail();
-	paintState_t &paintState = _paintStack[i];
-	paintState.m_pPanel = panel;
+	PaintStack *paintState = &paintStack[staticPaintStackPos];
+
+	ASSERT( staticPaintStackPos < MAX_PAINT_STACK );
+
+	paintState->m_pPanel = panel;
 
 	// determine corrected top left origin
-	paintState.iTranslateX = inSets[0] + absExtents[0] - _surfaceExtents[0];	
-	paintState.iTranslateY = inSets[1] + absExtents[1] - _surfaceExtents[1];
-
+	paintState->iTranslateX = insets[0] + absExtents[0];	
+	paintState->iTranslateY = insets[1] + absExtents[1];
 	// setup clipping rectangle for scissoring
-	paintState.iScissorLeft = clipRect[0] - _surfaceExtents[0];
-	paintState.iScissorTop = clipRect[1] - _surfaceExtents[1];
-	paintState.iScissorRight = clipRect[2] - _surfaceExtents[0];
-	paintState.iScissorBottom = clipRect[3] - _surfaceExtents[1];
+	paintState->iScissorLeft = clipRect[0];
+	paintState->iScissorTop = clipRect[1];
+	paintState->iScissorRight = clipRect[2];
+	paintState->iScissorBottom = clipRect[3];
 
 	SetupPaintState( paintState );
+	staticPaintStackPos++;
 }
 	
 void CEngineSurface :: popMakeCurrent( Panel *panel )
 {
-	int top = _paintStack.Count() - 1;
+	flushBuffer();
+
+	int top = staticPaintStackPos - 1;
 
 	// more pops that pushes?
 	Assert( top >= 0 );
 
 	// didn't pop in reverse order of push?
-	Assert( _paintStack[top].m_pPanel == panel );
+	Assert( paintStack[top].m_pPanel == panel );
 
-	_paintStack.Remove( top );
-	
-	if( top > 0 ) SetupPaintState( _paintStack[top-1] );
-}
+	staticPaintStackPos--;
 
-bool CEngineSurface :: setFullscreenMode( int wide, int tall, int bpp )
-{
-	// NOTE: Xash3D always working in 32-bit mode
-	if( R_DescribeVIDMode( wide, tall ))
-	{
-		Cvar_SetValue( "fullscreen", 1.0f );
-		return true;
-	}
-	return false;
-}
-	
-void CEngineSurface :: setWindowedMode( void )
-{
-	Cvar_SetValue( "fullscreen", 0.0f );
+	if( top > 0 ) SetupPaintState( &paintStack[top-1] );
 }

@@ -232,7 +232,7 @@ void CL_CheckPredictionError( void )
 	// save the prediction error for interpolation
 	if( dist > MAX_PREDICTION_ERROR )
 	{
-		if( cl_showerror->value && host.developer >= D_ERROR )
+		if( cl_showerror->value && host_developer.value )
 			Con_NPrintf( 10 + ( ++pos & 3 ), "^3player teleported:^7 %.3f units\n", dist );
 
 		// a teleport or something or gamepaused
@@ -240,7 +240,7 @@ void CL_CheckPredictionError( void )
 	}
 	else
 	{
-		if( cl_showerror->value && dist > MIN_PREDICTION_EPSILON && host.developer >= D_ERROR )
+		if( cl_showerror->value && dist > MIN_PREDICTION_EPSILON && host_developer.value )
 			Con_NPrintf( 10 + ( ++pos & 3 ), "^1prediction error:^7 %.3f units\n", dist );
 
 		VectorCopy( cl.frames[cmd].playerstate[cl.playernum].origin, cl.local.predicted_origins[frame] );
@@ -248,7 +248,7 @@ void CL_CheckPredictionError( void )
 		// save for error interpolation
 		VectorCopy( delta, cl.local.prediction_error );
 
-		if(( dist > MIN_CORRECTION_DISTANCE ) && (( cl.maxclients > 1 ) || FBitSet( host.features, ENGINE_FIXED_FRAMERATE )))
+		if( dist > MIN_CORRECTION_DISTANCE )
 			cls.correction_time = cl_smoothtime->value;
 	}
 }
@@ -313,7 +313,7 @@ void CL_SetUpPlayerPrediction( int dopred, int bIncludeLocalClient )
 
 void CL_ClipPMoveToEntity( physent_t *pe, const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end, pmtrace_t *tr )
 {
-	ASSERT( tr != NULL );
+	Assert( tr != NULL );
 
 	if( clgame.dllFuncs.pfnClipMoveToEntity != NULL )
 	{
@@ -329,7 +329,7 @@ void CL_ClipPMoveToEntity( physent_t *pe, const vec3_t start, vec3_t mins, vec3_
 
 static void CL_CopyEntityToPhysEnt( physent_t *pe, entity_state_t *state, qboolean visent )
 {
-	model_t	*mod = Mod_Handle( state->modelindex );
+	model_t	*mod = CL_ModelHandle( state->modelindex );
 
 	pe->player = 0;
 
@@ -359,7 +359,7 @@ static void CL_CopyEntityToPhysEnt( physent_t *pe, entity_state_t *state, qboole
 	}
 	else
 	{
-		if( pe->solid != SOLID_BSP && Mod_GetType( state->modelindex ) == mod_studio )
+		if( pe->solid != SOLID_BSP && ( mod != NULL ) && ( mod->type == mod_studio ))
 			pe->studiomodel = mod;
 		else pe->model = mod;
 	}
@@ -432,13 +432,13 @@ void CL_AddLinksToPmove( frame_t *frame )
 		if( !state->modelindex )
 			continue;
 
-		model = Mod_Handle( state->modelindex );
+		model = CL_ModelHandle( state->modelindex );
 		if( !model ) continue;
 
 		if(( state->owner != 0 ) && ( state->owner == cl.playernum + 1 ))
 			continue;
 
-		if(( model->hulls[1].firstclipnode || model->type == mod_studio ) && clgame.pmove->numvisent < MAX_PHYSENTS )
+		if(( model->hulls[1].lastclipnode || model->type == mod_studio ) && clgame.pmove->numvisent < MAX_PHYSENTS )
 		{
 			pe = &clgame.pmove->visents[clgame.pmove->numvisent];
 			CL_CopyEntityToPhysEnt( pe, state, true );
@@ -456,7 +456,7 @@ void CL_AddLinksToPmove( frame_t *frame )
 		if( VectorIsNull( state->mins ) && VectorIsNull( state->maxs ))
 			continue;
 
-		if ( !model->hulls[1].firstclipnode && model->type != mod_studio )
+		if ( !model->hulls[1].lastclipnode && model->type != mod_studio )
 			continue;
 
 		if( state->solid == SOLID_NOT && state->skin < CONTENTS_EMPTY )
@@ -742,6 +742,11 @@ cl_entity_t *CL_GetWaterEntity( const float *rgflPos )
 	if( entnum <= 0 ) return NULL; // world or not water
 
 	return CL_GetEntityByIndex( entnum );
+}
+
+int CL_TestLine( const vec3_t start, const vec3_t end, int flags )
+{
+	return PM_TestLineExt( clgame.pmove, clgame.pmove->physents, clgame.pmove->numphysent, start, end, flags );
 }
 
 static int pfnTestPlayerPosition( float *pos, pmtrace_t *ptrace )
@@ -1214,8 +1219,9 @@ void CL_PredictMovement( qboolean repredicting )
 	frame_t		*frame = NULL;
 	int		i, stoppoint;
 	qboolean		runfuncs;
+	double		f = 1.0;
+	cl_entity_t	*ent;
 	double		time;
-	float		f;
 
 	if( cls.state != ca_active || cls.spectator )
 		return;
@@ -1225,7 +1231,7 @@ void CL_PredictMovement( qboolean repredicting )
 
 	CL_SetUpPlayerPrediction( false, false );
 
-	if( !cl.validsequence )
+	if( cls.state != ca_active || !cl.validsequence )
 		return;
 
 	if(( cls.netchan.outgoing_sequence - cls.netchan.incoming_acknowledged ) >= CL_UPDATE_MASK )
@@ -1279,6 +1285,11 @@ void CL_PredictMovement( qboolean repredicting )
 
 		if( to_cmd->senttime >= host.realtime )
 			break;
+
+		// now interpolate some fraction of the final frame
+		if( to_cmd->senttime != from_cmd->senttime )
+			f = (host.realtime - from_cmd->senttime) / (to_cmd->senttime - from_cmd->senttime) * 0.1;
+
 		from = to;
 		from_cmd = to_cmd;
 	}
@@ -1311,18 +1322,8 @@ void CL_PredictMovement( qboolean repredicting )
 		return;
 	}
 
-	// now interpolate some fraction of the final frame
-	if( to_cmd->senttime == from_cmd->senttime )
-	{
-		f = 0.0f;
-	}
-	else
-	{
-		f = (host.realtime - from_cmd->senttime) / (to_cmd->senttime - from_cmd->senttime);
-		f = bound( 0.0f, f, 1.0f );
-	}
-
-	if( f != 1.0f && f != 0.0f ) Msg( "Predict interp: %g\n", f );
+	f = bound( 0.0f, f, 1.0f );
+	f = 0.0;	// FIXME: make work, do revision
 
 	if( CL_PlayerTeleported( from, to ))
 	{
@@ -1349,8 +1350,7 @@ void CL_PredictMovement( qboolean repredicting )
 
 	if( FBitSet( to->client.flags, FL_ONGROUND ))
 	{
-		cl_entity_t	*ent = CL_GetEntityByIndex( cl.local.lastground );
-			
+		ent = CL_GetEntityByIndex( cl.local.lastground );
 		cl.local.onground = cl.local.lastground;
 		cl.local.moving = false;
 

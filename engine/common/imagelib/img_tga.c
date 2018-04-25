@@ -118,9 +118,6 @@ qboolean Image_LoadTGA( const char *name, const byte *buffer, size_t filesize )
 		}
 	}
 
-	// HACKHACK: detect luma textures by name
-	if( Q_stristr( name, "_luma" )) image.flags |= IMAGE_HAS_LUMA;
-
 	columns = targa_header.width;
 	rows = targa_header.height;
 

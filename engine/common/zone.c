@@ -164,11 +164,16 @@ static const char *Mem_CheckFilename( const char *filename )
 	const char	*out = filename;
 	int		i;
 
-	if( !out ) return dummy;
+	if( !COM_CheckString( out ))
+		return dummy;
+
 	for( i = 0; i < 128; i++, out++ )
-		if( out == '\0' ) break; // valid name
-	if( i == 128 ) return dummy;
-	return filename;
+	{
+		if( *out == '\0' )
+			return filename; // valid name
+	}
+
+	return dummy;
 }
 
 static void Mem_FreeBlock( memheader_t *mem, const char *filename, int fileline )
@@ -439,8 +444,8 @@ void Mem_PrintStats( void )
 		realsize += pool->realsize;
 	}
 
-	Msg( "^3%lu^7 memory pools, totalling: ^1%s\n", (dword)count, Q_memprint( size ));
-	Msg( "total allocated size: ^1%s\n", Q_memprint( realsize ));
+	Con_Printf( "^3%lu^7 memory pools, totalling: ^1%s\n", (dword)count, Q_memprint( size ));
+	Con_Printf( "total allocated size: ^1%s\n", Q_memprint( realsize ));
 }
 
 void Mem_PrintList( size_t minallocationsize )
@@ -450,17 +455,28 @@ void Mem_PrintList( size_t minallocationsize )
 
 	Mem_Check();
 
-	Msg( "memory pool list:\n""  ^3size                    name\n");
+	Con_Printf( "memory pool list:\n""  ^3size                          name\n");
 	for( pool = poolchain; pool; pool = pool->next )
 	{
+		long	changed_size = (long)pool->totalsize - (long)pool->lastchecksize;
+
 		// poolnames can contain color symbols, make sure what color is reset
-		if( ((long)pool->totalsize - pool->lastchecksize ) != 0 )
-			Msg( "%5luk (%5luk actual) %s (^7%+3li byte change)\n", (dword)((pool->totalsize + 1023) / 1024), (dword)((pool->realsize + 1023) / 1024), pool->name, (long)pool->totalsize - pool->lastchecksize );
-		else Msg( "%5luk (%5luk actual) %s\n", (dword)((pool->totalsize + 1023) / 1024), (dword)((pool->realsize + 1023) / 1024), pool->name );
+		if( changed_size != 0 )
+		{
+			char	sign = (changed_size < 0) ? '-' : '+';
+
+			Con_Printf( "%10s (%10s actual) %s (^7%c%s change)\n", Q_memprint( pool->totalsize ), Q_memprint( pool->realsize ),
+			pool->name, sign, Q_memprint( abs( changed_size )));
+		}
+		else
+		{
+			Con_Printf( "%5s (%5s actual) %s\n", Q_memprint( pool->totalsize ), Q_memprint( pool->realsize ), pool->name );
+		}
+
 		pool->lastchecksize = pool->totalsize;
 		for( mem = pool->chain; mem; mem = mem->next )
 			if( mem->size >= minallocationsize )
-				Msg( "%10lu bytes allocated at %s:%i\n", (dword)mem->size, mem->filename, mem->fileline );
+				Con_Printf( "%10s allocated at %s:%i\n", Q_memprint( mem->size ), mem->filename, mem->fileline );
 	}
 }
 

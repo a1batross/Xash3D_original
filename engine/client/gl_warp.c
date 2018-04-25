@@ -16,7 +16,6 @@ GNU General Public License for more details.
 #include "common.h"
 #include "client.h"
 #include "gl_local.h"
-#include "com_model.h"
 #include "wadfile.h"
 
 #define SKYCLOUDS_QUALITY	12
@@ -312,17 +311,7 @@ void R_AddSkyBoxSurface( msurface_t *fa )
 	float	*v;
 	int	i;
 
-	if( clgame.movevars.skyangle )
-	{
-		// HACK: force full sky to draw when it has angle
-		for( i = 0; i < 6; i++ )
-		{
-			RI.skyMins[0][i] = RI.skyMins[1][i] = -1.0f;
-			RI.skyMaxs[0][i] = RI.skyMaxs[1][i] = 1.0f;
-		}
-	}
-
-	if( world.sky_sphere && fa->polys && !world.custom_skybox )
+	if( FBitSet( world.flags, FWORLD_SKYSPHERE ) && fa->polys && !FBitSet( world.flags, FWORLD_CUSTOM_SKYBOX ))
 	{
 		glpoly_t	*p = fa->polys;
 
@@ -366,7 +355,7 @@ void R_UnloadSkybox( void )
 	tr.skyboxbasenum = 5800;	// set skybox base (to let some mods load hi-res skyboxes)
 
 	memset( tr.skyboxTextures, 0, sizeof( tr.skyboxTextures ));
-	world.custom_skybox = false;
+	ClearBits( world.flags, FWORLD_CUSTOM_SKYBOX );
 }
 
 /*
@@ -378,18 +367,6 @@ void R_DrawSkyBox( void )
 {
 	int	i;
 
-	if( clgame.movevars.skyangle )
-	{	
-		// check for no sky at all
-		for( i = 0; i < 6; i++ )
-		{
-			if( RI.skyMins[0][i] < RI.skyMaxs[0][i] && RI.skyMins[1][i] < RI.skyMaxs[1][i] )
-				break;
-		}
-
-		if( i == 6 ) return; // nothing visible
-	}
-
 	RI.isSkyVisible = true;
 
 	// don't fogging skybox (this fix old Half-Life bug)
@@ -399,16 +376,6 @@ void R_DrawSkyBox( void )
 	pglDisable( GL_ALPHA_TEST );
 	pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
 
-	if( clgame.movevars.skyangle && !VectorIsNull( (float *)&clgame.movevars.skydir_x ))
-	{
-		matrix4x4	m;
-		Matrix4x4_CreateRotate( m, clgame.movevars.skyangle, clgame.movevars.skydir_x, clgame.movevars.skydir_y, clgame.movevars.skydir_z );
-		Matrix4x4_ConcatTranslate( m, -RI.vieworg[0], -RI.vieworg[1], -RI.vieworg[2] );
-		Matrix4x4_ConcatTransforms( RI.modelviewMatrix, RI.worldviewMatrix, m );
-		GL_LoadMatrix( RI.modelviewMatrix );
-		tr.modelviewIdentity = false;
-	}
-
 	for( i = 0; i < 6; i++ )
 	{
 		if( RI.skyMins[0][i] >= RI.skyMaxs[0][i] || RI.skyMins[1][i] >= RI.skyMaxs[1][i] )
@@ -416,7 +383,7 @@ void R_DrawSkyBox( void )
 
 		if( tr.skyboxTextures[r_skyTexOrder[i]] )
 			GL_Bind( GL_TEXTURE0, tr.skyboxTextures[r_skyTexOrder[i]] );
-		else GL_Bind( GL_TEXTURE0, tr.skyTexture ); // stub
+		else GL_Bind( GL_TEXTURE0, tr.grayTexture ); // stub
 
 		pglBegin( GL_QUADS );
 		MakeSkyVec( RI.skyMins[0][i], RI.skyMins[1][i], i );
@@ -438,18 +405,18 @@ R_SetupSky
 */
 void R_SetupSky( const char *skyboxname )
 {
-	string	loadname;
-	string	sidename;
-	int	i = 0, result;
+	char	loadname[MAX_QPATH];
+	char	sidename[MAX_QPATH];
+	int	i, result;
 
-	if( !skyboxname || !*skyboxname )
+	if( !COM_CheckString( skyboxname ))
 	{
 		R_UnloadSkybox();
 		return; // clear old skybox
 	}
 
 	Q_snprintf( loadname, sizeof( loadname ), "gfx/env/%s", skyboxname );
-	FS_StripExtension( loadname );
+	COM_StripExtension( loadname );
 
 	// kill the underline suffix to find them manually later
 	if( loadname[Q_strlen( loadname ) - 1] == '_' )
@@ -457,42 +424,36 @@ void R_SetupSky( const char *skyboxname )
 	result = CheckSkybox( loadname );
 
 	// to prevent infinite recursion if default skybox was missed
-	if( result == SKYBOX_MISSED && Q_stricmp( loadname, "gfx/env/desert" ))
+	if( result == SKYBOX_MISSED && Q_stricmp( loadname, DEFAULT_SKYBOX_PATH ))
 	{
-		MsgDev( D_ERROR, "R_SetupSky: missed or incomplete skybox '%s'\n", skyboxname );
+		Con_Reportf( S_WARN "missed or incomplete skybox '%s'\n", skyboxname );
 		R_SetupSky( "desert" ); // force to default
 		return; 
 	}
 
 	// release old skybox
 	R_UnloadSkybox();
+	Con_DPrintf( "SKY:  " );
 
-	if( result == SKYBOX_HLSTYLE )
+	for( i = 0; i < 6; i++ )
 	{
-		for( i = 0; i < 6; i++ )
-		{
+		if( result == SKYBOX_HLSTYLE )
 			Q_snprintf( sidename, sizeof( sidename ), "%s%s", loadname, r_skyBoxSuffix[i] );
-			tr.skyboxTextures[i] = GL_LoadTexture( sidename, NULL, 0, TF_CLAMP|TF_SKY, NULL );
-			if( !tr.skyboxTextures[i] ) break;
-		}
-	}
-	else if( result == SKYBOX_Q1STYLE )
-	{
-		for( i = 0; i < 6; i++ )
-		{
-			Q_snprintf( sidename, sizeof( sidename ), "%s_%s", loadname, r_skyBoxSuffix[i] );
-			tr.skyboxTextures[i] = GL_LoadTexture( sidename, NULL, 0, TF_CLAMP|TF_SKY, NULL );
-			if( !tr.skyboxTextures[i] ) break;
-		}
+		else Q_snprintf( sidename, sizeof( sidename ), "%s_%s", loadname, r_skyBoxSuffix[i] );
+
+		tr.skyboxTextures[i] = GL_LoadTexture( sidename, NULL, 0, TF_CLAMP|TF_SKY, NULL );
+		if( !tr.skyboxTextures[i] ) break;
+		Con_DPrintf( "%s%s%s", skyboxname, r_skyBoxSuffix[i], i != 5 ? ", " : ". " );
 	}
 
 	if( i == 6 )
 	{
-		world.custom_skybox = true;
+		SetBits( world.flags, FWORLD_CUSTOM_SKYBOX );
+		Con_DPrintf( "done\n" );
 		return; // loaded
 	}
 
-	MsgDev( D_ERROR, "R_SetupSky: couldn't load skybox '%s'\n", skyboxname );
+	Con_DPrintf( "^2failed\n" );
 	R_UnloadSkybox();
 }
 
@@ -676,12 +637,12 @@ void R_DrawClouds( void )
 
 /*
 =============
-R_InitSky
+R_InitSkyClouds
 
 A sky texture is 256*128, with the right side being a masked overlay
 ==============
 */
-void R_InitSky( mip_t *mt, texture_t *tx )
+void R_InitSkyClouds( mip_t *mt, texture_t *tx, qboolean custom_palette )
 {
 	rgbdata_t	r_temp, *r_sky;
 	uint	*trans, *rgba;
@@ -690,16 +651,16 @@ void R_InitSky( mip_t *mt, texture_t *tx )
 	int	i, j, p;
 	char	texname[32];
 
+	if( !glw_state.initialized )
+		return;
+
 	Q_snprintf( texname, sizeof( texname ), "%s%s.mip", ( mt->offsets[0] > 0 ) ? "#" : "", tx->name );
 
 	if( mt->offsets[0] > 0 )
 	{
-		// NOTE: imagelib detect miptex version by size
-		// 770 additional bytes is indicated custom palette
-		int size = (int)sizeof( mip_t ) + ((mt->width * mt->height * 85)>>6);
-		if( world.version == HLBSP_VERSION || world.version == XTBSP_VERSION )
-			size += sizeof( short ) + 768;
+		int	size = (int)sizeof( mip_t ) + ((mt->width * mt->height * 85)>>6);
 
+		if( custom_palette ) size += sizeof( short ) + 768;
 		r_sky = FS_LoadImage( texname, (byte *)mt, size );
 	}
 	else
@@ -712,15 +673,15 @@ void R_InitSky( mip_t *mt, texture_t *tx )
 	if( !r_sky || !r_sky->palette || r_sky->type != PF_INDEXED_32 || r_sky->height == 0 )
 	{
 		MsgDev( D_ERROR, "R_InitSky: unable to load sky texture %s\n", tx->name );
-		FS_FreeImage( r_sky );
+		if( r_sky ) FS_FreeImage( r_sky );
 		return;
 	}
 
 	// make an average value for the back to avoid
 	// a fringe on the top level
 	trans = Mem_Alloc( r_temppool, r_sky->height * r_sky->height * sizeof( *trans ));
-
 	r = g = b = 0;
+
 	for( i = 0; i < r_sky->width >> 1; i++ )
 	{
 		for( j = 0; j < r_sky->height; j++ )
@@ -745,9 +706,9 @@ void R_InitSky( mip_t *mt, texture_t *tx )
 	r_temp.height = r_sky->height;
 	r_temp.type = PF_RGBA_32;
 	r_temp.flags = IMAGE_HAS_COLOR;
-	r_temp.palette = NULL;
-	r_temp.buffer = (byte *)trans;
 	r_temp.size = r_temp.width * r_temp.height * 4;
+	r_temp.buffer = (byte *)trans;
+	r_temp.palette = NULL;
 
 	// load it in
 	tr.solidskyTexture = GL_LoadTextureInternal( "solid_sky", &r_temp, TF_NOMIPMAP, false );
@@ -757,6 +718,7 @@ void R_InitSky( mip_t *mt, texture_t *tx )
 		for( j = 0; j < r_sky->height; j++ )
 		{
 			p = r_sky->buffer[i * r_sky->width + j];
+
 			if( p == 0 )
 			{
 				trans[(i * r_sky->height) + j] = transpix;
@@ -786,31 +748,34 @@ EmitWaterPolys
 Does a water warp on the pre-fragmented glpoly_t chain
 =============
 */
-void EmitWaterPolys( glpoly_t *polys, qboolean noCull, qboolean direction )
+void EmitWaterPolys( msurface_t *warp, qboolean reverse )
 {
-	glpoly_t	*p = polys;
 	float	*v, nv, waveHeight;
 	float	s, t, os, ot;
+	glpoly_t	*p;
 	int	i;
 
-	if( !polys ) return;
-	if( noCull ) pglDisable( GL_CULL_FACE );
+	if( !warp->polys ) return;
 
 	// set the current waveheight
-	if( p->verts[0][2] >= RI.vieworg[2] )
+	if( warp->polys->verts[0][2] >= RI.vieworg[2] )
 		waveHeight = -RI.currententity->curstate.scale;
 	else waveHeight = RI.currententity->curstate.scale;
 
 	// reset fog color for nonlightmapped water
 	GL_ResetFogColor();
 
-	for( p = polys; p; p = p->next )
-	{
-		pglBegin( GL_POLYGON );
+	if( FBitSet( warp->flags, SURF_DRAWTURB_QUADS ))
+		pglBegin( GL_QUADS );
 
-		if( direction )
+	for( p = warp->polys; p; p = p->next )
+	{
+		if( reverse )
 			v = p->verts[0] + ( p->numverts - 1 ) * VERTEXSIZE;
 		else v = p->verts[0];
+
+		if( !FBitSet( warp->flags, SURF_DRAWTURB_QUADS ))
+			pglBegin( GL_POLYGON );
 
 		for( i = 0; i < p->numverts; i++ )
 		{
@@ -831,20 +796,20 @@ void EmitWaterPolys( glpoly_t *polys, qboolean noCull, qboolean direction )
 			t = ot + r_turbsin[(int)((os * 0.125f + cl.time) * TURBSCALE) & 255];
 			t *= ( 1.0f / SUBDIVIDE_SIZE );
 
-			if( glState.activeTMU != 0 )
-				GL_MultiTexCoord2f( glState.activeTMU, s, t );
-			else pglTexCoord2f( s, t );
+			pglTexCoord2f( s, t );
 			pglVertex3f( v[0], v[1], nv );
 
-			if( direction )
+			if( reverse )
 				v -= VERTEXSIZE;
 			else v += VERTEXSIZE;
 		}
-		pglEnd();
+
+		if( !FBitSet( warp->flags, SURF_DRAWTURB_QUADS ))
+			pglEnd();
 	}
 
-	// restore culling
-	if( noCull ) pglEnable( GL_CULL_FACE );
+	if( FBitSet( warp->flags, SURF_DRAWTURB_QUADS ))
+		pglEnd();
 
 	GL_SetupFogColorForSurfaces();
 }

@@ -30,13 +30,13 @@ void CL_PlayVideo_f( void )
 
 	if( Cmd_Argc() != 2 && Cmd_Argc() != 3 )
 	{
-		Msg( "movie <moviename> [full]\n" );
+		Con_Printf( S_USAGE "movie <moviename> [full]\n" );
 		return;
 	}
 
 	if( cls.state == ca_active )
 	{
-		Msg( "Can't play movie while connected to a server.\nPlease disconnect first.\n" );
+		Con_Printf( "Can't play movie while connected to a server.\nPlease disconnect first.\n" );
 		return;
 	}
 
@@ -62,6 +62,7 @@ Emulate audio-cd system
 void CL_PlayCDTrack_f( void )
 {
 	const char	*command;
+	const char	*pszTrack;
 	static int	track = 0;
 	static qboolean	paused = false;
 	static qboolean	looped = false;
@@ -69,21 +70,30 @@ void CL_PlayCDTrack_f( void )
 
 	if( Cmd_Argc() < 2 ) return;
 	command = Cmd_Argv( 1 );
+	pszTrack = Cmd_Argv( 2 );
 
 	if( !enabled && Q_stricmp( command, "on" ))
 		return; // CD-player is disabled
 
 	if( !Q_stricmp( command, "play" ))
 	{
-		track = bound( 1, Q_atoi( Cmd_Argv( 2 )), MAX_CDTRACKS );
-		S_StartBackgroundTrack( clgame.cdtracks[track-1], NULL, 0 );
+		if( Q_isdigit( pszTrack ))
+		{
+			track = bound( 1, Q_atoi( Cmd_Argv( 2 )), MAX_CDTRACKS );
+			S_StartBackgroundTrack( clgame.cdtracks[track-1], NULL, 0, false );
+		}
+		else S_StartBackgroundTrack( pszTrack, NULL, 0, true );
 		paused = false;
 		looped = false;
 	}
 	else if( !Q_stricmp( command, "loop" ))
 	{
-		track = bound( 1, Q_atoi( Cmd_Argv( 2 )), MAX_CDTRACKS );
-		S_StartBackgroundTrack( clgame.cdtracks[track-1], clgame.cdtracks[track-1], 0 );
+		if( Q_isdigit( pszTrack ))
+		{
+			track = bound( 1, Q_atoi( Cmd_Argv( 2 )), MAX_CDTRACKS );
+			S_StartBackgroundTrack( clgame.cdtracks[track-1], clgame.cdtracks[track-1], 0, false );
+		}
+		else S_StartBackgroundTrack( pszTrack, pszTrack, 0, true );
 		paused = false;
 		looped = true;
 	}
@@ -119,16 +129,16 @@ void CL_PlayCDTrack_f( void )
 		for( maxTrack = i = 0; i < MAX_CDTRACKS; i++ )
 			if( Q_strlen( clgame.cdtracks[i] )) maxTrack++;
 			
-		Msg( "%u tracks\n", maxTrack );
+		Con_Printf( "%u tracks\n", maxTrack );
 		if( track )
 		{
-			if( paused ) Msg( "Paused %s track %u\n", looped ? "looping" : "playing", track );
-			else Msg( "Currently %s track %u\n", looped ? "looping" : "playing", track );
+			if( paused ) Con_Printf( "Paused %s track %u\n", looped ? "looping" : "playing", track );
+			else Con_Printf( "Currently %s track %u\n", looped ? "looping" : "playing", track );
 		}
-		Msg( "Volume is %f\n", Cvar_VariableValue( "MP3Volume" ));
+		Con_Printf( "Volume is %f\n", Cvar_VariableValue( "MP3Volume" ));
 		return;
 	}
-	else Msg( "cd: unknown command %s\n", command );
+	else Con_Printf( "%s: unknown command %s\n", Cmd_Argv( 0 ), command );
 }
 
 /* 
@@ -285,7 +295,7 @@ void CL_EnvShot_f( void )
 {
 	if( Cmd_Argc() < 2 )
 	{
-		Msg( "Usage: envshot <shotname>\n" );
+		Con_Printf( S_USAGE "envshot <shotname>\n" );
 		return;
 	}
 
@@ -306,7 +316,7 @@ void CL_SkyShot_f( void )
 {
 	if( Cmd_Argc() < 2 )
 	{
-		Msg( "Usage: skyshot <shotname>\n" );
+		Con_Printf( S_USAGE "skyshot <shotname>\n" );
 		return;
 	}
 
@@ -367,11 +377,11 @@ void CL_SaveShot_f( void )
 {
 	if( Cmd_Argc() < 2 )
 	{
-		Msg( "Usage: saveshot <savename>\n" );
+		Con_Printf( S_USAGE "saveshot <savename>\n" );
 		return;
 	}
 
-	Q_sprintf( cls.shotname, "save/%s.bmp", Cmd_Argv( 1 ));
+	Q_sprintf( cls.shotname, "%s%s.bmp", DEFAULT_SAVE_DIRECTORY, Cmd_Argv( 1 ));
 	cls.scrshot_action = scrshot_savegame;	// build new frame for saveshot
 }
 
@@ -386,7 +396,7 @@ void CL_DemoShot_f( void )
 {
 	if( Cmd_Argc() < 2 )
 	{
-		Msg( "Usage: demoshot <demoname>\n" );
+		Con_Printf( S_USAGE "demoshot <demoname>\n" );
 		return;
 	}
 
@@ -404,13 +414,13 @@ void CL_DeleteDemo_f( void )
 {
 	if( Cmd_Argc() != 2 )
 	{
-		Msg( "Usage: killdemo <name>\n" );
+		Con_Printf( S_USAGE "killdemo <name>\n" );
 		return;
 	}
 
 	if( cls.demorecording && !Q_stricmp( cls.demoname, Cmd_Argv( 1 )))
 	{
-		Msg( "Can't delete %s - recording\n", Cmd_Argv( 1 ));
+		Con_Printf( "Can't delete %s - recording\n", Cmd_Argv( 1 ));
 		return;
 	}
 
@@ -430,7 +440,7 @@ void CL_SetSky_f( void )
 {
 	if( Cmd_Argc() < 2 )
 	{
-		Msg( "Usage: skyname <shadername>\n" );
+		Con_Printf( S_USAGE "skyname <skybox>\n" );
 		return;
 	}
 
@@ -480,7 +490,7 @@ void SCR_TimeRefresh_f( void )
 
 	stop = Sys_DoubleTime ();
 	time = (stop - start);
-	Msg( "%f seconds (%f fps)\n", time, 128 / time );
+	Con_Printf( "%f seconds (%f fps)\n", time, 128 / time );
 }
 
 /*
@@ -492,6 +502,6 @@ viewpos (level-designer helper)
 */
 void SCR_Viewpos_f( void )
 {
-	Msg( "org ( %g %g %g )\n", RI.vieworg[0], RI.vieworg[1], RI.vieworg[2] );
-	Msg( "ang ( %g %g %g )\n", RI.viewangles[0], RI.viewangles[1], RI.viewangles[2] );
+	Con_Printf( "org ( %g %g %g )\n", RI.vieworg[0], RI.vieworg[1], RI.vieworg[2] );
+	Con_Printf( "ang ( %g %g %g )\n", RI.viewangles[0], RI.viewangles[1], RI.viewangles[2] );
 }

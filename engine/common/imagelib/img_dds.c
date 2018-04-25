@@ -97,13 +97,10 @@ void Image_DXTGetPixelFormat( dds_t *hdr )
 {
 	uint bits = hdr->dsPixelFormat.dwRGBBitCount;
 
-	// all volume textures I've seem so far didn't have the DDS_COMPLEX flag set,
-	// even though this is normally required. But because noone does set it,
-	// also read images without it (TODO: check file size for 3d texture?)
-	if( !( hdr->dsCaps.dwCaps2 & DDS_VOLUME ))
+	if( !FBitSet( hdr->dsCaps.dwCaps2, DDS_VOLUME ))
 		hdr->dwDepth = 1;
 
-	if( hdr->dsPixelFormat.dwFlags & DDS_FOURCC )
+	if( FBitSet( hdr->dsPixelFormat.dwFlags, DDS_FOURCC ))
 	{
 		switch( hdr->dsPixelFormat.dwFourCC )
 		{
@@ -311,7 +308,7 @@ qboolean Image_LoadDDS( const char *name, const byte *buffer, size_t filesize )
 		else if( image.type == PF_DXT5 && Image_CheckDXT5Alpha( &header, fin ))
 			SetBits( image.flags, IMAGE_HAS_ALPHA );
 		if( !FBitSet( header.dsPixelFormat.dwFlags, DDS_LUMINANCE ))
-			SetBits( image.flags, IMAGE_HAS_COLOR ); // FIXME: analyze colors
+			SetBits( image.flags, IMAGE_HAS_COLOR );
 		break;
 	}
 

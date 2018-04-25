@@ -221,7 +221,7 @@ loading and unpack to rgba any known image
 */
 rgbdata_t *FS_LoadImage( const char *filename, const byte *buffer, size_t size )
 {
-          const char	*ext = FS_FileExtension( filename );
+	const char	*ext = COM_FileExtension( filename );
 	string		path, loadname, sidename;
 	qboolean		anyformat = true;
 	int		i, filesize = 0;
@@ -240,15 +240,16 @@ rgbdata_t *FS_LoadImage( const char *filename, const byte *buffer, size_t size )
 		{
 			if( !Q_stricmp( format->ext, ext ))
 			{
-				FS_StripExtension( loadname );
+				COM_StripExtension( loadname );
 				anyformat = false;
 				break;
 			}
 		}
 	}
 
-	// HACKHACK: skip any checks, load file from buffer
-	if( filename[0] == '#' && buffer && size ) goto load_internal;
+	// special mode: skip any checks, load file from buffer
+	if( filename[0] == '#' && buffer && size )
+		goto load_internal;
 
 	// now try all the formats in the selected list
 	for( format = image.loadformats; format && format->formatstring; format++)
@@ -364,7 +365,7 @@ writes image as any known format
 */
 qboolean FS_SaveImage( const char *filename, rgbdata_t *pix )
 {
-          const char	*ext = FS_FileExtension( filename );
+	const char	*ext = COM_FileExtension( filename );
 	qboolean		anyformat = !Q_stricmp( ext, "" ) ? true : false;
 	string		path, savename;
 	const savepixformat_t *format;
@@ -377,7 +378,7 @@ qboolean FS_SaveImage( const char *filename, rgbdata_t *pix )
 	}
 
 	Q_strncpy( savename, filename, sizeof( savename ));
-	FS_StripExtension( savename ); // remove extension if needed
+	COM_StripExtension( savename ); // remove extension if needed
 
 	if( pix->flags & (IMAGE_CUBEMAP|IMAGE_SKYBOX))
 	{

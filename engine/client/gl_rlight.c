@@ -216,8 +216,8 @@ int R_CountSurfaceDlights( msurface_t *surf )
 
 =======================================================================
 */
-static float	g_trace_fraction;
 static vec3_t	g_trace_lightspot;
+static float	g_trace_fraction;
 
 /*
 =================
@@ -227,8 +227,10 @@ R_RecursiveLightPoint
 static qboolean R_RecursiveLightPoint( model_t *model, mnode_t *node, float p1f, float p2f, colorVec *cv, const vec3_t start, const vec3_t end )
 {
 	float		front, back, frac, midf;
-	int		i, map, side, size, s, t;
+	int		i, map, side, size;
+	float		ds, dt, s, t;
 	int		sample_size;
+	mextrasurf_t	*info;
 	msurface_t	*surf;
 	mtexinfo_t	*tex;
 	color24		*lm;
@@ -270,15 +272,24 @@ static qboolean R_RecursiveLightPoint( model_t *model, mnode_t *node, float p1f,
 
 	for( i = 0; i < node->numsurfaces; i++, surf++ )
 	{
+		int	smax, tmax;
+
 		tex = surf->texinfo;
+		info = surf->info;
 
 		if( FBitSet( surf->flags, SURF_DRAWTILED ))
 			continue;	// no lightmaps
 
-		s = DotProduct( mid, tex->vecs[0] ) + tex->vecs[0][3] - surf->texturemins[0];
-		t = DotProduct( mid, tex->vecs[1] ) + tex->vecs[1][3] - surf->texturemins[1];
+		s = DotProduct( mid, info->lmvecs[0] ) + info->lmvecs[0][3];
+		t = DotProduct( mid, info->lmvecs[1] ) + info->lmvecs[1][3];
 
-		if(( s < 0 || s > surf->extents[0] ) || ( t < 0 || t > surf->extents[1] ))
+		if( s < info->lightmapmins[0] || t < info->lightmapmins[1] )
+			continue;
+
+		ds = s - info->lightmapmins[0];
+		dt = t - info->lightmapmins[1];
+		
+		if ( ds > info->lightextents[0] || dt > info->lightextents[1] )
 			continue;
 
 		cv->r = cv->g = cv->b = cv->a = 0;
@@ -287,12 +298,14 @@ static qboolean R_RecursiveLightPoint( model_t *model, mnode_t *node, float p1f,
 			return true;
 
 		sample_size = Mod_SampleSizeForFace( surf );
-		s /= sample_size;
-		t /= sample_size;
+		smax = (info->lightextents[0] / sample_size) + 1;
+		tmax = (info->lightextents[1] / sample_size) + 1;
+		ds /= sample_size;
+		dt /= sample_size;
 
-		lm = surf->samples + (t * ((surf->extents[0]  / sample_size) + 1) + s);
-		size = ((surf->extents[0] / sample_size) + 1) * ((surf->extents[1] / sample_size) + 1);
+		lm = surf->samples + Q_rint( dt ) * smax + Q_rint( ds );
 		g_trace_fraction = midf;
+		size = smax * tmax;
 
 		for( map = 0; map < MAXLIGHTMAPS && surf->styles[map] != 255; map++ )
 		{
@@ -320,14 +333,6 @@ static qboolean R_RecursiveLightPoint( model_t *model, mnode_t *node, float p1f,
 	return R_RecursiveLightPoint( model, node->children[!side], midf, p2f, cv, mid, end );
 }
 
-int R_LightTraceFilter( physent_t *pe )
-{
-	if( !pe || pe->solid != SOLID_BSP || pe->info == 0 )
-		return 1;
-
-	return 0;
-}
-
 /*
 =================
 R_LightVec
@@ -341,6 +346,8 @@ colorVec R_LightVec( const vec3_t start, const vec3_t end, vec3_t lspot )
 	int	i, maxEnts = 1;
 	colorVec	light, cv;
 
+	if( lspot ) VectorClear( lspot );
+
 	if( cl.worldmodel && cl.worldmodel->lightdata )
 	{
 		light.r = light.g = light.b = light.a = 0;
@@ -350,7 +357,7 @@ colorVec R_LightVec( const vec3_t start, const vec3_t end, vec3_t lspot )
 		if( r_lighting_extended->value )
 			maxEnts = clgame.pmove->numphysent;
 
-		// check al the bsp-models
+		// check all the bsp-models
 		for( i = 0; i < maxEnts; i++ )
 		{
 			physent_t	*pe = &clgame.pmove->physents[i];

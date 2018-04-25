@@ -39,9 +39,9 @@ typedef enum
 	SIS_NOTAVAIL
 } si_state_t;
 
-static HWND	snd_hwnd;
-static qboolean	snd_firsttime = true;
-static qboolean	primary_format_set;
+static qboolean		snd_firsttime = true;
+static qboolean		primary_format_set;
+static HWND		snd_hwnd;
 
 /* 
 =======================================================================
@@ -49,13 +49,12 @@ Global variables. Must be visible to window-procedure function
 so it can unlock and free the data block after it has been played.
 =======================================================================
 */ 
-DWORD		locksize;
-HPSTR		lpData, lpData2;
-LPWAVEHDR		lpWaveHdr;
-DWORD		gSndBufSize;
-MMTIME		mmstarttime;
-LPDIRECTSOUNDBUFFER pDSBuf, pDSPBuf;
-LPDIRECTSOUND	pDS;
+static DWORD		locksize;
+static HPSTR		lpData, lpData2;
+static DWORD		gSndBufSize;
+static MMTIME		mmstarttime;
+static LPDIRECTSOUNDBUFFER	pDSBuf, pDSPBuf;
+static LPDIRECTSOUND	pDS;
 
 qboolean SNDDMA_InitDirect( void *hInst );
 void SNDDMA_FreeSound( void );
@@ -65,15 +64,16 @@ static const char *DSoundError( int error )
 	switch( error )
 	{
 	case DSERR_BUFFERLOST:
-		return "DSERR_BUFFERLOST";
+		return "buffer is lost";
 	case DSERR_INVALIDCALL:
-		return "DSERR_INVALIDCALLS";
+		return "invalid call";
 	case DSERR_INVALIDPARAM:
-		return "DSERR_INVALIDPARAM";
+		return "invalid param";
 	case DSERR_PRIOLEVELNEEDED:
-		return "DSERR_PRIOLEVELNEEDED";
+		return "invalid priority level";
 	}
-	return "Unknown Error";
+
+	return "unknown error";
 }
 
 /*
@@ -83,12 +83,11 @@ DS_CreateBuffers
 */
 static qboolean DS_CreateBuffers( void *hInst )
 {
-	DSBUFFERDESC	dsbuf;
-	DSBCAPS		dsbcaps;
 	WAVEFORMATEX	pformat, format;
+	DSBCAPS		dsbcaps;
+	DSBUFFERDESC	dsbuf;
 
 	memset( &format, 0, sizeof( format ));
-
 	format.wFormatTag = WAVE_FORMAT_PCM;
 	format.nChannels = 2;
 	format.wBitsPerSample = 16;
@@ -97,16 +96,12 @@ static qboolean DS_CreateBuffers( void *hInst )
 	format.nAvgBytesPerSec = format.nSamplesPerSec * format.nBlockAlign; 
 	format.cbSize = 0;
 
-	MsgDev( D_NOTE, "DS_CreateBuffers: initialize\n" );
-
-	MsgDev( D_NOTE, "DS_CreateBuffers: setting EXCLUSIVE coop level " );
-	if( DS_OK != pDS->lpVtbl->SetCooperativeLevel( pDS, hInst, DSSCL_EXCLUSIVE ))
+	if( pDS->lpVtbl->SetCooperativeLevel( pDS, hInst, DSSCL_EXCLUSIVE ) != DS_OK )
 	{
-		MsgDev( D_NOTE, "- failed\n" );
+		Con_DPrintf( S_ERROR "DirectSound: failed to set EXCLUSIVE coop level\n" );
 		SNDDMA_FreeSound();
 		return false;
 	}
-	MsgDev( D_NOTE, "- ok\n" );
 
 	// get access to the primary buffer, if possible, so we can set the sound hardware format
 	memset( &dsbuf, 0, sizeof( dsbuf ));
@@ -119,28 +114,20 @@ static qboolean DS_CreateBuffers( void *hInst )
 	dsbcaps.dwSize = sizeof( dsbcaps );
 	primary_format_set = false;
 
-	MsgDev( D_NOTE, "DS_CreateBuffers: creating primary buffer " );
 	if( pDS->lpVtbl->CreateSoundBuffer( pDS, &dsbuf, &pDSPBuf, NULL ) == DS_OK )
 	{
 		pformat = format;
 
-		MsgDev( D_NOTE, "- ok\n" );
-		if( snd_firsttime )
-			MsgDev( D_NOTE, "DS_CreateBuffers: setting primary sound format " );
-
 		if( pDSPBuf->lpVtbl->SetFormat( pDSPBuf, &pformat ) != DS_OK )
 		{
 			if( snd_firsttime )
-				MsgDev( D_NOTE, "- failed\n" );
+				Con_DPrintf( S_ERROR "DirectSound: failed to set primary sound format\n" );
 		}
 		else
 		{
-			if( snd_firsttime )
-				MsgDev( D_NOTE, "- ok\n" );
 			primary_format_set = true;
 		}
 	}
-	else MsgDev( D_NOTE, "- failed\n" );
 
 	// create the secondary buffer we'll actually work with
 	memset( &dsbuf, 0, sizeof( dsbuf ));
@@ -152,38 +139,30 @@ static qboolean DS_CreateBuffers( void *hInst )
 	memset( &dsbcaps, 0, sizeof( dsbcaps ));
 	dsbcaps.dwSize = sizeof( dsbcaps );
 
-	MsgDev( D_NOTE, "DS_CreateBuffers: creating secondary buffer " );
-
-	if( pDS->lpVtbl->CreateSoundBuffer( pDS, &dsbuf, &pDSBuf, NULL ) == DS_OK )
-	{
-		MsgDev( D_NOTE, "- ok\n" );
-	}
-	else
+	if( pDS->lpVtbl->CreateSoundBuffer( pDS, &dsbuf, &pDSBuf, NULL ) != DS_OK )
 	{
 		// couldn't get hardware, fallback to software.
 		dsbuf.dwFlags = (DSBCAPS_LOCSOFTWARE|DSBCAPS_GETCURRENTPOSITION2);
+
 		if( pDS->lpVtbl->CreateSoundBuffer( pDS, &dsbuf, &pDSBuf, NULL ) != DS_OK )
 		{
-			MsgDev( D_NOTE, "- failed\n" );
+			Con_DPrintf( S_ERROR "DirectSound: failed to create secondary buffer\n" );
 			SNDDMA_FreeSound ();
 			return false;
 		}
-		MsgDev( D_INFO, "- failed. forced to software\n" );
 	}
 
 	if( pDSBuf->lpVtbl->GetCaps( pDSBuf, &dsbcaps ) != DS_OK )
 	{
-		MsgDev( D_ERROR, "DS_CreateBuffers: GetCaps failed\n");
+		Con_DPrintf( S_ERROR "DirectSound: failed to get capabilities\n" );
 		SNDDMA_FreeSound ();
 		return false;
 	}
 
-	MsgDev( D_NOTE, "DS_CreateBuffers: using secondary sound buffer\n" );
-
 	// make sure mixer is active
 	if( pDSBuf->lpVtbl->Play( pDSBuf, 0, 0, DSBPLAY_LOOPING ) != DS_OK )
 	{
-		MsgDev( D_ERROR, "DS_CreateBuffers: looped sound play failed\n" );
+		Con_DPrintf( S_ERROR "DirectSound: failed to create circular buffer\n" );
 		SNDDMA_FreeSound ();
 		return false;
 	}
@@ -210,31 +189,43 @@ DS_DestroyBuffers
 */
 static void DS_DestroyBuffers( void )
 {
-	MsgDev( D_NOTE, "DS_DestroyBuffers: shutdown\n" );
-
-	if( pDS )
-	{
-		MsgDev( D_NOTE, "DS_DestroyBuffers: setting NORMAL coop level\n" );
-		pDS->lpVtbl->SetCooperativeLevel( pDS, snd_hwnd, DSSCL_NORMAL );
-	}
+	if( pDS ) pDS->lpVtbl->SetCooperativeLevel( pDS, snd_hwnd, DSSCL_NORMAL );
 
 	if( pDSBuf )
 	{
-		MsgDev( D_NOTE, "DS_DestroyBuffers: stopping and releasing sound buffer\n" );
 		pDSBuf->lpVtbl->Stop( pDSBuf );
 		pDSBuf->lpVtbl->Release( pDSBuf );
 	}
 
 	// only release primary buffer if it's not also the mixing buffer we just released
 	if( pDSPBuf && ( pDSBuf != pDSPBuf ))
-	{
-		MsgDev( D_NOTE, "DS_DestroyBuffers: releasing primary buffer\n" );
 		pDSPBuf->lpVtbl->Release( pDSPBuf );
-	}
 
-	pDSBuf = NULL;
-	pDSPBuf = NULL;
 	dma.buffer = NULL;
+	pDSPBuf = NULL;
+	pDSBuf = NULL;
+}
+
+/*
+==================
+SNDDMA_LockSound
+==================
+*/
+void SNDDMA_LockSound( void )
+{
+	if( pDSBuf != NULL )
+		pDSBuf->lpVtbl->Stop( pDSBuf );
+}
+
+/*
+==================
+SNDDMA_LockSound
+==================
+*/
+void SNDDMA_UnlockSound( void )
+{
+	if( pDSBuf != NULL )
+		pDSBuf->lpVtbl->Play( pDSBuf, 0, 0, DSBPLAY_LOOPING );
 }
 
 /*
@@ -251,11 +242,10 @@ void SNDDMA_FreeSound( void )
 		Sys_FreeLibrary( &dsound_dll );
 	}
 
-	pDS = NULL;
-	pDSBuf = NULL;
-	pDSPBuf = NULL;
 	lpData = NULL;
-	lpWaveHdr = NULL;
+	pDSPBuf = NULL;
+	pDSBuf = NULL;
+	pDS = NULL;
 }
 
 /*
@@ -276,28 +266,23 @@ si_state_t SNDDMA_InitDirect( void *hInst )
 			return SIS_FAILURE;
 	}
 
-	MsgDev( D_NOTE, "SNDDMA_InitDirect: creating DS object " );
 	if(( hresult = iDirectSoundCreate( NULL, &pDS, NULL )) != DS_OK )
 	{
 		if( hresult != DSERR_ALLOCATED )
-		{
-			MsgDev( D_NOTE, "- failed\n" );
 			return SIS_FAILURE;
-		}
 
-		MsgDev( D_NOTE, "- failed, hardware already in use\n" );
+		Con_DPrintf( S_ERROR "DirectSound: hardware already in use\n" );
 		return SIS_NOTAVAIL;
 	}
 
-	MsgDev( D_NOTE, "- ok\n" );
 	dscaps.dwSize = sizeof( dscaps );
 
 	if( pDS->lpVtbl->GetCaps( pDS, &dscaps ) != DS_OK )
-		MsgDev( D_ERROR, "SNDDMA_InitDirect: GetCaps failed\n");
+		Con_DPrintf( S_ERROR "DirectSound: failed to get capabilities\n" );
 
-	if( dscaps.dwFlags & DSCAPS_EMULDRIVER )
+	if( FBitSet( dscaps.dwFlags, DSCAPS_EMULDRIVER ))
 	{
-		MsgDev( D_ERROR, "SNDDMA_InitDirect: no DSound driver found\n" );
+		Con_DPrintf( S_ERROR "DirectSound: driver not installed\n" );
 		SNDDMA_FreeSound();
 		return SIS_FAILURE;
 	}
@@ -318,30 +303,20 @@ Returns false if nothing is found.
 */
 int SNDDMA_Init( void *hInst )
 {
-	si_state_t	stat = SIS_FAILURE;	// assume DirectSound won't initialize
-
 	// already initialized
 	if( dma.initialized ) return true;
 
 	memset( &dma, 0, sizeof( dma ));
 
 	// init DirectSound
-	stat = SNDDMA_InitDirect( hInst );
-
-	if( stat == SIS_SUCCESS )
-	{
-		if( snd_firsttime )
-			MsgDev( D_INFO, "Audio: DirectSound\n" );
-	}
-	else
-	{
-		if( snd_firsttime )
-			MsgDev( D_ERROR, "Audio: can't initialize sound device\n" );
+	if( SNDDMA_InitDirect( hInst ) != SIS_SUCCESS )
 		return false;
-	}
 
+	if( snd_firsttime )
+		Con_Printf( "Audio: DirectSound\n" );
 	dma.initialized = true;
 	snd_firsttime = false;
+
 	return true;
 }
 
@@ -359,6 +334,9 @@ int SNDDMA_GetDMAPos( void )
 	int	s;
 	MMTIME	mmtime;
 	DWORD	dwWrite;
+
+	if( !dma.initialized )
+		return 0;
 	
 	mmtime.wType = TIME_SAMPLES;
 	pDSBuf->lpVtbl->GetCurrentPosition( pDSBuf, &mmtime.u.sample, &dwWrite );
@@ -426,12 +404,12 @@ void SNDDMA_BeginPainting( void )
 
 	// if the buffer was lost or stopped, restore it and/or restart it
 	if( pDSBuf->lpVtbl->GetStatus( pDSBuf, &dwStatus ) != DS_OK )
-		MsgDev( D_WARN, "SNDDMA_BeginPainting: couldn't get sound buffer status\n" );
+		Con_DPrintf( S_ERROR "BeginPainting: couldn't get sound buffer status\n" );
 	
 	if( dwStatus & DSBSTATUS_BUFFERLOST )
 		pDSBuf->lpVtbl->Restore( pDSBuf );
 	
-	if( !( dwStatus & DSBSTATUS_PLAYING ))
+	if( !FBitSet( dwStatus, DSBSTATUS_PLAYING ))
 		pDSBuf->lpVtbl->Play( pDSBuf, 0, 0, DSBPLAY_LOOPING );
 
 	// lock the dsound buffer
@@ -442,12 +420,11 @@ void SNDDMA_BeginPainting( void )
 	{
 		if( hr != DSERR_BUFFERLOST )
 		{
-			MsgDev( D_ERROR, "SNDDMA_BeginPainting: lock error '%s'\n", DSoundError( hr ));
+			Con_DPrintf( S_ERROR "BeginPainting: %s\n", DSoundError( hr ));
 			S_Shutdown ();
 			return;
 		}
 		else pDSBuf->lpVtbl->Restore( pDSBuf );
-
 		if( ++reps > 2 ) return;
 	}
 
@@ -481,16 +458,6 @@ void SNDDMA_Shutdown( void )
 	if( !dma.initialized ) return;
 	dma.initialized = false;
 	SNDDMA_FreeSound();
-}
-
-/*
-===========
-S_PrintDeviceName
-===========
-*/
-void S_PrintDeviceName( void )
-{
-	Msg( "Audio: DirectSound\n" );
 }
 
 /*

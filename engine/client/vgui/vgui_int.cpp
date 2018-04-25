@@ -1,5 +1,5 @@
 /*
-vgui_int.c - vgui dll interaction
+vgui_int.cpp - vgui dll interaction
 Copyright (C) 2011 Uncle Mike
 
 This program is free software: you can redistribute it and/or modify
@@ -19,19 +19,9 @@ GNU General Public License for more details.
 #include "vgui_draw.h"
 #include "vgui_main.h"
 
-CEnginePanel	*rootpanel = NULL;
-CEngineSurface	*surface = NULL;
-CEngineApp          *pApp = NULL;
-
-SurfaceBase* CEnginePanel::getSurfaceBase( void )
-{
-	return surface;
-}
-
-App* CEnginePanel::getApp( void )
-{
-	return pApp;
-}
+Panel		*rootPanel = NULL;
+CEngineSurface	*engSurface = NULL;
+CEngineApp	staticApp, *engApp;
 
 void CEngineApp :: setCursorPos( int x, int y )
 {
@@ -64,71 +54,66 @@ void VGui_RunFrame( void )
 	else host.force_draw_version = false;
 }
 
+void VGui_SetRootPanelSize( void )
+{
+	if( rootPanel != NULL )
+		rootPanel->setBounds( 0, 0, gameui.globals->scrWidth, gameui.globals->scrHeight );
+}
+
 void VGui_Startup( void )
 {
-	if( rootpanel )
-	{
-		rootpanel->setSize( gameui.globals->scrWidth, gameui.globals->scrHeight );
-		return;
-	}
+	if( engSurface ) return;
 
-	rootpanel = new CEnginePanel;
-	rootpanel->setPaintBorderEnabled( false );
-	rootpanel->setPaintBackgroundEnabled( false );
-	rootpanel->setVisible( true );
-	rootpanel->setCursor( new Cursor( Cursor::dc_none ));
+	engApp = (CEngineApp *)App::getInstance();
+	engApp->reset();
+	engApp->setMinimumTickMillisInterval( 0 ); // paint every frame
 
-	pApp = new CEngineApp;
-	pApp->start();
-	pApp->setMinimumTickMillisInterval( 0 );
+	rootPanel = new Panel( 0, 0, 320, 240 ); // size will be changed in VGui_SetRootPanelSize
+	rootPanel->setPaintBorderEnabled( false );
+	rootPanel->setPaintBackgroundEnabled( false );
+	rootPanel->setPaintEnabled( false );
+	rootPanel->setCursor( engApp->getScheme()->getCursor( Scheme::scu_none ));
 
-	surface = new CEngineSurface( rootpanel );
-	rootpanel->setSurfaceBaseTraverse( surface );
+	engSurface = new CEngineSurface( rootPanel );
 
-	ASSERT( rootpanel->getApp() != NULL );
-	ASSERT( rootpanel->getSurfaceBase() != NULL );
-
+	VGui_SetRootPanelSize ();
 	VGUI_DrawInit ();
 }
 
 void VGui_Shutdown( void )
 {
-	if( pApp ) pApp->stop();
-
-	delete rootpanel;
-	delete surface;
-	delete pApp;
-
-	rootpanel = NULL;
-	surface = NULL;
-	pApp = NULL;
+	delete rootPanel;
+	delete engSurface;
+	engSurface = NULL;
+	rootPanel = NULL;
 }
 
-void VGui_Paint( void )
+void VGui_Paint( int paintAll )
 {
-	RECT	rect;
+	int	extents[4];
 
-	if( cls.state != ca_active || !rootpanel )
+	if( cls.state != ca_active || !rootPanel )
 		return;
 
-	// setup the base panel to cover the screen
-	Panel *pVPanel = surface->getEmbeddedPanel();
-	if( !pVPanel ) return;
-
-	host.input_enabled = rootpanel->isVisible();
-	GetClientRect( host.hWnd, &rect );
+	VGui_SetRootPanelSize ();
+	rootPanel->repaint();
 	EnableScissor( true );
 
 	if( cls.key_dest == key_game )
 	{
-		pApp->externalTick ();
+		App::getInstance()->externalTick();
 	}
 
-	pVPanel->setBounds( 0, 0, rect.right, rect.bottom );
-	pVPanel->repaint();
-
-	// paint everything 
-	pVPanel->paintTraverse();
+	if( paintAll )
+	{
+		// paint everything
+		rootPanel->paintTraverse();
+	}
+	else
+	{
+		rootPanel->getAbsExtents( extents[0], extents[1], extents[2], extents[3] );
+		VGui_ViewportPaintBackground( extents );
+	}
 
 	EnableScissor( false );
 }
@@ -140,5 +125,5 @@ void VGui_ViewportPaintBackground( int extents[4] )
 
 void *VGui_GetPanel( void )
 {
-	return (void *)rootpanel;
+	return (void *)rootPanel;
 }

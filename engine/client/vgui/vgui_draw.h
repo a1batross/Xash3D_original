@@ -30,6 +30,7 @@ typedef struct
 {
 	vec2_t	point;
 	vec2_t	coord;
+	byte	color[4];
 } vpoint_t;
 
 //
@@ -38,17 +39,14 @@ typedef struct
 
 void VGUI_DrawInit( void );
 void VGUI_DrawShutdown( void );
-void VGUI_SetupDrawingText( int *pColor );
 void VGUI_SetupDrawingRect( int *pColor );
 void VGUI_SetupDrawingImage( int *pColor );
 void VGUI_BindTexture( int id );
 void VGUI_EnableTexture( qboolean enable );
-void VGUI_CreateTexture( int id, int width, int height );
 void VGUI_UploadTexture( int id, const char *buffer, int width, int height );
-void VGUI_UploadTextureBlock( int id, int drawX, int drawY, const byte *rgba, int blockWidth, int blockHeight );
 LONG VGUI_SurfaceWndProc( HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam );
 void VGUI_DrawQuad( const vpoint_t *ul, const vpoint_t *lr );
-void VGUI_GetTextureSizes( int *width, int *height );
+void VGUI_DrawBuffer( const vpoint_t *buffer, int numVerts );
 int VGUI_GenerateTexture( void );
 void *VGui_GetPanel( void );
 
@@ -69,7 +67,7 @@ qboolean R_DescribeVIDMode( int width, int height );
 void VGui_Startup( void );
 void VGui_Shutdown( void );
 void *VGui_GetPanel( void );
-void VGui_Paint( void );
+void VGui_Paint( int paintAll );
 void VGui_RunFrame( void );
 void VGui_ViewportPaintBackground( int extents[4] );
 

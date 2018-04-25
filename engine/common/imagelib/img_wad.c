@@ -268,11 +268,11 @@ qboolean Image_LoadLMP( const char *name, const byte *buffer, size_t filesize )
 		return false;
 	}
 
-	// greatest hack from valve software (particle palette)
+	// valve software trick (particle palette)
 	if( Q_stristr( name, "palette.lmp" ))
 		return Image_LoadPAL( name, buffer, filesize );
 
-	// greatest hack from id software (image without header)
+	// id software trick (image without header)
 	if( image.hint != IL_HINT_HL && Q_stristr( name, "conchars" ))
 	{
 		image.width = image.height = 128;
@@ -382,7 +382,7 @@ qboolean Image_LoadMIP( const char *name, const byte *buffer, size_t filesize )
 		if( Q_strrchr( name, '{' ))
 		{
 			// NOTE: decals with 'blue base' can be interpret as colored decals
-			if(( !host.decal_loading ) || ( pal[765] == 0 && pal[766] == 0 && pal[767] == 255 ))
+			if( !Image_CheckFlag( IL_LOAD_DECAL ) || ( pal[765] == 0 && pal[766] == 0 && pal[767] == 255 ))
 			{
 				rendermode = LUMP_MASKED;
 				image.flags |= IMAGE_ONEBIT_ALPHA;
@@ -394,7 +394,7 @@ qboolean Image_LoadMIP( const char *name, const byte *buffer, size_t filesize )
 				rendermode = LUMP_GRADIENT;
 			}
 
-			image.flags |= IMAGE_HAS_ALPHA;
+			SetBits( image.flags, IMAGE_HAS_ALPHA );
 		}
 		else
 		{
@@ -418,6 +418,8 @@ qboolean Image_LoadMIP( const char *name, const byte *buffer, size_t filesize )
 				}
 			}
 
+			if( pal_type == PAL_QUAKE1 )
+				SetBits( image.flags, IMAGE_QUAKEPAL );
 			rendermode = LUMP_NORMAL;
 		}
 
@@ -463,6 +465,7 @@ qboolean Image_LoadMIP( const char *name, const byte *buffer, size_t filesize )
 			}
 		}
 
+		SetBits( image.flags, IMAGE_QUAKEPAL );
 		Image_GetPaletteQ1();
 	}
 	else

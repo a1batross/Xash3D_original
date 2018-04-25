@@ -27,12 +27,15 @@ S_PrintBackgroundTrackState
 */
 void S_PrintBackgroundTrackState( void )
 {
+	Con_Printf( "BackgroundTrack: " );
+
 	if( s_bgTrack.current[0] && s_bgTrack.loopName[0] )
-		Msg( "BackgroundTrack: intro %s, loop %s\n", s_bgTrack.current, s_bgTrack.loopName );
+		Con_Printf( "intro %s, loop %s\n", s_bgTrack.current, s_bgTrack.loopName );
 	else if( s_bgTrack.current[0] )
-		Msg( "BackgroundTrack: %s\n", s_bgTrack.current );
+		Con_Printf( "%s\n", s_bgTrack.current );
 	else if( s_bgTrack.loopName[0] )
-		Msg( "BackgroundTrack: %s [loop]\n", s_bgTrack.loopName );
+		Con_Printf( "%s [loop]\n", s_bgTrack.loopName );
+	else Con_Printf( "not playing\n" );
 }
 
 /*
@@ -68,7 +71,7 @@ float S_GetMusicVolume( void )
 S_StartBackgroundTrack
 =================
 */
-void S_StartBackgroundTrack( const char *introTrack, const char *mainTrack, long position )
+void S_StartBackgroundTrack( const char *introTrack, const char *mainTrack, long position, qboolean fullpath )
 {
 	S_StopBackgroundTrack();
 
@@ -89,7 +92,7 @@ void S_StartBackgroundTrack( const char *introTrack, const char *mainTrack, long
 
 	if( !mainTrack || !*mainTrack ) s_bgTrack.loopName[0] = '\0';
 	else Q_strncpy( s_bgTrack.loopName, mainTrack, sizeof( s_bgTrack.loopName ));
-
+if( fullpath ) Msg( "MP3:Playing: %s\n", introTrack );
 	// open stream
 	s_bgTrack.stream = FS_OpenStream( va( "media/%s", introTrack ));
 	Q_strncpy( s_bgTrack.current, introTrack, sizeof( s_bgTrack.current ));
@@ -193,7 +196,7 @@ void S_StreamBackgroundTrack( void )
 
 	ch = S_FindRawChannel( S_RAW_SOUND_BACKGROUNDTRACK, true );
 
-	ASSERT( ch != NULL );
+	Assert( ch != NULL );
 
 	// see how many samples should be copied into the raw buffer
 	if( ch->s_rawend < soundtime )
@@ -294,7 +297,7 @@ void S_StreamSoundTrack( void )
 
 	ch = S_FindRawChannel( S_RAW_SOUND_SOUNDTRACK, true );
 
-	ASSERT( ch != NULL );
+	Assert( ch != NULL );
 
 	// see how many samples should be copied into the raw buffer
 	if( ch->s_rawend < soundtime )

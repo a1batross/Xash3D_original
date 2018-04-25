@@ -235,6 +235,8 @@ float SV_VecToYaw( const vec3_t src )
 {
 	float	yaw;
 
+	if( !src ) return 0.0f;
+
 	if( src[1] == 0.0f && src[0] == 0.0f )
 	{
 		yaw = 0.0f;

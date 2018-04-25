@@ -85,9 +85,6 @@ void GL_BackendEndFrame( void )
 		Q_snprintf( r_speeds_msg, sizeof( r_speeds_msg ), "%3i tempents\n%3i viewbeams\n%3i particles",
 		r_stats.c_active_tents_count, r_stats.c_view_beams_count, r_stats.c_particle_count );
 		break;
-	case 6:
-		Q_snprintf( r_speeds_msg, sizeof( r_speeds_msg ), "%3i mirrors\n", r_stats.c_mirror_passes );
-		break;
 	}
 
 	memset( &r_stats, 0, sizeof( r_stats ));
@@ -112,7 +109,7 @@ GL_LoadTexMatrixExt
 */
 void GL_LoadTexMatrixExt( const float *glmatrix )
 {
-	ASSERT( glmatrix != NULL );
+	Assert( glmatrix != NULL );
 	pglMatrixMode( GL_TEXTURE );
 	pglLoadMatrixf( glmatrix );
 	glState.texIdentityMatrix[glState.activeTMU] = false;
@@ -240,10 +237,8 @@ void GL_MultiTexCoord2f( GLenum texture, GLfloat s, GLfloat t )
 	if( !GL_Support( GL_ARB_MULTITEXTURE ))
 		return;
 
-	if( pglMultiTexCoord2f )
-	{
+	if( pglMultiTexCoord2f != NULL )
 		pglMultiTexCoord2f( texture + GL_TEXTURE0_ARB, s, t );
-	}
 }
 
 /*
@@ -599,8 +594,8 @@ qboolean VID_CubemapShot( const char *base, uint size, const float *vieworg, qbo
 
 	// make sure what we have right extension
 	Q_strncpy( basename, base, MAX_STRING );
-	FS_StripExtension( basename );
-	FS_DefaultExtension( basename, ".tga" );
+	COM_StripExtension( basename );
+	COM_DefaultExtension( basename, ".tga" );
 
 	// write image as 6 sides
 	result = FS_SaveImage( basename, r_shot );
@@ -709,7 +704,7 @@ rebuild_page:
 		if( FBitSet( image->flags, TF_DEPTHMAP ) && !FBitSet( image->flags, TF_NOCOMPARE ))
 			pglTexParameteri( image->target, GL_TEXTURE_COMPARE_MODE_ARB, GL_COMPARE_R_TO_TEXTURE_ARB );
 
-		FS_FileBase( image->name, shortname );
+		COM_FileBase( image->name, shortname );
 		if( Q_strlen( shortname ) > 18 )
 		{
 			// cutoff too long names, it looks ugly

@@ -37,20 +37,17 @@ GNU General Public License for more details.
 
 // NETWORKING INFO
 
-// Max size of udp packet payload
-#define MAX_UDP_PACKET		4010 // 9 bytes SPLITHEADER + 4000 payload?
-
-// Max length of a multicast message
-#define MAX_MULTICAST		8192 // some mods spamming for rain effect
-
-// Max length of a reliable message
-#define MAX_MSGLEN			3990 // 10 reserved for fragheader?
-
-// Max length of unreliable message
-#define MAX_DATAGRAM		4000
-
 // This is the packet payload without any header bytes (which are attached for actual sending)
-#define NET_MAX_PAYLOAD		131072
+#define NET_MAX_PAYLOAD		MAX_INIT_MSG
+
+// Theoretically maximum size of UDP-packet without header and hardware-specific data
+#define NET_MAX_FRAGMENT		65536
+
+// because encoded as highpart of uint32
+#define NET_MAX_BUFFER_ID		32767
+
+// because encoded as lowpart of uint32
+#define NET_MAX_BUFFERS_COUNT		32767
 
 // This is the payload plus any header info (excluding UDP header)
 
@@ -81,6 +78,7 @@ GNU General Public License for more details.
 #define CMD_BACKUP			64	// allow a lot of command backups for very fast systems
 #define CMD_MASK			(CMD_BACKUP - 1)
 #define NUM_PACKET_ENTITIES		256	// 170 Mb for multiplayer with 32 players
+#define MAX_CUSTOM_BASELINES		64
 
 /*
 ==============================================================
@@ -95,9 +93,6 @@ NET
 #define FLOW_INCOMING		1
 #define MAX_LATENT			32
 #define MASK_LATENT			( MAX_LATENT - 1 )
-
-// size of fragmentation buffer internal buffers
-#define FRAGMENT_MAX_SIZE 		1024
 
 #define FRAG_NORMAL_STREAM		0
 #define FRAG_FILE_STREAM		1
@@ -119,33 +114,16 @@ typedef struct
 	int		totalbytes;
 } flow_t;
 
-#define FRAGMENT_CL2SV_MIN_SIZE	16
-#define FRAGMENT_CL2SV_MAX_SIZE	1024
-
-#define FRAGMENT_SV2CL_MIN_SIZE	256
-#define FRAGMENT_SV2CL_MAX_SIZE	1024
-
-#define CLIENT_FRAGMENT_SIZE_ONCONNECT	128
-#define CUSTOMIZATION_MAX_SIZE	20480
-
-#define FRAGMENT_MAX_SIZE 		1024
-
-// client sends normal fragments only while connecting
-#define MAX_NORMAL_FRAGMENTS		(NET_MAX_PAYLOAD / CLIENT_FRAGMENT_SIZE_ONCONNECT)
-
-// while client is connecting it sending fragments with minimal size, also it transfers sprays with minimal fragments...
-// but with sv_delayed_spray_upload it sends with cl_dlmax fragment size
-#define MAX_FILE_FRAGMENTS		(CUSTOMIZATION_MAX_SIZE / FRAGMENT_CL2SV_MIN_SIZE)
-
 // generic fragment structure
 typedef struct fragbuf_s
 {
 	struct fragbuf_s	*next;				// next buffer in chain
 	int		bufferid;				// id of this buffer
 	sizebuf_t		frag_message;			// message buffer where raw data is stored
-	byte		frag_message_buf[NET_MAX_PAYLOAD];	// the actual data sits here
+	byte		frag_message_buf[NET_MAX_FRAGMENT];	// the actual data sits here
 	qboolean		isfile;				// is this a file buffer?
 	qboolean		isbuffer;				// is this file buffer from memory ( custom decal, etc. ).
+	qboolean		iscompressed;			// is compressed file, we should using filename.ztmp
 	char		filename[MAX_OSPATH];		// name of the file to save out on remote host
 	int		foffset;				// offset in file from which to read data  
 	int		size;				// size of data to read at that offset
@@ -186,12 +164,12 @@ typedef struct netchan_s
 
 	// staging and holding areas
 	sizebuf_t		message;
-	byte		message_buf[NET_MAX_PAYLOAD];
+	byte		message_buf[NET_MAX_MESSAGE];
 
 	// reliable message buffer.
 	// we keep adding to it until reliable is acknowledged.  Then we clear it.
 	int		reliable_length;
-	byte		reliable_buf[NET_MAX_PAYLOAD];	// unacked reliable message (max size for loopback connection)
+	byte		reliable_buf[NET_MAX_MESSAGE];	// unacked reliable message (max size for loopback connection)
 
 	// Waiting list of buffered fragments to go onto queue.
 	// Multiple outgoing buffers can be queued in succession
@@ -203,8 +181,8 @@ typedef struct netchan_s
 	fragbuf_t		*fragbufs[MAX_STREAMS];	// the current fragment being set
 	int		fragbufcount[MAX_STREAMS];	// the total number of fragments in this stream
 
-	short		frag_startpos[MAX_STREAMS];	// position in outgoing buffer where frag data starts
-	short		frag_length[MAX_STREAMS];	// length of frag data in the buffer
+	int		frag_startpos[MAX_STREAMS];	// position in outgoing buffer where frag data starts
+	int		frag_length[MAX_STREAMS];	// length of frag data in the buffer
 
 	fragbuf_t		*incomingbufs[MAX_STREAMS];	// incoming fragments are stored here
 	qboolean		incomingready[MAX_STREAMS];	// set to true when incoming data is ready
@@ -225,15 +203,17 @@ typedef struct netchan_s
 
 extern netadr_t		net_from;
 extern netadr_t		net_local;
-extern netadr_t		net_local_ipx;
 extern sizebuf_t		net_message;
-extern byte		net_message_buffer[NET_MAX_PAYLOAD];
+extern byte		net_message_buffer[NET_MAX_MESSAGE];
 extern convar_t		*net_speeds;
+extern convar_t		sv_lan;
+extern convar_t		sv_lan_rate;
 extern int		net_drop;
 
 void Netchan_Init( void );
 void Netchan_Shutdown( void );
 void Netchan_Setup( netsrc_t sock, netchan_t *chan, netadr_t adr, int qport, void *client, int (*pfnBlockSize)(void * ) );
+void Netchan_CreateFileFragmentsFromBuffer( netchan_t *chan, char *filename, byte *pbuf, int size );
 qboolean Netchan_CopyNormalFragments( netchan_t *chan, sizebuf_t *msg, size_t *length );
 qboolean Netchan_CopyFileFragments( netchan_t *chan, sizebuf_t *msg );
 void Netchan_CreateFragments( netchan_t *chan, sizebuf_t *msg );
@@ -245,7 +225,8 @@ void Netchan_OutOfBandPrint( int net_socket, netadr_t adr, char *format, ... );
 qboolean Netchan_Process( netchan_t *chan, sizebuf_t *msg );
 void Netchan_UpdateProgress( netchan_t *chan );
 qboolean Netchan_IncomingReady( netchan_t *chan );
-qboolean Netchan_CanPacket( netchan_t *chan );
+qboolean Netchan_CanPacket( netchan_t *chan, qboolean choke );
+qboolean Netchan_IsLocal( netchan_t *chan );
 void Netchan_ReportFlow( netchan_t *chan );
 void Netchan_FragSend( netchan_t *chan );
 void Netchan_Clear( netchan_t *chan );

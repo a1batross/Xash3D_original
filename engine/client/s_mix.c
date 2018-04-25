@@ -113,22 +113,22 @@ void S_TransferPaintBuffer( int endtime )
 // MIX_MixChannelsToPaintbuffer, according to flags
 _inline void MIX_ActivatePaintbuffer( int ipaintbuffer )
 {
-	ASSERT( ipaintbuffer < CPAINTBUFFERS );
+	Assert( ipaintbuffer < CPAINTBUFFERS );
 	paintbuffers[ipaintbuffer].factive = true;
 }
 
 // don't mix into this paintbuffer
 _inline void MIX_DeactivatePaintbuffer( int ipaintbuffer )
 {
-	ASSERT( ipaintbuffer < CPAINTBUFFERS );
+	Assert( ipaintbuffer < CPAINTBUFFERS );
 	paintbuffers[ipaintbuffer].factive = false;
 }
 
 _inline void MIX_SetCurrentPaintbuffer( int ipaintbuffer )
 {
-	ASSERT( ipaintbuffer < CPAINTBUFFERS );
+	Assert( ipaintbuffer < CPAINTBUFFERS );
 	g_curpaintbuffer = paintbuffers[ipaintbuffer].pbuf;
-	ASSERT( g_curpaintbuffer != NULL );
+	Assert( g_curpaintbuffer != NULL );
 }
 
 _inline int MIX_GetCurrentPaintbufferIndex( void )
@@ -147,7 +147,7 @@ _inline paintbuffer_t *MIX_GetCurrentPaintbufferPtr( void )
 {
 	int	ipaint = MIX_GetCurrentPaintbufferIndex();
 	
-	ASSERT( ipaint < CPAINTBUFFERS );
+	Assert( ipaint < CPAINTBUFFERS );
 	return &paintbuffers[ipaint];
 }
 
@@ -171,20 +171,20 @@ _inline void MIX_ResetPaintbufferFilterCounters( void )
 
 _inline void MIX_ResetPaintbufferFilterCounter( int ipaintbuffer )
 {
-	ASSERT( ipaintbuffer < CPAINTBUFFERS );
+	Assert( ipaintbuffer < CPAINTBUFFERS );
 	paintbuffers[ipaintbuffer].ifilter = 0;
 }
 
 // return pointer to front paintbuffer pbuf, given index
 _inline portable_samplepair_t *MIX_GetPFrontFromIPaint( int ipaintbuffer )
 {
-	ASSERT( ipaintbuffer < CPAINTBUFFERS );
+	Assert( ipaintbuffer < CPAINTBUFFERS );
 	return paintbuffers[ipaintbuffer].pbuf;
 }
 
 _inline paintbuffer_t *MIX_GetPPaintFromIPaint( int ipaint )
 {	
-	ASSERT( ipaint < CPAINTBUFFERS );
+	Assert( ipaint < CPAINTBUFFERS );
 	return &paintbuffers[ipaint];
 }
 
@@ -399,7 +399,7 @@ void S_MixChannel( channel_t *pChannel, void *pData, int outputOffset, int input
 	wavdata_t			*pSource = pChannel->sfx->cache;
 	portable_samplepair_t	*pbuf;
 
-	ASSERT( pSource != NULL );
+	Assert( pSource != NULL );
 
 	pvol[0] = bound( 0, pChannel->leftvol, 255 );
 	pvol[1] = bound( 0, pChannel->rightvol, 255 );
@@ -476,7 +476,7 @@ int S_MixDataToDevice( channel_t *pChannel, int sampleCount, int outRate, int ou
 		}
 
 		// Verify that we won't get a buffer overrun.
-		ASSERT( floor( sampleFrac + rate * ( outSampleCount - 1 )) <= availableSamples );
+		Assert( floor( sampleFrac + rate * ( outSampleCount - 1 )) <= availableSamples );
 
 		// save current paintbuffer
 		j = MIX_GetCurrentPaintbufferIndex();
@@ -541,10 +541,10 @@ void MIX_MixChannelsToPaintbuffer( int endtime, int rate, int outputRate )
 	ch = channels;
 	
 	// validate parameters
-	ASSERT( outputRate <= SOUND_DMA_SPEED );
+	Assert( outputRate <= SOUND_DMA_SPEED );
 
 	// make sure we're not discarding data
-	ASSERT( !(( endtime - paintedtime ) & 0x3 ) || ( outputRate == SOUND_DMA_SPEED ));
+	Assert( !(( endtime - paintedtime ) & 0x3 ) || ( outputRate == SOUND_DMA_SPEED ));
 											  
 	// 44k: try to mix this many samples at outputRate
 	sampleCount = ( endtime - paintedtime ) / ( SOUND_DMA_SPEED / outputRate );
@@ -688,7 +688,7 @@ void S_Interpolate2xCubic( portable_samplepair_t *pbuffer, portable_samplepair_t
 	portable_samplepair_t *psamp3;
 	int outpos = 0;
 
-	ASSERT( upCount <= PAINTBUFFER_SIZE );
+	Assert( upCount <= PAINTBUFFER_SIZE );
 
 	// pfiltermem holds 6 samples from previous buffer pass
 	// process 'count' samples
@@ -731,10 +731,10 @@ void S_Interpolate2xCubic( portable_samplepair_t *pbuffer, portable_samplepair_t
 		// write out interpolated sample, increment output counter
 		temppaintbuffer[outpos++].right = a/8 + b/4 + c/2 + x0;
 		
-		ASSERT( outpos <= ( sizeof( temppaintbuffer ) / sizeof( temppaintbuffer[0] )));
+		Assert( outpos <= ( sizeof( temppaintbuffer ) / sizeof( temppaintbuffer[0] )));
 	}
 	
-	ASSERT( cfltmem >= 3 );
+	Assert( cfltmem >= 3 );
 
 	// save last 3 samples from paintbuffer
 	pfiltermem[0] = pbuffer[upCount - 5];
@@ -755,8 +755,8 @@ void S_Interpolate2xLinear( portable_samplepair_t *pbuffer, portable_samplepair_
 {
 	int	i, upCount = count<<1;
 
-	ASSERT( upCount <= PAINTBUFFER_SIZE );
-	ASSERT( cfltmem >= 1 );
+	Assert( upCount <= PAINTBUFFER_SIZE );
+	Assert( cfltmem >= 1 );
 
 	// use interpolation value from previous mix
 	pbuffer[0].left = (pfiltermem->left + pbuffer[0].left) >> 1;
@@ -842,10 +842,10 @@ void MIX_MixPaintbuffers( int ibuf1, int ibuf2, int ibuf3, int count, float fgai
 
 	gain = 256 * fgain;
 	
-	ASSERT( count <= PAINTBUFFER_SIZE );
-	ASSERT( ibuf1 < CPAINTBUFFERS );
-	ASSERT( ibuf2 < CPAINTBUFFERS );
-	ASSERT( ibuf3 < CPAINTBUFFERS );
+	Assert( count <= PAINTBUFFER_SIZE );
+	Assert( ibuf1 < CPAINTBUFFERS );
+	Assert( ibuf2 < CPAINTBUFFERS );
+	Assert( ibuf3 < CPAINTBUFFERS );
 
 	pbuf1 = paintbuffers[ibuf1].pbuf;
 	pbuf2 = paintbuffers[ibuf2].pbuf;
@@ -889,7 +889,7 @@ void S_MixUpsample( int sampleCount, int filtertype )
 	paintbuffer_t	*ppaint = MIX_GetCurrentPaintbufferPtr();
 	int		ifilter = ppaint->ifilter;
 
-	ASSERT( ifilter < CPAINTFILTERS );
+	Assert( ifilter < CPAINTFILTERS );
 
 	S_MixBufferUpsample2x( sampleCount, ppaint->pbuf, &(ppaint->fltmem[ifilter][0]), CPAINTFILTERMEM, filtertype );
 

@@ -35,8 +35,6 @@
 
 using namespace vgui;
 
-#define Q_isspace( ch )	(ch < 32 || ch > 255)
-
 class CTextImage2 : public Image
 {
 public:

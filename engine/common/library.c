@@ -147,7 +147,7 @@ static void FinalizeSections( MEMORYMODULE *module )
 		{         
 			// change memory access flags
 			if( !VirtualProtect((LPVOID)section->Misc.PhysicalAddress, size, protect, &oldProtect ))
-				Sys_Error( "FinalizeSections: error protecting memory page\n" );
+				Sys_Error( "error protecting memory page\n" );
 		}
 	}
 }
@@ -268,7 +268,7 @@ static int BuildImportTable( MEMORYMODULE *module )
 			void	*handle;
 
 			libname = (LPCSTR)CALCULATE_ADDRESS( codeBase, importDesc->Name );
-			handle = Com_LoadLibraryExt( libname, false, true );
+			handle = COM_LoadLibrary( libname, false, true );
 
 			if( handle == NULL )
 			{
@@ -297,13 +297,13 @@ static int BuildImportTable( MEMORYMODULE *module )
 				if( IMAGE_SNAP_BY_ORDINAL( *thunkRef ))
 				{
 					LPCSTR	funcName = (LPCSTR)IMAGE_ORDINAL( *thunkRef );
-					*funcRef = (DWORD)Com_GetProcAddress( handle, funcName );
+					*funcRef = (DWORD)COM_GetProcAddress( handle, funcName );
 				}
 				else
 				{
 					PIMAGE_IMPORT_BY_NAME thunkData = (PIMAGE_IMPORT_BY_NAME)CALCULATE_ADDRESS( codeBase, *thunkRef );
 					LPCSTR	funcName = (LPCSTR)&thunkData->Name;
-					*funcRef = (DWORD)Com_GetProcAddress( handle, funcName );
+					*funcRef = (DWORD)COM_GetProcAddress( handle, funcName );
 				}
 
 				if( *funcRef == 0 )
@@ -340,9 +340,7 @@ static void MemoryFreeLibrary( void *hInstance )
 			for( i = 0; i < module->numModules; i++ )
 			{
 				if( module->modules[i] != NULL )
-				{
-					Com_FreeLibrary( module->modules[i] );
-				}
+					COM_FreeLibrary( module->modules[i] );
 			}
 			Mem_Free( module->modules ); // Mem_Realloc end
 		}
@@ -517,7 +515,8 @@ static void FreeNameFuncGlobals( dll_user_t *hInst )
 
 char *GetMSVCName( const char *in_name )
 {
-	char	*pos, *out_name;
+	static string	out_name;
+	char		*pos;
 
 	if( in_name[0] == '?' )  // is this a MSVC C++ mangled name?
 	{
@@ -526,12 +525,15 @@ char *GetMSVCName( const char *in_name )
 			int	len = pos - in_name;
 
 			// strip off the leading '?'
-			out_name = copystring( in_name + 1 );
+			Q_strncpy( out_name, in_name + 1, sizeof( out_name ));
 			out_name[len-1] = 0; // terminate string at the "@@"
 			return out_name;
 		}
 	}
-	return copystring( in_name );
+
+	Q_strncpy( out_name, in_name, sizeof( out_name ));
+
+	return out_name;
 }
 
 qboolean LibraryLoadSymbols( dll_user_t *hInst )
@@ -718,7 +720,7 @@ qboolean LibraryLoadSymbols( dll_user_t *hInst )
 			if( FS_Seek( f, name_offset, SEEK_SET ) != -1 )
 			{
 				FsGetString( f, function_name );
-				hInst->names[i] = GetMSVCName( function_name );
+				hInst->names[i] = copystring( GetMSVCName( function_name ));
 			}
 			else break;
 		}
@@ -738,7 +740,7 @@ qboolean LibraryLoadSymbols( dll_user_t *hInst )
 			void	*fn_offset;
 
 			index = hInst->ordinals[i];
-			fn_offset = (void *)Com_GetProcAddress( hInst, "GiveFnptrsToDll" );
+			fn_offset = (void *)COM_GetProcAddress( hInst, "GiveFnptrsToDll" );
 			hInst->funcBase = (dword)(fn_offset) - hInst->funcs[index];
 			break;
 		}
@@ -751,19 +753,19 @@ table_error:
 	if( f ) FS_Close( f );
 	if( p_Names ) Mem_Free( p_Names );
 	FreeNameFuncGlobals( hInst );
-	MsgDev( D_ERROR, "LoadLibrary: %s\n", errorstring );
+	Con_Printf( S_ERROR "LoadLibrary: %s\n", errorstring );
 
 	return false;
 }
 
 /*
 ================
-Com_LoadLibrary
+COM_LoadLibrary
 
 smart dll loader - can loading dlls from pack or wad files
 ================
 */
-void *Com_LoadLibraryExt( const char *dllname, int build_ordinals_table, qboolean directpath )
+void *COM_LoadLibrary( const char *dllname, int build_ordinals_table, qboolean directpath )
 {
 	dll_user_t *hInst;
 
@@ -774,7 +776,7 @@ void *Com_LoadLibraryExt( const char *dllname, int build_ordinals_table, qboolea
 	{
           	if( hInst->encrypted )
 		{
-			MsgDev( D_ERROR, "Sys_LoadLibrary: couldn't load encrypted library %s\n", dllname );
+			Con_Printf( S_ERROR "LoadLibrary: couldn't load encrypted library %s\n", dllname );
 			return NULL;
 		}
 
@@ -784,8 +786,8 @@ void *Com_LoadLibraryExt( const char *dllname, int build_ordinals_table, qboolea
 
 	if( !hInst->hInstance )
 	{
-		MsgDev( D_NOTE, "Sys_LoadLibrary: Loading %s - failed\n", dllname );
-		Com_FreeLibrary( hInst );
+		Con_Reportf( "LoadLibrary: Loading %s - failed\n", dllname );
+		COM_FreeLibrary( hInst );
 		return NULL;
 	}
 
@@ -794,23 +796,18 @@ void *Com_LoadLibraryExt( const char *dllname, int build_ordinals_table, qboolea
 	{
 		if( !LibraryLoadSymbols( hInst ))
 		{
-			MsgDev( D_NOTE, "Sys_LoadLibrary: Loading %s - failed\n", dllname );
-			Com_FreeLibrary( hInst );
+			Con_Reportf( "LoadLibrary: Loading %s - failed\n", dllname );
+			COM_FreeLibrary( hInst );
 			return NULL;
 		}
 	}
 
-	MsgDev( D_NOTE, "Sys_LoadLibrary: Loading %s - ok\n", dllname );
+	Con_Reportf( "LoadLibrary: Loading %s - ok\n", dllname );
 
 	return hInst;
 }
 
-void *Com_LoadLibrary( const char *dllname, int build_ordinals_table )
-{
-	return Com_LoadLibraryExt( dllname, build_ordinals_table, false );
-}
-
-void *Com_GetProcAddress( void *hInstance, const char *name )
+void *COM_GetProcAddress( void *hInstance, const char *name )
 {
 	dll_user_t *hInst = (dll_user_t *)hInstance;
 
@@ -819,17 +816,17 @@ void *Com_GetProcAddress( void *hInstance, const char *name )
 
 	if( hInst->custom_loader )
 		return (void *)MemoryGetProcAddress( hInst->hInstance, name );
-	return (void *)GetProcAddress( hInst->hInstance, name );
+	return (void *)GetProcAddress( hInst->hInstance, GetMSVCName( name ));
 }
 
-void Com_FreeLibrary( void *hInstance )
+void COM_FreeLibrary( void *hInstance )
 {
 	dll_user_t *hInst = (dll_user_t *)hInstance;
 
 	if( !hInst || !hInst->hInstance )
 		return; // already freed
 
-	if( host.state == HOST_CRASHED )
+	if( host.status == HOST_CRASHED )
 	{
 		// we need to hold down all modules, while MSVC can find error
 		MsgDev( D_NOTE, "Sys_FreeLibrary: hold %s for debugging\n", hInst->dllName );
@@ -848,7 +845,7 @@ void Com_FreeLibrary( void *hInstance )
 	Mem_Free( hInst );	// done
 }
 
-dword Com_FunctionFromName( void *hInstance, const char *pName )
+dword COM_FunctionFromName( void *hInstance, const char *pName )
 {
 	dll_user_t	*hInst = (dll_user_t *)hInstance;
 	int		i, index;
@@ -864,11 +861,14 @@ dword Com_FunctionFromName( void *hInstance, const char *pName )
 			return hInst->funcs[index] + hInst->funcBase;
 		}
 	}
+
 	// couldn't find the function name to return address
+	Con_Printf( "Can't find proc: %s\n", pName );
+
 	return 0;
 }
 
-const char *Com_NameForFunction( void *hInstance, dword function )
+const char *COM_NameForFunction( void *hInstance, dword function )
 {
 	dll_user_t	*hInst = (dll_user_t *)hInstance;
 	int		i, index;
@@ -883,6 +883,9 @@ const char *Com_NameForFunction( void *hInstance, dword function )
 		if(( function - hInst->funcBase ) == hInst->funcs[index] )
 			return hInst->names[i];
 	}
+
 	// couldn't find the function address to return name
+	Con_Printf( "Can't find address: %08lx\n", function );
+
 	return NULL;
 }

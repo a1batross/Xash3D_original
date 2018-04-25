@@ -17,7 +17,7 @@
 #define EDICT_H
 
 #ifdef SUPPORT_BSP2_FORMAT
-#define MAX_ENT_LEAFS	24
+#define MAX_ENT_LEAFS	24		// Orignally was 16
 #else
 #define MAX_ENT_LEAFS	48
 #endif

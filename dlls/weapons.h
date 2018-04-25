@@ -671,8 +671,8 @@ class CLaserSpot : public CBaseEntity
 public:
 	void Suspend( float flSuspendTime );
 	void EXPORT Revive( void );
-	
-	static CLaserSpot *CreateSpot( void );
+	void Killed( entvars_t *pevAttacker, int iGib );	
+	static CLaserSpot *CreateSpot( edict_t *pOwner );
 };
 
 class CRpg : public CBasePlayerWeapon

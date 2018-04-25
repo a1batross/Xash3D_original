@@ -427,7 +427,9 @@ static void SV_StudioSetupBones( model_t *pModel,	float frame, int sequence, con
 
 	if( sequence < 0 || sequence >= mod_studiohdr->numseq )
 	{
-		MsgDev( D_WARN, "SV_StudioSetupBones: sequence %i/%i out of range for model %s\n", sequence, mod_studiohdr->numseq, mod_studiohdr->name );
+		// only show warn if sequence that out of range was specified intentionally
+		if( sequence > mod_studiohdr->numseq )
+			MsgDev( D_WARN, "SV_StudioSetupBones: sequence %i/%i out of range for model %s\n", sequence, mod_studiohdr->numseq, mod_studiohdr->name );
 		sequence = 0;
 	}
 
@@ -507,7 +509,7 @@ void Mod_StudioGetAttachment( const edict_t *e, int iAtt, float *origin, float *
 	vec3_t			angles2;
 	model_t			*mod;
 
-	mod = Mod_Handle( e->v.modelindex );
+	mod = SV_ModelHandle( e->v.modelindex );
 	mod_studiohdr = (studiohdr_t *)Mod_StudioExtradata( mod );
 	if( !mod_studiohdr ) return;
 
@@ -556,7 +558,7 @@ void Mod_GetBonePosition( const edict_t *e, int iBone, float *origin, float *ang
 {
 	model_t	*mod;
 
-	mod = Mod_Handle( e->v.modelindex );
+	mod = SV_ModelHandle( e->v.modelindex );
 	mod_studiohdr = (studiohdr_t *)Mod_StudioExtradata( mod );
 	if( !mod_studiohdr ) return;
 
@@ -718,6 +720,189 @@ qboolean Mod_GetStudioBounds( const char *name, vec3_t mins, vec3_t maxs )
 	return result;
 }
 
+/*
+===============
+Mod_StudioTexName
+
+extract texture filename from modelname
+===============
+*/
+const char *Mod_StudioTexName( const char *modname )
+{
+	static char	texname[MAX_QPATH];
+
+	Q_strncpy( texname, modname, sizeof( texname ));
+	COM_StripExtension( texname );
+	Q_strncat( texname, "T.mdl", sizeof( texname ));
+
+	return texname;
+}
+
+/*
+================
+Mod_StudioBodyVariations
+
+calc studio body variations
+================
+*/
+static int Mod_StudioBodyVariations( model_t *mod )
+{
+	studiohdr_t	*pstudiohdr;
+	mstudiobodyparts_t	*pbodypart;
+	int		i, count = 1;
+
+	pstudiohdr = (studiohdr_t *)Mod_StudioExtradata( mod );
+	if( !pstudiohdr ) return 0;
+
+	pbodypart = (mstudiobodyparts_t *)((byte *)pstudiohdr + pstudiohdr->bodypartindex);
+
+	// each body part has nummodels variations so there are as many total variations as there
+	// are in a matrix of each part by each other part
+	for( i = 0; i < pstudiohdr->numbodyparts; i++ )
+		count = count * pbodypart[i].nummodels;
+
+	return count;
+}
+
+/*
+=================
+R_StudioLoadHeader
+=================
+*/
+studiohdr_t *R_StudioLoadHeader( model_t *mod, const void *buffer )
+{
+	byte		*pin;
+	studiohdr_t	*phdr;
+	int		i;
+
+	if( !buffer ) return NULL;
+
+	pin = (byte *)buffer;
+	phdr = (studiohdr_t *)pin;
+	i = phdr->version;
+
+	if( i != STUDIO_VERSION )
+	{
+		MsgDev( D_ERROR, "%s has wrong version number (%i should be %i)\n", mod->name, i, STUDIO_VERSION );
+		return NULL;
+	}	
+
+	return (studiohdr_t *)buffer;
+}
+
+/*
+=================
+Mod_LoadStudioModel
+=================
+*/
+void Mod_LoadStudioModel( model_t *mod, const void *buffer, qboolean *loaded )
+{
+	studiohdr_t	*phdr;
+
+	if( loaded ) *loaded = false;
+	loadmodel->mempool = Mem_AllocPool( va( "^2%s^7", loadmodel->name ));
+	loadmodel->type = mod_studio;
+
+	phdr = R_StudioLoadHeader( mod, buffer );
+	if( !phdr ) return;	// bad model
+
+	if( phdr->numtextures == 0 )
+	{
+		studiohdr_t	*thdr;
+		byte		*in, *out;
+		void		*buffer2 = NULL;
+		size_t		size1, size2;
+
+		buffer2 = FS_LoadFile( Mod_StudioTexName( mod->name ), NULL, false );
+		thdr = R_StudioLoadHeader( mod, buffer2 );
+
+		if( !thdr )
+		{
+			MsgDev( D_WARN, "Mod_LoadStudioModel: %s missing textures file\n", mod->name ); 
+			if( buffer2 ) Mem_Free( buffer2 );
+		}
+                    else
+                    {
+			Mod_StudioLoadTextures( mod, thdr );
+
+			// give space for textures and skinrefs
+			size1 = thdr->numtextures * sizeof( mstudiotexture_t );
+			size2 = thdr->numskinfamilies * thdr->numskinref * sizeof( short );
+			mod->cache.data = Mem_Alloc( loadmodel->mempool, phdr->length + size1 + size2 );
+			memcpy( loadmodel->cache.data, buffer, phdr->length ); // copy main mdl buffer
+			phdr = (studiohdr_t *)loadmodel->cache.data; // get the new pointer on studiohdr
+			phdr->numskinfamilies = thdr->numskinfamilies;
+			phdr->numtextures = thdr->numtextures;
+			phdr->numskinref = thdr->numskinref;
+			phdr->textureindex = phdr->length;
+			phdr->skinindex = phdr->textureindex + size1;
+
+			in = (byte *)thdr + thdr->textureindex;
+			out = (byte *)phdr + phdr->textureindex;
+			memcpy( out, in, size1 + size2 );	// copy textures + skinrefs
+			phdr->length += size1 + size2;
+			Mem_Free( buffer2 ); // release T.mdl
+		}
+	}
+	else
+	{
+		// NOTE: don't modify source buffer because it's used for CRC computing
+		loadmodel->cache.data = Mem_Alloc( loadmodel->mempool, phdr->length );
+		memcpy( loadmodel->cache.data, buffer, phdr->length );
+		phdr = (studiohdr_t *)loadmodel->cache.data; // get the new pointer on studiohdr
+		Mod_StudioLoadTextures( mod, phdr );
+
+		// NOTE: we wan't keep raw textures in memory. just cutoff model pointer above texture base
+		loadmodel->cache.data = Mem_Realloc( loadmodel->mempool, loadmodel->cache.data, phdr->texturedataindex );
+		phdr = (studiohdr_t *)loadmodel->cache.data; // get the new pointer on studiohdr
+		phdr->length = phdr->texturedataindex;	// update model size
+	}
+
+	// setup bounding box
+	if( !VectorCompare( vec3_origin, phdr->bbmin ))
+	{
+		// clipping bounding box
+		VectorCopy( phdr->bbmin, loadmodel->mins );
+		VectorCopy( phdr->bbmax, loadmodel->maxs );
+	}
+	else if( !VectorCompare( vec3_origin, phdr->min ))
+	{
+		// movement bounding box
+		VectorCopy( phdr->min, loadmodel->mins );
+		VectorCopy( phdr->max, loadmodel->maxs );
+	}
+	else
+	{
+		// well compute bounds from vertices and round to nearest even values
+		Mod_StudioComputeBounds( phdr, loadmodel->mins, loadmodel->maxs, true );
+		RoundUpHullSize( loadmodel->mins );
+		RoundUpHullSize( loadmodel->maxs );
+	}
+
+	loadmodel->numframes = Mod_StudioBodyVariations( loadmodel );
+	loadmodel->radius = RadiusFromBounds( loadmodel->mins, loadmodel->maxs );
+	loadmodel->flags = phdr->flags; // copy header flags
+
+	if( loaded ) *loaded = true;
+}
+
+/*
+=================
+Mod_UnloadStudioModel
+=================
+*/
+void Mod_UnloadStudioModel( model_t *mod )
+{
+	Assert( mod != NULL );
+
+	if( mod->type != mod_studio )
+		return; // not a studio
+
+	Mod_StudioUnloadTextures( mod->cache.data );
+	Mem_FreePool( &mod->mempool );
+	memset( mod, 0, sizeof( *mod ));
+}
+
 static sv_blending_interface_t gBlendAPI =
 {
 	SV_BLENDING_INTERFACE_VERSION,
@@ -745,7 +930,7 @@ void Mod_InitStudioAPI( void )
 
 	pBlendAPI = &gBlendAPI;
 
-	pBlendIface = (STUDIOAPI)Com_GetProcAddress( svgame.hInstance, "Server_GetBlendingInterface" );
+	pBlendIface = (STUDIOAPI)COM_GetProcAddress( svgame.hInstance, "Server_GetBlendingInterface" );
 	if( pBlendIface && pBlendIface( SV_BLENDING_INTERFACE_VERSION, &pBlendAPI, &gStudioAPI, &studio_transform, &studio_bones ))
 	{
 		MsgDev( D_REPORT, "SV_LoadProgs: ^2initailized Server Blending interface ^7ver. %i\n", SV_BLENDING_INTERFACE_VERSION );

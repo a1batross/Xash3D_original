@@ -34,7 +34,6 @@ typedef struct convar_s
 	// this part unique for convar_t
 	char		*desc;		// variable descrition info
 	char		*def_string;	// keep pointer to initial value
-	char		*latched_string;	// for CVAR_LATCH vars
 } convar_t;
 
 // cvar internal flags
@@ -43,9 +42,11 @@ typedef struct convar_s
 #define FCVAR_EXTENDED		(1<<18)	// this is convar_t (sets on registration)
 #define FCVAR_ALLOCATED		(1<<19)	// this convar_t is fully dynamic allocated (include description)
 #define FCVAR_VIDRESTART		(1<<20)	// recreate the window is cvar with this flag was changed
+#define FCVAR_TEMPORARY		(1<<21)	// these cvars holds their values and can be unlink in any time
 
 #define CVAR_DEFINE( cv, cvname, cvstr, cvflags, cvdesc )	convar_t cv = { cvname, cvstr, cvflags, 0.0f, (void *)CVAR_SENTINEL, cvdesc }
 #define CVAR_DEFINE_AUTO( cv, cvstr, cvflags, cvdesc )	convar_t cv = { #cv, cvstr, cvflags, 0.0f, (void *)CVAR_SENTINEL, cvdesc }
+#define CVAR_TO_BOOL( x )		((x) && ((x)->value != 0.0f) ? true : false )
 
 #define Cvar_FindVar( name )	Cvar_FindVarExt( name, 0 )
 convar_t *Cvar_FindVarExt( const char *var_name, int ignore_group );
@@ -56,6 +57,7 @@ void Cvar_FullSet( const char *var_name, const char *value, int flags );
 void Cvar_DirectSet( convar_t *var, const char *value );
 void Cvar_Set( const char *var_name, const char *value );
 void Cvar_SetValue( const char *var_name, float value );
+const char *Cvar_BuildAutoDescription( int flags );
 float Cvar_VariableValue( const char *var_name );
 int Cvar_VariableInteger( const char *var_name );
 char *Cvar_VariableString( const char *var_name );
@@ -63,7 +65,6 @@ void Cvar_WriteVariables( file_t *f, int group );
 void Cvar_Reset( const char *var_name );
 void Cvar_SetCheatState( void );
 qboolean Cvar_Command( void );
-cvar_t *Cvar_GetListHead( void );
 void Cvar_Init( void );
 void Cvar_Unlink( int group );
 

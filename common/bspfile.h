@@ -30,7 +30,6 @@ BRUSH MODELS
 // header
 #define Q1BSP_VERSION	29	// quake1 regular version (beta is 28)
 #define HLBSP_VERSION	30	// half-life regular version
-#define XTBSP_VERSION	31	// extended lightmaps and expanded clipnodes limit
 #define QBSP2_VERSION	(('B' << 0) | ('S' << 8) | ('P' << 16) | ('2'<<24))
 
 #define IDEXTRAHEADER	(('H'<<24)+('S'<<16)+('A'<<8)+'X') // little-endian "XASH"
@@ -47,17 +46,14 @@ BRUSH MODELS
 // bmodel limits
 #define MAX_MAP_HULLS		4		// MAX_HULLS
 
-#define SURF_NOCULL			BIT( 0 )		// two-sided polygon (e.g. 'water4b')
 #define SURF_PLANEBACK		BIT( 1 )		// plane should be negated
 #define SURF_DRAWSKY		BIT( 2 )		// sky surface
-#define SURF_WATERCSG		BIT( 3 )		// culled by csg (was SURF_DRAWSPRITE)
+#define SURF_DRAWTURB_QUADS		BIT( 3 )		// all subidivided polygons are quads 
 #define SURF_DRAWTURB		BIT( 4 )		// warp surface
 #define SURF_DRAWTILED		BIT( 5 )		// face without lighmap
 #define SURF_CONVEYOR		BIT( 6 )		// scrolled texture (was SURF_DRAWBACKGROUND)
 #define SURF_UNDERWATER		BIT( 7 )		// caustics
 #define SURF_TRANSPARENT		BIT( 8 )		// it's a transparent texture (was SURF_DONTWARP)
-
-#define SURF_REFLECT		BIT( 31 )		// reflect surface (mirror)
 
 // lightstyle management
 #define LM_STYLES			4		// MAXLIGHTMAPS
@@ -65,18 +61,19 @@ BRUSH MODELS
 #define LS_UNUSED			0xFE
 #define LS_NONE			0xFF
 
+// these limis not using by modelloader but only for displaying 'mapstats' correctly
 #ifdef SUPPORT_BSP2_FORMAT
-#define MAX_MAP_MODELS		2048		// can be increased up to 2048 if needed
+#define MAX_MAP_MODELS		2048		// embedded models
 #define MAX_MAP_ENTSTRING		0x200000		// 2 Mb should be enough
 #define MAX_MAP_PLANES		131072		// can be increased without problems
-#define MAX_MAP_NODES		262144		// because negative shorts are leafs
-#define MAX_MAP_CLIPNODES		524288		// because negative shorts are contents
+#define MAX_MAP_NODES		262144		// can be increased without problems
+#define MAX_MAP_CLIPNODES		524288		// can be increased without problems
 #define MAX_MAP_LEAFS		131072		// CRITICAL STUFF to run ad_sepulcher!!!
-#define MAX_MAP_VERTS		524288		// unsigned short limit
-#define MAX_MAP_FACES		262144		// unsigned short limit
-#define MAX_MAP_MARKSURFACES		524288		// unsigned short limit
+#define MAX_MAP_VERTS		524288		// can be increased without problems
+#define MAX_MAP_FACES		262144		// can be increased without problems
+#define MAX_MAP_MARKSURFACES		524288		// can be increased without problems
 #else
-#define MAX_MAP_MODELS		1024		// can be increased up to 2048 if needed
+#define MAX_MAP_MODELS		768		// embedded models
 #define MAX_MAP_ENTSTRING		0x80000		// 512 kB should be enough
 #define MAX_MAP_PLANES		65536		// can be increased without problems
 #define MAX_MAP_NODES		32767		// because negative shorts are leafs
@@ -87,15 +84,15 @@ BRUSH MODELS
 #define MAX_MAP_MARKSURFACES		65535		// unsigned short limit
 #endif
 
-#define MAX_MAP_BRUSHES		32768		// unsigned short limit
-#define MAX_MAP_ENTITIES		8192		// can be increased up to 32768 if needed
+#define MAX_MAP_ENTITIES		8192		// network limit
 #define MAX_MAP_TEXINFO		MAX_MAP_FACES	// in theory each face may have personal texinfo
-#define MAX_MAP_EDGES		0x100000		// can be increased but not needed
-#define MAX_MAP_SURFEDGES		0x200000		// can be increased but not needed
-#define MAX_MAP_TEXTURES		2048		// can be increased but not needed
+#define MAX_MAP_EDGES		0x100000		// can be increased but not needs
+#define MAX_MAP_SURFEDGES		0x200000		// can be increased but not needs
+#define MAX_MAP_TEXTURES		2048		// can be increased but not needs
 #define MAX_MAP_MIPTEX		0x2000000		// 32 Mb internal textures data
 #define MAX_MAP_LIGHTING		0x2000000		// 32 Mb lightmap raw data (can contain deluxemaps)
 #define MAX_MAP_VISIBILITY		0x1000000		// 16 Mb visdata
+#define MAX_MAP_FACEINFO		8192		// can be increased but not needs
 
 // quake lump ordering
 #define LUMP_ENTITIES		0
@@ -115,27 +112,26 @@ BRUSH MODELS
 #define LUMP_MODELS			14		// internal submodels
 #define HEADER_LUMPS		15
 
-// version 31
-#define LUMP_CLIPNODES2		15		// hull0 goes into LUMP_NODES, hull1 goes into LUMP_CLIPNODES,
-#define LUMP_CLIPNODES3		16		// hull2 goes into LUMP_CLIPNODES2, hull3 goes into LUMP_CLIPNODES3
-#define HEADER_LUMPS_31		17
-
+// extra lump ordering
 #define LUMP_LIGHTVECS		0	// deluxemap data
 #define LUMP_FACEINFO		1	// landscape and lightmap resolution info
 #define LUMP_CUBEMAPS		2	// cubemap description
 #define LUMP_VERTNORMALS		3	// phong shaded vertex normals
-#define LUMP_LEAF_LIGHTING		4	// contain compressed light cubes per empty leafs
+#define LUMP_VERTEX_LIGHT		4	// contain compressed light cubes per empty leafs
 #define LUMP_WORLDLIGHTS		5	// list of all the virtual and real lights (used to relight models in-game)
 #define LUMP_COLLISION		6	// physics engine collision hull dump
 #define LUMP_AINODEGRAPH		7	// node graph that stored into the bsp
-#define LUMP_UNUSED0		8	// one lump reserved for me
+#define LUMP_SHADOWMAP		8	// contains shadow map for direct light
 #define LUMP_UNUSED1		9	// one lump reserved for me
 #define LUMP_UNUSED2		10	// one lump reserved for me
 #define LUMP_UNUSED3		11	// one lump reserved for me
 #define EXTRA_LUMPS			12	// count of the extra lumps
 
 // texture flags
-#define TEX_SPECIAL			BIT( 0 )		// sky or slime, no lightmap or 256 subdivision
+#define TEX_SPECIAL			BIT( 0 )	// sky or slime, no lightmap or 256 subdivision
+#define TEX_WORLD_LUXELS		BIT( 1 )	// alternative lightmap matrix will be used (luxels per world units instead of luxels per texels)
+#define TEX_AXIAL_LUXELS		BIT( 2 )	// force world luxels to axial positive scales
+#define TEX_EXTRA_LIGHTMAP		BIT( 3 )	// bsp31 legacy - using 8 texels per luxel instead of 16 texels per luxel
 
 // ambient sound types
 enum
@@ -165,13 +161,7 @@ typedef struct
 
 typedef struct
 {
-	int	version;
-	dlump_t	lumps[HEADER_LUMPS_31];
-} dheader31_t;
-
-typedef struct
-{
-	int	id;	// must be little endian XASH
+	int	id;			// must be little endian XASH
 	int	version;
 	dlump_t	lumps[EXTRA_LUMPS];	
 } dextrahdr_t;
@@ -223,7 +213,7 @@ typedef struct
 	float	maxs[3];
 	int	firstface;
 	int	numfaces;			// counting both sides
-} dnode2_t;
+} dnode32_t;
 
 // leaf 0 is the generic CONTENTS_SOLID leaf, used for all solid areas
 // all other leafs need visibility info
@@ -253,7 +243,7 @@ typedef struct
 	int	nummarksurfaces;
 
 	byte	ambient_level[NUM_AMBIENTS];
-} dleaf2_t;
+} dleaf32_t;
 
 typedef struct
 {
@@ -265,7 +255,7 @@ typedef struct
 {
 	int	planenum;
 	int	children[2];		// negative numbers are contents
-} dclipnode2_t;
+} dclipnode32_t;
 
 typedef struct
 {
@@ -284,7 +274,7 @@ typedef struct
 } dfaceinfo_t;
 
 typedef word	dmarkface_t;		// leaf marksurfaces indexes
-typedef int	dmarkface2_t;		// leaf marksurfaces indexes
+typedef int	dmarkface32_t;		// leaf marksurfaces indexes
 
 typedef int	dsurfedge_t;		// map surfedges
 
@@ -298,7 +288,7 @@ typedef struct
 typedef struct
 {
 	int	v[2];			// vertex numbers
-} dedge2_t;
+} dedge32_t;
 
 typedef struct
 {
@@ -326,6 +316,6 @@ typedef struct
 	// lighting info
 	byte	styles[LM_STYLES];
 	int	lightofs;			// start of [numstyles*surfsize] samples
-} dface2_t;
+} dface32_t;
 
 #endif//BSPFILE_H

@@ -174,13 +174,9 @@ void Image_Init( void )
 		image.loadformats = load_game;
 		image.saveformats = save_game;
 		break;
-	case HOST_DEDICATED:
+	default:	// all other instances not using imagelib
 		image.cmd_flags = 0;		
 		image.loadformats = load_game;
-		image.saveformats = save_null;
-		break;
-	default:	// all other instances not using imagelib or will be reinstalling later
-		image.loadformats = load_null;
 		image.saveformats = save_null;
 		break;
 	}
@@ -211,10 +207,10 @@ Image_CheckFlag
 */
 qboolean Image_CheckFlag( int bit )
 {
-	if( image.force_flags & bit )
+	if( FBitSet( image.force_flags, bit ))
 		return true;
 
-	if( image.cmd_flags & bit )
+	if( FBitSet( image.cmd_flags, bit ))
 		return true;
 
 	return false;
@@ -227,7 +223,17 @@ Image_SetForceFlags
 */
 void Image_SetForceFlags( uint flags )
 {
-	image.force_flags = flags;
+	SetBits( image.force_flags, flags );
+}
+
+/*
+=================
+Image_ClearForceFlags
+=================
+*/
+void Image_ClearForceFlags( void )
+{
+	image.force_flags = 0;
 }
 
 /*
@@ -237,19 +243,7 @@ Image_AddCmdFlags
 */
 void Image_AddCmdFlags( uint flags )
 {
-	image.cmd_flags |= flags;
-}
-
-/*
-=================
-Image_RoundDimensions
-=================
-*/
-void Image_RoundDimensions( int *width, int *height )
-{
-	// find nearest power of two, rounding down
-	*width = NearestPOW( *width, true );
-	*height = NearestPOW( *height, true );
+	SetBits( image.cmd_flags, flags );
 }
 
 qboolean Image_ValidSize( const char *name )
@@ -405,23 +399,14 @@ void Image_GetPaletteLMP( const byte *pal, int rendermode )
 	}
 }
 
-void Image_ConvertPalTo24bit( rgbdata_t *pic )
+static void Image_ConvertPalTo24bit( rgbdata_t *pic )
 {
 	byte	*pal32, *pal24;
 	byte	*converted;
 	int	i;
 
-	if( !pic->palette )
-	{
-		MsgDev( D_ERROR, "Image_ConvertPalTo24bit: no palette found\n" );
-		return;
-	}
-
 	if( pic->type == PF_INDEXED_24 )
-	{
-		MsgDev( D_ERROR, "Image_ConvertPalTo24bit: palette already converted\n" );
-		return;
-	}
+		return; // does nothing
 
 	pal24 = converted = Mem_Alloc( host.imagepool, 768 );
 	pal32 = pic->palette;
@@ -445,7 +430,7 @@ void Image_CopyPalette32bit( void )
 	memcpy( image.palette, image.d_currentpal, 1024 );
 }
 
-void Image_PaletteHueReplace( byte *palSrc, int newHue, int start, int end )
+void Image_PaletteHueReplace( byte *palSrc, int newHue, int start, int end, int pal_size )
 {
 	float	r, g, b;
 	float	maxcol, mincol;
@@ -453,12 +438,13 @@ void Image_PaletteHueReplace( byte *palSrc, int newHue, int start, int end )
 	int	i;
 
 	hue = (float)(newHue * ( 360.0f / 255 ));
+	pal_size = bound( 3, pal_size, 4 );
 
 	for( i = start; i <= end; i++ )
 	{
-		r = palSrc[i*3+0];
-		g = palSrc[i*3+1];
-		b = palSrc[i*3+2];
+		r = palSrc[i*pal_size+0];
+		g = palSrc[i*pal_size+1];
+		b = palSrc[i*pal_size+2];
 		
 		maxcol = max( max( r, g ), b ) / 255.0f;
 		mincol = min( min( r, g ), b ) / 255.0f;
@@ -513,17 +499,18 @@ void Image_PaletteHueReplace( byte *palSrc, int newHue, int start, int end )
 			}
 		}
 
-		palSrc[i*3+0] = (byte)(r * 255);
-		palSrc[i*3+1] = (byte)(g * 255);
-		palSrc[i*3+2] = (byte)(b * 255);
+		palSrc[i*pal_size+0] = (byte)(r * 255);
+		palSrc[i*pal_size+1] = (byte)(g * 255);
+		palSrc[i*pal_size+2] = (byte)(b * 255);
 	}
 }
 
-void Image_PaletteTranslate( byte *palSrc, int top, int bottom )
+void Image_PaletteTranslate( byte *palSrc, int top, int bottom, int pal_size )
 {
 	byte	dst[256], src[256];
 	int	i;
 
+	pal_size = bound( 3, pal_size, 4 );
 	for( i = 0; i < 256; i++ )
 		src[i] = i;
 	memcpy( dst, src, 256 );
@@ -552,9 +539,9 @@ void Image_PaletteTranslate( byte *palSrc, int top, int bottom )
 	// last color isn't changed
 	for( i = 0; i < 255; i++ )
 	{
-		palSrc[i*3+0] = palette_q1[dst[i]*3+0];
-		palSrc[i*3+1] = palette_q1[dst[i]*3+1];
-		palSrc[i*3+2] = palette_q1[dst[i]*3+2];
+		palSrc[i*pal_size+0] = palette_q1[dst[i]*3+0];
+		palSrc[i*pal_size+1] = palette_q1[dst[i]*3+1];
+		palSrc[i*pal_size+2] = palette_q1[dst[i]*3+2];
 	}
 }
 
@@ -615,19 +602,7 @@ qboolean Image_Copy8bitRGBA( const byte *in, byte *out, int pixels )
 			break;
 		}
 	}
-#if 0
-	for( i = 0; i < image.width * image.height; i++ )
-	{
-		col = (byte *)&image.d_currentpal[fin[i]];
-		*out++ = col[0];
-		*out++ = col[1];
-		*out++ = col[2];
 
-		if( image.d_rendermode == LUMP_GRADIENT )
-			*out++ = fin[i];
-		else *out++ = col[3];
-	}
-#else
 	while( pixels >= 8 )
 	{
 		iout[0] = image.d_currentpal[in[0]];
@@ -664,7 +639,6 @@ qboolean Image_Copy8bitRGBA( const byte *in, byte *out, int pixels )
 
 	if( pixels & 1 ) // last byte
 		iout[0] = image.d_currentpal[in[0]];
-#endif
 	image.type = PF_RGBA_32;	// update image type;
 
 	return true;
@@ -1121,63 +1095,6 @@ byte *Image_ResampleInternal( const void *indata, int inwidth, int inheight, int
 
 /*
 ================
-Image_Flood
-================
-*/
-byte *Image_FloodInternal( const byte *indata, int inwidth, int inheight, int outwidth, int outheight, int type, qboolean *resampled )
-{
-	int	samples = PFDesc[type].bpp;
-	int	newsize, x, y, i;
-	byte	*in, *out;
-
-	// nothing to reflood ?
-	if( inwidth == outwidth && inheight == outheight )
-	{
-		*resampled = false;
-		return (byte *)indata;
-	}
-
-	// alloc new buffer
-	switch( type )
-	{
-	case PF_INDEXED_24:
-	case PF_INDEXED_32:
-	case PF_RGB_24:
-	case PF_BGR_24:
-	case PF_BGRA_32:
-	case PF_RGBA_32:
-		in = ( byte *)indata;
-		newsize = outwidth * outheight * samples;
-		out = image.tempbuffer = (byte *)Mem_Realloc( host.imagepool, image.tempbuffer, newsize );
-		break;
-	default:
-		MsgDev( D_WARN, "Image_Flood: unsupported format %s\n", PFDesc[type].name );
-		*resampled = false;
-		return (byte *)indata;	
-	}
-
-	if( samples == 1 ) memset( out, 0xFF, newsize );	// last palette color
-	else memset( out, 0x00808080, newsize );		// gray (alpha leaved 0x00)
-
-	for( y = 0; y < outheight; y++ )
-	{
-		for( x = 0; y < inheight && x < outwidth; x++ )
-		{
-			for( i = 0; i < samples; i++ )
-			{
-				if( x < inwidth )
-					*out++ = *in++;
-				else out++;
-			}
-		}
-	}
-
-	*resampled = true;
-	return image.tempbuffer;
-}
-
-/*
-================
 Image_Flip
 ================
 */
@@ -1198,7 +1115,7 @@ byte *Image_FlipInternal( const byte *in, word *srcwidth, word *srcheight, int t
 	byte	*out;
 
 	// nothing to process
-	if( !( flags & (IMAGE_FLIP_X|IMAGE_FLIP_Y|IMAGE_ROT_90)))
+	if( !FBitSet( flags, IMAGE_FLIP_X|IMAGE_FLIP_Y|IMAGE_ROT_90 ))
 		return (byte *)in;
 
 	switch( type )
@@ -1234,7 +1151,7 @@ byte *Image_FlipInternal( const byte *in, word *srcwidth, word *srcheight, int t
 	}
 
 	// update dims
-	if( flags & IMAGE_ROT_90 )
+	if( FBitSet( flags, IMAGE_ROT_90 ))
 	{
 		*srcwidth = height;
 		*srcheight = width;		
@@ -1253,11 +1170,8 @@ byte *Image_CreateLumaInternal( byte *fin, int width, int height, int type, int 
 	byte	*out;
 	int	i;
 
-	if(!( flags & IMAGE_HAS_LUMA ))
-	{
-		MsgDev( D_WARN, "Image_MakeLuma: image doesn't has luma pixels\n" );
+	if( !FBitSet( flags, IMAGE_HAS_LUMA ))
 		return (byte *)fin;	  
-	}
 
 	switch( type )
 	{
@@ -1267,29 +1181,9 @@ byte *Image_CreateLumaInternal( byte *fin, int width, int height, int type, int 
 		for( i = 0; i < width * height; i++ )
 			*out++ = fin[i] >= 224 ? fin[i] : 0;
 		break;
-	case PF_RGB_24:
-	case PF_BGR_24:
-		// clearing any gray pixels
-		for( i = 0; i < width * height; i++ )
-		{
-			if( fin[i*3+0] < 32 ) fin[i*3+0] = 0;
-			if( fin[i*3+1] < 32 ) fin[i*3+1] = 0;
-			if( fin[i*3+2] < 32 ) fin[i*3+2] = 0;
-		}
-		return (byte *)fin;
-	case PF_RGBA_32:
-	case PF_BGRA_32:
-		// clearing any gray pixels
-		for( i = 0; i < width * height; i++ )
-		{
-			if( fin[i*4+0] < 32 ) fin[i*4+0] = 0;
-			if( fin[i*4+1] < 32 ) fin[i*4+1] = 0;
-			if( fin[i*4+2] < 32 ) fin[i*4+2] = 0;
-		}
-		return (byte *)fin;
 	default:
 		// another formats does ugly result :(
-		MsgDev( D_WARN, "Image_MakeLuma: unsupported format %s\n", PFDesc[type].name );
+		Con_Printf( S_ERROR "Image_MakeLuma: unsupported format %s\n", PFDesc[type].name );
 		return (byte *)fin;	
 	}
 
@@ -1303,7 +1197,7 @@ qboolean Image_AddIndexedImageToPack( const byte *in, int width, int height )
 
 	if( Image_CheckFlag( IL_KEEP_8BIT ))
 		expand_to_rgba = false;
-	else if( host.type == HOST_NORMAL && ( image.flags & ( IMAGE_HAS_LUMA|IMAGE_QUAKESKY )))
+	else if( FBitSet( image.flags, IMAGE_HAS_LUMA|IMAGE_QUAKESKY ))
 		expand_to_rgba = false;
 
 	image.size = mipsize;
@@ -1438,6 +1332,12 @@ rgbdata_t *Image_LightGamma( rgbdata_t *pic )
 
 qboolean Image_RemapInternal( rgbdata_t *pic, int topColor, int bottomColor )
 {
+	if( !pic->palette )
+	{
+		MsgDev( D_ERROR, "Image_Remap: palette is missed\n" );
+		return false;
+	}
+
 	switch( pic->type )
 	{
 	case PF_INDEXED_24:
@@ -1450,21 +1350,15 @@ qboolean Image_RemapInternal( rgbdata_t *pic, int topColor, int bottomColor )
 		return false;
 	}
 
-	if( !pic->palette )
-	{
-		MsgDev( D_ERROR, "Image_Remap: palette is missed\n" );
-		return false;
-	}
-
 	if( Image_ComparePalette( pic->palette ) == PAL_QUAKE1 )
 	{
-		Image_PaletteTranslate( pic->palette, topColor * 16, bottomColor * 16 );
+		Image_PaletteTranslate( pic->palette, topColor * 16, bottomColor * 16, 3 );
 	}
 	else
 	{
 		// g-cont. preview images has a swapped top and bottom colors. I don't know why.
-		Image_PaletteHueReplace( pic->palette, topColor, SUIT_HUE_START, SUIT_HUE_END );
-		Image_PaletteHueReplace( pic->palette, bottomColor, PLATE_HUE_START, PLATE_HUE_END );
+		Image_PaletteHueReplace( pic->palette, topColor, SUIT_HUE_START, SUIT_HUE_END, 3 );
+		Image_PaletteHueReplace( pic->palette, bottomColor, PLATE_HUE_START, PLATE_HUE_END, 3 );
 	}
 
 	return true;
@@ -1612,11 +1506,11 @@ qboolean Image_Process( rgbdata_t **pix, int width, int height, uint flags, imgf
 		return false; // no operation specfied
 	}
 
-	if( flags & IMAGE_MAKE_LUMA )
+	if( FBitSet( flags, IMAGE_MAKE_LUMA ))
 	{
 		out = Image_CreateLumaInternal( pic->buffer, pic->width, pic->height, pic->type, pic->flags );
 		if( pic->buffer != out ) memcpy( pic->buffer, image.tempbuffer, pic->size );
-		pic->flags &= ~IMAGE_HAS_LUMA;
+		ClearBits( pic->flags, IMAGE_HAS_LUMA );
 	}
 
 	if( flags & IMAGE_REMAP )
@@ -1635,39 +1529,13 @@ qboolean Image_Process( rgbdata_t **pix, int width, int height, uint flags, imgf
 	out = Image_FlipInternal( pic->buffer, &pic->width, &pic->height, pic->type, flags );
 	if( pic->buffer != out ) memcpy( pic->buffer, image.tempbuffer, pic->size );
 
-	if(( flags & IMAGE_RESAMPLE && width > 0 && height > 0 ) || ( flags & IMAGE_ROUND ) || ( flags & IMAGE_ROUNDFILLER ))
+	if( FBitSet( flags, IMAGE_RESAMPLE ) && width > 0 && height > 0 )
 	{
+		int	w = bound( 1, width, IMAGE_MAXWIDTH );	// 1 - 4096
+		int	h = bound( 1, height, IMAGE_MAXHEIGHT);	// 1 - 4096
 		qboolean	resampled = false;
-		int	w, h;
 
-		if(( flags & IMAGE_ROUND ) || ( flags & IMAGE_ROUNDFILLER ))
-		{
-			w = pic->width;
-			h = pic->height;
-
-			// round to nearest pow
-			// NOTE: images with dims less than 8x8 may causing problems
-			if( flags & IMAGE_ROUNDFILLER )
-			{
-				// roundfiller always must roundup
-				w = NearestPOW( w, false );
-				h = NearestPOW( h, false );
-			}
-			else Image_RoundDimensions( &w, &h );
-
-			w = bound( 8, w, IMAGE_MAXWIDTH );	// 8 - 4096
-			h = bound( 8, h, IMAGE_MAXHEIGHT);	// 8 - 4096
-		}
-		else
-		{
-			// custom size (user choise without limitations)
-			w = bound( 1, width, IMAGE_MAXWIDTH );	// 1 - 4096
-			h = bound( 1, height, IMAGE_MAXHEIGHT);	// 1 - 4096
-		}
-
-		if( flags & IMAGE_ROUNDFILLER )
-	         		out = Image_FloodInternal( pic->buffer, pic->width, pic->height, w, h, pic->type, &resampled );
-		else out = Image_ResampleInternal((uint *)pic->buffer, pic->width, pic->height, w, h, pic->type, &resampled );
+		out = Image_ResampleInternal((uint *)pic->buffer, pic->width, pic->height, w, h, pic->type, &resampled );
 
 		if( resampled ) // resampled or filled
 		{
@@ -1685,8 +1553,8 @@ qboolean Image_Process( rgbdata_t **pix, int width, int height, uint flags, imgf
 	}
 
 	// quantize image
-	if( flags & IMAGE_QUANTIZE ) pic = Image_Quantize( pic );
-	if( flags & IMAGE_PALTO24 ) Image_ConvertPalTo24bit( pic );
+	if( FBitSet( flags, IMAGE_QUANTIZE ))
+		pic = Image_Quantize( pic );
 
 	*pix = pic;
 

@@ -95,15 +95,11 @@ qboolean ClipRect( const vpoint_t &inUL, const vpoint_t &inLR, vpoint_t *pOutUL,
 			return false;
 		}
 
-		pOutUL->coord[0] = InterpTCoord(pOutUL->point[0], 
-				inUL.point[0], inLR.point[0], inUL.coord[0], inLR.coord[0] );
-			pOutLR->coord[0] = InterpTCoord(pOutLR->point[0],  
-				inUL.point[0], inLR.point[0], inUL.coord[0], inLR.coord[0] );
+		pOutUL->coord[0] = InterpTCoord(pOutUL->point[0], inUL.point[0], inLR.point[0], inUL.coord[0], inLR.coord[0] );
+		pOutLR->coord[0] = InterpTCoord(pOutLR->point[0], inUL.point[0], inLR.point[0], inUL.coord[0], inLR.coord[0] );
 
-			pOutUL->coord[1] = InterpTCoord(pOutUL->point[1], 
-				inUL.point[1], inLR.point[1], inUL.coord[1], inLR.coord[1] );
-			pOutLR->coord[1] = InterpTCoord(pOutLR->point[1],  
-				inUL.point[1], inLR.point[1], inUL.coord[1], inLR.coord[1] );
+		pOutUL->coord[1] = InterpTCoord(pOutUL->point[1], inUL.point[1], inLR.point[1], inUL.coord[1], inLR.coord[1] );
+		pOutLR->coord[1] = InterpTCoord(pOutLR->point[1], inUL.point[1], inLR.point[1], inUL.coord[1], inLR.coord[1] );
 	}
 	else
 	{

@@ -392,7 +392,7 @@ void CL_DrawParticles( double frametime )
 		{
 			size = PART_SIZE; // get initial size of particle
 
-			// HACKHACK a scale up to keep particles from disappearing
+			// scale up to keep particles from disappearing
 			size += (p->org[0] - RI.vieworg[0]) * RI.cull_vforward[0];
 			size += (p->org[1] - RI.vieworg[1]) * RI.cull_vforward[1];
 			size += (p->org[2] - RI.vieworg[2]) * RI.cull_vforward[2];
@@ -406,7 +406,6 @@ void CL_DrawParticles( double frametime )
 
 			p->color = bound( 0, p->color, 255 );
 			pColor = &clgame.palette[p->color];
-			// FIXME: should we pass color through lightgamma table?
 
 			alpha = 255 * (p->die - cl.time) * 16.0f;
 			if( alpha > 255 || p->type == pt_static )
@@ -1615,11 +1614,11 @@ void CL_ReadPointFile_f( void )
 
 	if( !afile )
 	{
-		MsgDev( D_ERROR, "couldn't open %s\n", filename );
+		Con_Printf( S_ERROR "couldn't open %s\n", filename );
 		return;
 	}
 	
-	Msg( "Reading %s...\n", filename );
+	Con_Printf( "Reading %s...\n", filename );
 
 	count = 0;
 	pfile = afile;
@@ -1642,7 +1641,7 @@ void CL_ReadPointFile_f( void )
 		
 		if( !cl_free_particles )
 		{
-			MsgDev( D_ERROR, "CL_ReadPointFile: not enough free particles!\n" );
+			Con_Printf( S_ERROR "not enough free particles!\n" );
 			break;
 		}
 
@@ -1663,6 +1662,6 @@ void CL_ReadPointFile_f( void )
 
 	Mem_Free( afile );
 
-	if( count ) Msg( "%i points read\n", count );
-	else Msg( "map %s has no leaks!\n", clgame.mapname );
+	if( count ) Con_Printf( "%i points read\n", count );
+	else Con_Printf( "map %s has no leaks!\n", clgame.mapname );
 }

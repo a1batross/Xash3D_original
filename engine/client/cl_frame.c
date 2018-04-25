@@ -267,7 +267,7 @@ void CL_ProcessEntityUpdate( cl_entity_t *ent )
 {
 	qboolean	parametric;
 
-	ent->model = Mod_Handle( ent->curstate.modelindex );
+	ent->model = CL_ModelHandle( ent->curstate.modelindex );
 	ent->index = ent->curstate.number;
 
 	// g-cont. make sure what it's no broke XashXT physics
@@ -288,18 +288,9 @@ void CL_ProcessEntityUpdate( cl_entity_t *ent )
 		CL_UpdatePositions( ent );
 	}
 
-	if( !FBitSet( host.features, ENGINE_COMPUTE_STUDIO_LERP )) 
-	{
-		// g-cont. it should be done for all the players?
-		// FIXME: probably this cause problems with flahslight and mirror reflection
-		// but it's used to reduce player body pitch...
-		if( ent->player )
-		{
-			if( world.has_mirrors && gl_allow_mirrors->value && RP_LOCALCLIENT( ent ) && !cl.local.thirdperson )
-				ent->curstate.angles[PITCH] /= 3.0f;
-			else ent->curstate.angles[PITCH] /= -3.0f;
-		}
-	}
+	// g-cont. it should be done for all the players?
+	if( ent->player && !FBitSet( host.features, ENGINE_COMPUTE_STUDIO_LERP )) 
+		ent->curstate.angles[PITCH] /= -3.0f;
 
 	VectorCopy( ent->curstate.origin, ent->origin );
 	VectorCopy( ent->curstate.angles, ent->angles );
@@ -419,8 +410,8 @@ int CL_InterpolateModel( cl_entity_t *e )
 	if( cls.timedemo || !e->model )
 		return 1;
 
-	if( cl.maxclients <= 1 && !FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
-		return 1;
+	if( fabs( cl_serverframetime() - cl_clientframetime()) < 0.0001f )
+		return 1;	// interpolation disabled
 
 	if( e->model->type == mod_brush && !cl_bmodelinterp->value )
 		return 1;
@@ -428,10 +419,8 @@ int CL_InterpolateModel( cl_entity_t *e )
 	if( cl.local.moving && cl.local.onground == e->index )
 		return 1;
 
-	if( cl.maxclients <= 1 && FBitSet( host.features, ENGINE_FIXED_FRAMERATE ))
-		t = cl.time - cl_serverframetime();
-	else t = cl.time - cl_interp->value;
-
+//	t = cl.time - cl_serverframetime();
+	t = cl.time - cl_interp->value;
 	CL_FindInterpolationUpdates( e, t, &ph0, &ph1 );
 
 	if( ph0 == NULL || ph1 == NULL )
@@ -615,7 +604,7 @@ void CL_FlushEntityPacket( sizebuf_t *msg )
 	while( 1 )
 	{
 		newnum = MSG_ReadUBitLong( msg, MAX_VISIBLE_PACKET_BITS );
-		if( !newnum ) break; // done
+		if( newnum == LAST_EDICT ) break; // done
 
 		if( MSG_CheckOverflow( msg ))
 			Host_Error( "CL_FlushEntityPacket: overflow\n" );
@@ -637,6 +626,7 @@ void CL_DeltaEntity( sizebuf_t *msg, frame_t *frame, int newnum, entity_state_t 
 	entity_state_t	*state;
 	qboolean		newent = (old) ? false : true;
 	int		pack = frame->num_entities;
+	qboolean		player = CL_IsPlayerIndex( newnum ); 
 	qboolean		alive = true;
 
 	// alloc next slot to store update
@@ -646,7 +636,7 @@ void CL_DeltaEntity( sizebuf_t *msg, frame_t *frame, int newnum, entity_state_t 
 	{
 		MsgDev( D_ERROR, "CL_DeltaEntity: invalid newnum: %d\n", newnum );
 		if( has_update )
-			MSG_ReadDeltaEntity( msg, old, state, newnum, CL_IsPlayerIndex( newnum ), cl.mtime[0] );
+			MSG_ReadDeltaEntity( msg, old, state, newnum, player, cl.mtime[0] );
 		return;
 	}
 
@@ -655,7 +645,7 @@ void CL_DeltaEntity( sizebuf_t *msg, frame_t *frame, int newnum, entity_state_t 
 	if( newent ) old = &ent->baseline;
 
 	if( has_update )
-		alive = MSG_ReadDeltaEntity( msg, old, state, newnum, CL_IsPlayerIndex( newnum ), cl.mtime[0] );
+		alive = MSG_ReadDeltaEntity( msg, old, state, newnum, player, cl.mtime[0] );
 	else memcpy( state, old, sizeof( entity_state_t ));
 
 	if( !alive )
@@ -664,8 +654,8 @@ void CL_DeltaEntity( sizebuf_t *msg, frame_t *frame, int newnum, entity_state_t 
 #if 0
 		// this is for reference
 		if( state->number == -1 )
-			Msg( "Entity %i was removed from server\n", newnum );
-		else Msg( "Entity %i was removed from delta-message\n", newnum );
+			Con_DPrintf( "Entity %i was removed from server\n", newnum );
+		else Con_Dprintf( "Entity %i was removed from delta-message\n", newnum );
 #endif
 		return;
 	}
@@ -700,6 +690,7 @@ int CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 	int		oldpacket;
 	int		bufStart;
 	entity_state_t	*oldent;
+	qboolean		player;
 	int		count;
 
 	// save first uncompressed packet as timestamp
@@ -783,10 +774,11 @@ int CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 	while( 1 )
 	{
 		newnum = MSG_ReadUBitLong( msg, MAX_ENTITY_BITS );
-		if( !newnum ) break; // end of packet entities
+		if( newnum == LAST_EDICT ) break; // end of packet entities
 
 		if( MSG_CheckOverflow( msg ))
 			Host_Error( "CL_ParsePacketEntities: overflow\n" );
+		player = CL_IsPlayerIndex( newnum );
 
 		while( oldnum < newnum )
 		{	
@@ -810,8 +802,7 @@ int CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 			// delta from previous state
 			bufStart = MSG_GetNumBytesRead( msg );
 			CL_DeltaEntity( msg, newframe, newnum, oldent, true );
-			if( CL_IsPlayerIndex( newnum ) )
-				playerbytes += MSG_GetNumBytesRead( msg ) - bufStart;
+			if( player ) playerbytes += MSG_GetNumBytesRead( msg ) - bufStart;
 			oldindex++;
 
 			if( oldindex >= oldframe->num_entities )
@@ -831,8 +822,7 @@ int CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 			// delta from baseline ?
 			bufStart = MSG_GetNumBytesRead( msg );
 			CL_DeltaEntity( msg, newframe, newnum, NULL, true );
-			if( CL_IsPlayerIndex( newnum ) )
-				playerbytes += MSG_GetNumBytesRead( msg ) - bufStart;
+			if( player ) playerbytes += MSG_GetNumBytesRead( msg ) - bufStart;
 			continue;
 		}
 	}
@@ -867,24 +857,14 @@ int CL_ParsePacketEntities( sizebuf_t *msg, qboolean delta )
 	// add new entities into physic lists
 	CL_SetSolidEntities();
 
-	if( cls.state != ca_active )
-	{
-		// client entered the game
-		cls.state = ca_active;
-		cls.changelevel = false;		// changelevel is done
-		cls.changedemo = false;		// changedemo is done
-
-		SCR_MakeLevelShot();		// make levelshot if needs
-		Cvar_SetValue( "scr_loading", 0.0f );	// reset progress bar	
-		Netchan_ReportFlow( &cls.netchan );
- 
-		if(( cls.demoplayback || cls.disable_servercount != cl.servercount ) && cl.video_prepped )
-			SCR_EndLoadingPlaque(); // get rid of loading plaque
-		cl.first_frame = true;
-	}
-	else
-	{
-		cl.first_frame = false;
+	// first update is the final signon stage where we actually receive an entity (i.e., the world at least)
+	if( cls.signon == ( SIGNONS - 1 ))
+	{	
+		// we are done with signon sequence.
+		cls.signon = SIGNONS;
+		
+		// Clear loading plaque.
+		CL_SignonReply ();
 	}
 
 	return playerbytes;
@@ -911,6 +891,15 @@ qboolean CL_AddVisibleEntity( cl_entity_t *ent, int entityType )
 
 	// check for adding this entity
 	if( !clgame.dllFuncs.pfnAddEntity( entityType, ent, ent->model->name ))
+	{
+		// local player was reject by game code, so ignore any effects
+		if( RP_LOCALCLIENT( ent ))
+			cl.local.apply_effects = false;
+		return false;
+	}
+
+	// don't add the player in firstperson mode
+	if( RP_LOCALCLIENT( ent ) && !CL_IsThirdPerson( ) && ( ent->index == cl.viewentity ))
 		return false;
 
 	if( entityType == ET_BEAM )
@@ -927,6 +916,10 @@ qboolean CL_AddVisibleEntity( cl_entity_t *ent, int entityType )
 	// is already occupied by FTENT_FLICKER
 	if( entityType != ET_TEMPENTITY )
 	{
+		// no reason to do it twice
+		if( RP_LOCALCLIENT( ent ))
+			cl.local.apply_effects = false;
+
 		// apply client-side effects
 		CL_AddEntityEffects( ent );
 
@@ -969,7 +962,6 @@ for all current players
 */
 void CL_LinkPlayers( frame_t *frame )
 {
-	qboolean		local_added = false;
 	entity_state_t	*state;
 	cl_entity_t	*ent;
 	int		i;
@@ -979,18 +971,13 @@ void CL_LinkPlayers( frame_t *frame )
 	// apply muzzleflash to weaponmodel
 	if( ent && FBitSet( ent->curstate.effects, EF_MUZZLEFLASH ))
 		SetBits( clgame.viewent.curstate.effects, EF_MUZZLEFLASH );
+	cl.local.apply_effects = true;
 
 	// check all the clients but add only visible
 	for( i = 0, state = frame->playerstate; i < MAX_CLIENTS; i++, state++ )
 	{
 		if( state->messagenum != cl.parsecount )
 			continue;	// not present this frame
-
-		if( !CL_IsThirdPerson() && ( i == cl.viewentity - 1 ))
-		{
-			if( !gl_allow_mirrors->value || !world.has_mirrors )
-				continue;
-		}
 
 		if( !state->modelindex || FBitSet( state->effects, EF_NODRAW ))
 			continue;
@@ -1036,15 +1023,11 @@ void CL_LinkPlayers( frame_t *frame )
 		VectorCopy( ent->origin, ent->attachment[2] );
 		VectorCopy( ent->origin, ent->attachment[3] );
 
-		if( CL_AddVisibleEntity( ent, ET_PLAYER ))
-		{
-			if( i == cl.playernum )
-				local_added = true;
-		}
+		CL_AddVisibleEntity( ent, ET_PLAYER );
 	}
 
 	// apply local player effects if entity is not added
-	if( !local_added ) CL_AddEntityEffects( CL_GetLocalPlayer( ));
+	if( cl.local.apply_effects ) CL_AddEntityEffects( CL_GetLocalPlayer( ));
 }
 
 /*
@@ -1207,6 +1190,22 @@ void CL_LinkPacketEntities( frame_t *frame )
 
 /*
 ===============
+CL_MoveThirdpersonCamera
+
+think thirdperson
+===============
+*/
+void CL_MoveThirdpersonCamera( void )
+{
+	if( cls.state == ca_disconnected || cls.state == ca_cinematic )
+		return;
+
+	// think thirdperson camera
+	clgame.dllFuncs.CAM_Think ();
+}
+
+/*
+===============
 CL_EmitEntities
 
 add visible entities to refresh list
@@ -1215,13 +1214,12 @@ process frame interpolation etc
 */
 void CL_EmitEntities( void )
 {
-	if( !cl.validsequence || cl.paused )
-		return; // don't waste time
+	if( cl.paused ) return; // don't waste time
 
 	R_ClearScene ();
 
 	// not in server yet, no entities to redraw
-	if( cls.state != ca_active )
+	if( cls.state != ca_active || !cl.validsequence )
 		return;
 
 	// make sure we have at least one valid update
@@ -1234,8 +1232,9 @@ void CL_EmitEntities( void )
 	// set client ideal pitch when mlook is disabled
 	CL_SetIdealPitch ();
 
-	// think thirdperson camera
-	clgame.dllFuncs.CAM_Think ();
+	// clear the scene befor start new frame
+	if( clgame.drawFuncs.R_ClearScene != NULL )
+		clgame.drawFuncs.R_ClearScene();
 
 	// link all the visible clients first
 	CL_LinkPlayers ( &cl.frames[cl.parsecountmod] );
@@ -1271,7 +1270,11 @@ qboolean CL_GetEntitySpatialization( channel_t *ch )
 	cl_entity_t	*ent;
 	qboolean		valid_origin;
 
-	if( ch->entnum == 0 ) return true; // static sound
+	if( ch->entnum == 0 )
+	{
+		ch->staticsound = true;
+		return true; // static sound
+	}
 
 	if(( ch->entnum - 1 ) == cl.playernum )
 	{
@@ -1283,15 +1286,9 @@ qboolean CL_GetEntitySpatialization( channel_t *ch )
 	ent = CL_GetEntityByIndex( ch->entnum );
 
 	// entity is not present on the client but has valid origin
-	if( !ent || !ent->index ) return valid_origin;
-
-	if( ent->curstate.messagenum == 0 )
-	{
-		// entity is never has updates on the client
-		// so we should use static origin instead
-		ch->staticsound = true;
+	if( !ent || !ent->index || ent->curstate.messagenum == 0 )
 		return valid_origin;
-	}
+
 #if 0
 	// uncomment this if you want enable additional check by PVS
 	if( ent->curstate.messagenum != cl.parsecount )
@@ -1304,7 +1301,6 @@ qboolean CL_GetEntitySpatialization( channel_t *ch )
 	VectorAdd( ch->origin, ent->curstate.origin, ch->origin );
 
 	// setup mins\maxs
-	// FIXME: should to expand them for rotating bmodels?
 	VectorAdd( ent->curstate.mins, ent->curstate.origin, ch->absmin );
 	VectorAdd( ent->curstate.maxs, ent->curstate.origin, ch->absmax );
 

@@ -146,7 +146,7 @@ static void R_GetDecalDimensions( int texture, int *width, int *height )
 //-----------------------------------------------------------------------------
 // compute the decal basis based on surface normal
 //-----------------------------------------------------------------------------
-void R_DecalComputeBasis( msurface_t *surf, vec3_t textureSpaceBasis[3] )
+void R_DecalComputeBasis( msurface_t *surf, int flags, vec3_t textureSpaceBasis[3] )
 {
 	vec3_t	surfaceNormal;
 
@@ -155,9 +155,31 @@ void R_DecalComputeBasis( msurface_t *surf, vec3_t textureSpaceBasis[3] )
 		VectorNegate( surf->plane->normal, surfaceNormal );
 	else VectorCopy( surf->plane->normal, surfaceNormal );
 
+	VectorNormalize2( surfaceNormal, textureSpaceBasis[2] );
+#if 0
+	if( FBitSet( flags, FDECAL_CUSTOM ))
+	{
+		vec3_t	pSAxis = { 1, 0, 0 };
+
+		// T = S cross N
+		CrossProduct( pSAxis, textureSpaceBasis[2], textureSpaceBasis[1] );
+
+		// Name sure they aren't parallel or antiparallel
+		// In that case, fall back to the normal algorithm.
+		if( DotProduct( textureSpaceBasis[1], textureSpaceBasis[1] ) > 1e-6 )
+		{
+			// S = N cross T
+			CrossProduct( textureSpaceBasis[2], textureSpaceBasis[1], textureSpaceBasis[0] );
+
+			VectorNormalizeFast( textureSpaceBasis[0] );
+			VectorNormalizeFast( textureSpaceBasis[1] );
+			return;
+		}
+		// Fall through to the standard algorithm for parallel or antiparallel
+	}
+#endif
 	VectorNormalize2( surf->texinfo->vecs[0], textureSpaceBasis[0] );
 	VectorNormalize2( surf->texinfo->vecs[1], textureSpaceBasis[1] );
-	VectorNormalize2( surfaceNormal, textureSpaceBasis[2] );
 }
 
 void R_SetupDecalTextureSpaceBasis( decal_t *pDecal, msurface_t *surf, int texture, vec3_t textureSpaceBasis[3], float decalWorldScale[2] )
@@ -165,7 +187,7 @@ void R_SetupDecalTextureSpaceBasis( decal_t *pDecal, msurface_t *surf, int textu
 	int	width, height;
 
 	// Compute the non-scaled decal basis
-	R_DecalComputeBasis( surf, textureSpaceBasis );
+	R_DecalComputeBasis( surf, pDecal->flags, textureSpaceBasis );
 	R_GetDecalDimensions( texture, &width, &height );
 
 	// world width of decal = ptexture->width / pDecal->scale
@@ -374,7 +396,9 @@ static void R_DecalVertsLight( float *v, msurface_t *surf, int vertCount )
 {
 	float		s, t;
 	mtexinfo_t	*tex;
-	int		j, sample_size;
+	mextrasurf_t	*info = surf->info;
+	float		sample_size;
+	int		j;
 
 	sample_size = Mod_SampleSizeForFace( surf );
 	tex = surf->texinfo;
@@ -382,14 +406,14 @@ static void R_DecalVertsLight( float *v, msurface_t *surf, int vertCount )
 	for( j = 0; j < vertCount; j++, v += VERTEXSIZE )
 	{
 		// lightmap texture coordinates
-		s = DotProduct( v, tex->vecs[0] ) + tex->vecs[0][3] - surf->texturemins[0];
+		s = DotProduct( v, info->lmvecs[0] ) + info->lmvecs[0][3] - info->lightmapmins[0];
 		s += surf->light_s * sample_size;
-		s += sample_size >> 1;
+		s += sample_size * 0.5;
 		s /= BLOCK_SIZE * sample_size; //fa->texinfo->texture->width;
 
-		t = DotProduct( v, tex->vecs[1] ) + tex->vecs[1][3] - surf->texturemins[1];
+		t = DotProduct( v, info->lmvecs[1] ) + info->lmvecs[1][3] - info->lightmapmins[1];
 		t += surf->light_t * sample_size;
-		t += sample_size >> 1;
+		t += sample_size * 0.5;
 		t /= BLOCK_SIZE * sample_size; //fa->texinfo->texture->height;
 
 		v[5] = s;
@@ -425,7 +449,7 @@ static decal_t *R_DecalIntersect( decalinfo_t *decalinfo, msurface_t *surf, int 
 
 		// Don't steal bigger decals and replace them with smaller decals
 		// Don't steal permanent decals
-		if(!( pDecal->flags & FDECAL_PERMANENT ))
+		if( !FBitSet( pDecal->flags, FDECAL_PERMANENT ))
 		{
 			vec3_t	testBasis[3];
 			vec3_t	testPosition[2];
@@ -600,7 +624,7 @@ void R_DecalSurface( msurface_t *surf, decalinfo_t *decalinfo )
 	float		s, t, w, h;
 
 	// we in restore mode
-	if( cls.state == ca_connected )
+	if( cls.state == ca_connected || cls.state == ca_validate )
 	{
 		// NOTE: we may have the decal on this surface that come from another level.
 		// check duplicate with same position and texture
@@ -622,7 +646,7 @@ void R_DecalSurface( msurface_t *surf, decalinfo_t *decalinfo )
 	// Determine the decal basis (measured in world space)
 	// Note that the decal basis vectors 0 and 1 will always lie in the same
 	// plane as the texture space basis vectorstextureVecsTexelsPerWorldUnits.
-	R_DecalComputeBasis( surf, decalinfo->m_Basis );
+	R_DecalComputeBasis( surf, decalinfo->m_Flags, decalinfo->m_Basis );
 
 	// Compute an effective width and height (axis aligned) in the parent texture space
 	// How does this work? decalBasis[0] represents the u-direction (width)
@@ -691,7 +715,7 @@ static void R_DecalNode( model_t *model, mnode_t *node, decalinfo_t *decalinfo )
 	mplane_t	*splitplane;
 	float	dist;
 	
-	ASSERT( node );
+	Assert( node != NULL );
 
 	if( node->contents < 0 )
 	{
@@ -747,12 +771,12 @@ void R_DecalShoot( int textureIndex, int entityIndex, int modelIndex, vec3_t pos
 	{
 		ent = CL_GetEntityByIndex( entityIndex );
 
-		if( modelIndex > 0 ) model = Mod_Handle( modelIndex );
-		else if( ent != NULL ) model = Mod_Handle( ent->curstate.modelindex );
+		if( modelIndex > 0 ) model = CL_ModelHandle( modelIndex );
+		else if( ent != NULL ) model = CL_ModelHandle( ent->curstate.modelindex );
 		else return;
 	}
 	else if( modelIndex > 0 )
-		model = Mod_Handle( modelIndex );
+		model = CL_ModelHandle( modelIndex );
 	else model = cl.worldmodel;
 
 	if( !model ) return;
@@ -766,7 +790,9 @@ void R_DecalShoot( int textureIndex, int entityIndex, int modelIndex, vec3_t pos
 	decalInfo.m_pModel = model;
 	hull = &model->hulls[0];	// always use #0 hull
 
-	if( ent && !( flags & FDECAL_LOCAL_SPACE ))
+	// NOTE: all the decals at 'first shoot' placed into local space of parent entity
+	// and won't transform again on a next restore, levelchange etc
+	if( ent && !FBitSet( flags, FDECAL_LOCAL_SPACE ))
 	{
 		vec3_t	pos_l;
 
@@ -784,19 +810,19 @@ void R_DecalShoot( int textureIndex, int entityIndex, int modelIndex, vec3_t pos
 		}
 
 		VectorCopy( pos_l, decalInfo.m_Position );
-		flags |= FDECAL_LOCAL_SPACE; // decal position moved into local space
+		// decal position moved into local space
+		SetBits( flags, FDECAL_LOCAL_SPACE );
 	}
 	else
 	{
-		// pass position in global
+		// already in local space
 		VectorCopy( pos, decalInfo.m_Position );
 	}
 
 	// this decal must use landmark for correct transition
-	if(!( model->flags & MODEL_HAS_ORIGIN ))
-	{
-		flags |= FDECAL_USE_LANDMARK;
-	}
+	// because their model exist only in world-space
+	if( !FBitSet( model->flags, MODEL_HAS_ORIGIN ))
+		SetBits( flags, FDECAL_USE_LANDMARK );
 
 	// more state used by R_DecalNode()
 	decalInfo.m_iTexture = textureIndex;
@@ -886,7 +912,7 @@ void DrawSurfaceDecals( msurface_t *fa, qboolean single, qboolean reverse )
 	if( !fa->pdecals ) return;
 
 	e = RI.currententity;
-	ASSERT( e != NULL );
+	Assert( e != NULL );
 
 	if( single )
 	{
@@ -1025,7 +1051,7 @@ void DrawDecalsBatch( void )
 		return;
 
 	e = RI.currententity;
-	ASSERT( e != NULL );
+	Assert( e != NULL );
 
 	if( e->curstate.rendermode != kRenderTransTexture )
 	{
@@ -1136,7 +1162,7 @@ static int DecalDepthCompare( const void *a, const void *b )
 // Input  : *pList - 
 // Output : int
 //-----------------------------------------------------------------------------
-int R_CreateDecalList( decallist_t *pList, qboolean changelevel )
+int R_CreateDecalList( decallist_t *pList )
 {
 	int	total = 0;
 	int	i, depth;
@@ -1149,7 +1175,7 @@ int R_CreateDecalList( decallist_t *pList, qboolean changelevel )
 			decal_t	*pdecals;
 			
 			// decal is in use and is not a custom decal
-			if( decal->psurface == NULL || ( decal->flags & FDECAL_DONTSAVE ))	
+			if( decal->psurface == NULL || FBitSet( decal->flags, FDECAL_DONTSAVE ))
 				 continue;
 
 			// compute depth
@@ -1167,7 +1193,7 @@ int R_CreateDecalList( decallist_t *pList, qboolean changelevel )
 			pList[total].scale = decal->scale;
 			
 			R_DecalUnProject( decal, &pList[total] );
-			FS_FileBase( R_GetTexture( decal->texture )->name, pList[total].name );
+			COM_FileBase( R_GetTexture( decal->texture )->name, pList[total].name );
 
 			// check to see if the decal should be added
 			total = DecalListAdd( pList, total );
@@ -1175,7 +1201,7 @@ int R_CreateDecalList( decallist_t *pList, qboolean changelevel )
 
 		if( clgame.drawFuncs.R_CreateStudioDecalList )
 		{
-			total += clgame.drawFuncs.R_CreateStudioDecalList( pList, total, changelevel );
+			total += clgame.drawFuncs.R_CreateStudioDecalList( pList, total );
 		}
 	}
 
@@ -1208,7 +1234,7 @@ void R_DecalRemoveAll( int textureIndex )
 		pdecal = &gDecalPool[i];
 
 		// don't remove permanent decals
-		if( pdecal->flags & FDECAL_PERMANENT )
+		if( !textureIndex && FBitSet( pdecal->flags, FDECAL_PERMANENT ))
 			continue;
 
 		if( !textureIndex || ( pdecal->texture == textureIndex ))

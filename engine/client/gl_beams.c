@@ -164,7 +164,7 @@ passed through this
 */
 void R_BeamSetup( BEAM *pbeam, vec3_t start, vec3_t end, int modelIndex, float life, float width, float amplitude, float brightness, float speed )
 {
-	model_t	*sprite = Mod_Handle( modelIndex );
+	model_t	*sprite = CL_ModelHandle( modelIndex );
 
 	if( !sprite ) return;
 
@@ -172,7 +172,7 @@ void R_BeamSetup( BEAM *pbeam, vec3_t start, vec3_t end, int modelIndex, float l
 	pbeam->modelIndex = modelIndex;
 	pbeam->frame = 0;
 	pbeam->frameRate = 0;
-	pbeam->frameCount = Mod_FrameCount( sprite );
+	pbeam->frameCount = sprite->numframes;
 
 	VectorCopy( start, pbeam->source );
 	VectorCopy( end, pbeam->target );
@@ -204,8 +204,6 @@ void R_BeamSetAttributes( BEAM *pbeam, float r, float g, float b, float framerat
 {
 	pbeam->frame = (float)startFrame;
 	pbeam->frameRate = framerate;
-
-	// FIXME: pass through lightgammatable ?
 	pbeam->r = r;
 	pbeam->g = g;
 	pbeam->b = b;
@@ -347,18 +345,6 @@ qboolean R_BeamCull( const vec3_t start, const vec3_t end, qboolean pvsOnly )
 	vec3_t	mins, maxs;
 	int	i;
 
-	// support for custom mirror management
-	if( RI.currentbeam != NULL )
-	{
-		// don't reflect this entity in mirrors
-		if( FBitSet( RI.currentbeam->curstate.effects, EF_NOREFLECT ) && FBitSet( RI.params, RP_MIRRORVIEW ))
-			return true;
-
-		// draw only in mirrors
-		if( FBitSet( RI.currentbeam->curstate.effects, EF_REFLECTONLY ) && !FBitSet( RI.params, RP_MIRRORVIEW ))
-			return true;
-	}
-
 	for( i = 0; i < 3; i++ )
 	{
 		if( start[i] < end[i] )
@@ -483,7 +469,7 @@ static void R_DrawSegs( vec3_t source, vec3_t delta, float width, float scale, f
 		beamseg_t	nextSeg;
 		vec3_t	vPoint1, vPoint2;
 	
-		ASSERT( noiseIndex < ( NOISE_DIVISIONS << 16 ));
+		Assert( noiseIndex < ( NOISE_DIVISIONS << 16 ));
 
 		fraction = i * div;
 
@@ -710,7 +696,8 @@ void R_DrawDisk( vec3_t source, vec3_t delta, float width, float scale, float fr
 	vLast = fmod( freq * speed, 1 );
 	scale = scale * length;
 
-	w = freq * delta[2];
+	// clamp the beam width
+	w = fmod( freq, width ) * delta[2];
 
 	// NOTE: we must force the degenerate triangles to be on the edge
 	for( i = 0; i < segments; i++ )
@@ -1078,20 +1065,18 @@ Update beam vars and draw it
 */
 void R_BeamDraw( BEAM *pbeam, float frametime )
 {
-	model_t	*sprite;
+	model_t	*model;
 	vec3_t	delta;
 
+	model = CL_ModelHandle( pbeam->modelIndex );
 	SetBits( pbeam->flags, FBEAM_ISACTIVE );
 
-	if( Mod_GetType( pbeam->modelIndex ) != mod_sprite )
+	if( !model || model->type != mod_sprite )
 	{
 		pbeam->flags &= ~FBEAM_ISACTIVE; // force to ignore
 		pbeam->die = cl.time;
 		return;
 	}
-
-	sprite = Mod_Handle( pbeam->modelIndex );
-	if( !sprite ) return;
 
 	// update frequency
 	pbeam->freq += frametime;
@@ -1195,7 +1180,7 @@ void R_BeamDraw( BEAM *pbeam, float frametime )
 
 	TriRenderMode( FBitSet( pbeam->flags, FBEAM_SOLID ) ? kRenderNormal : kRenderTransAdd );
 
-	if( !TriSpriteTexture( sprite, (int)(pbeam->frame + pbeam->frameRate * cl.time) % pbeam->frameCount ))
+	if( !TriSpriteTexture( model, (int)(pbeam->frame + pbeam->frameRate * cl.time) % pbeam->frameCount ))
 	{
 		ClearBits( pbeam->flags, FBEAM_ISACTIVE );
 		return;
@@ -1205,7 +1190,7 @@ void R_BeamDraw( BEAM *pbeam, float frametime )
 	{
 		cl_entity_t	*pStart;
 
-		// HACKHACK: get brightness from head entity
+		// XASH SPECIFIC: get brightness from head entity
 		pStart = R_BeamGetEntity( pbeam->startEntity ); 
 		if( pStart && pStart->curstate.rendermode != kRenderNormal )
 			pbeam->brightness = CL_FxBlend( pStart ) / 255.0f;
@@ -1340,7 +1325,6 @@ BEAM		*cl_active_beams;
 BEAM		*cl_free_beams;
 BEAM		*cl_viewbeams = NULL;		// beams pool
 
-cl_entity_t	*cl_custombeams[MAX_VISIBLE_PACKET];	// to avoid check of all the ents
 /*
 ================
 CL_InitViewBeams
@@ -1396,16 +1380,16 @@ Add the beam that encoded as custom entity
 */
 void CL_AddCustomBeam( cl_entity_t *pEnvBeam )
 {
-	if( cl.num_custombeams >= MAX_VISIBLE_PACKET )
+	if( tr.draw_list->num_beam_entities >= MAX_VISIBLE_PACKET )
 	{
-		MsgDev( D_ERROR, "Too many custom beams %d!\n", cl.num_custombeams );
+		MsgDev( D_ERROR, "Too many custom beams %d!\n", tr.draw_list->num_beam_entities );
 		return;
 	}
 
 	if( pEnvBeam )
 	{
-		cl_custombeams[cl.num_custombeams] = pEnvBeam;
-		cl.num_custombeams++;
+		tr.draw_list->beam_entities[tr.draw_list->num_beam_entities] = pEnvBeam;
+		tr.draw_list->num_beam_entities++;
 	}
 }
 
@@ -1481,7 +1465,7 @@ Check for expired beams
 */
 qboolean CL_BeamAttemptToDie( BEAM *pBeam )
 {
-	ASSERT( pBeam != NULL );
+	Assert( pBeam != NULL );
 
 	// premanent beams never die automatically
 	if( FBitSet( pBeam->flags, FBEAM_FOREVER ))
@@ -1521,9 +1505,9 @@ void CL_DrawBeams( int fTrans )
 	
 	// server beams don't allocate beam chains
 	// all params are stored in cl_entity_t
-	for( i = 0; i < cl.num_custombeams; i++ )
+	for( i = 0; i < tr.draw_list->num_beam_entities; i++ )
 	{
-		RI.currentbeam = cl_custombeams[i];
+		RI.currentbeam = tr.draw_list->beam_entities[i];
 		flags = RI.currentbeam->curstate.rendermode & 0xF0;
 
 		if( fTrans && FBitSet( flags, FBEAM_SOLID ))
@@ -1603,9 +1587,12 @@ BEAM *R_BeamEnts( int startEnt, int endEnt, int modelIndex, float life, float wi
 {
 	cl_entity_t	*start, *end;
 	BEAM		*pbeam;
+	model_t		*mod;
+
+	mod = CL_ModelHandle( modelIndex );
 
 	// need a valid model.
-	if( Mod_GetType( modelIndex ) != mod_sprite )
+	if( !mod || mod->type != mod_sprite )
 		return NULL;
 
 	start = R_BeamGetEntity( startEnt );
@@ -1913,16 +1900,16 @@ void CL_ParseViewBeam( sizebuf_t *msg, int beamType )
 		end[2] = MSG_ReadCoord( msg );
 		modelIndex = MSG_ReadShort( msg );
 		startFrame = MSG_ReadByte( msg );
-		frameRate = (float)(MSG_ReadByte( msg ) * 0.1f);
+		frameRate = (float)(MSG_ReadByte( msg ));
 		life = (float)(MSG_ReadByte( msg ) * 0.1f);
-		width = (float)MSG_ReadByte( msg );
+		width = (float)(MSG_ReadByte( msg ) * 0.1f);
 		noise = (float)(MSG_ReadByte( msg ) * 0.01f);
 		r = (float)MSG_ReadByte( msg ) / 255.0f;
 		g = (float)MSG_ReadByte( msg ) / 255.0f;
 		b = (float)MSG_ReadByte( msg ) / 255.0f;
 		a = (float)MSG_ReadByte( msg ) / 255.0f;
-		speed = (float)(MSG_ReadByte( msg ) * 0.1f);
-		R_BeamCirclePoints( beamType, start, end, modelIndex, life, width, noise, a, speed, startFrame, frameRate, r, g, b );
+		speed = (float)MSG_ReadByte( msg );
+		R_BeamCirclePoints( beamType, start, end, modelIndex, life, width, noise, a, speed / 10.0f, startFrame, frameRate, r, g, b );
 		break;
 	case TE_BEAMFOLLOW:
 		startEnt = MSG_ReadShort( msg );
@@ -1973,23 +1960,24 @@ void CL_ReadLineFile_f( void )
 	char		*afile, *pfile;
 	vec3_t		p1, p2;
 	int		count, modelIndex;
-	char		filename[64];
+	char		filename[MAX_QPATH];
+	model_t		*model;
 	string		token;
-	
+
 	Q_snprintf( filename, sizeof( filename ), "maps/%s.lin", clgame.mapname );
 	afile = FS_LoadFile( filename, NULL, false );
 
 	if( !afile )
 	{
-		MsgDev( D_ERROR, "couldn't open %s\n", filename );
+		Con_Printf( S_ERROR "couldn't open %s\n", filename );
 		return;
 	}
 	
-	Msg( "Reading %s...\n", filename );
+	Con_Printf( "Reading %s...\n", filename );
 
 	count = 0;
 	pfile = afile;
-	modelIndex = CL_FindModelIndex( "sprites/laserbeam.spr" );
+	model = CL_LoadModel( DEFAULT_LASERBEAM_PATH, &modelIndex );
 
 	while( 1 )
 	{
@@ -2010,7 +1998,7 @@ void CL_ReadLineFile_f( void )
 
 		if( token[0] != '-' )
 		{
-			MsgDev( D_ERROR, "%s is corrupted\n", filename );
+			Con_Printf( S_ERROR "%s is corrupted\n", filename );
 			break;
 		}
 
@@ -2030,15 +2018,15 @@ void CL_ReadLineFile_f( void )
 		
 		if( !R_BeamPoints( p1, p2, modelIndex, 99999, 2, 0, 255, 0, 0, 0, 255.0f, 0.0f, 0.0f ))
 		{
-			if( Mod_GetType( modelIndex ) != mod_sprite )
-				MsgDev( D_ERROR, "CL_ReadLineFile: failed to load sprites/laserbeam.spr!\n" );
-			else MsgDev( D_ERROR, "CL_ReadLineFile: not enough free beams!\n" );
+			if( !model || model->type != mod_sprite )
+				Con_Printf( S_ERROR "failed to load \"%s\"!\n", DEFAULT_LASERBEAM_PATH );
+			else Con_Printf( S_ERROR "not enough free beams!\n" );
 			break;
 		}
 	}
 
 	Mem_Free( afile );
 
-	if( count ) Msg( "%i lines read\n", count );
-	else Msg( "map %s has no leaks!\n", clgame.mapname );
+	if( count ) Con_Printf( "%i lines read\n", count );
+	else Con_Printf( "map %s has no leaks!\n", clgame.mapname );
 }

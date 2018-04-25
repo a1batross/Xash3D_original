@@ -1229,6 +1229,9 @@ void UI_SetActiveMenu( int fActive )
 	KEY_ClearStates();
 	uiStatic.framecount = 0;
 
+	if( fActive && uiStatic.visible )
+		return; // don't reset the menu
+
 	if( fActive )
 	{
 		KEY_SetDest( KEY_MENU );
@@ -1255,6 +1258,7 @@ void UI_AddServerToList( netadr_t adr, const char *info )
 	if( uiStatic.numServers == UI_MAX_SERVERS )
 		return;	// full
 
+	// ignore games from difference game folder
 	if( stricmp( gMenu.m_gameinfo.gamefolder, Info_ValueForKey( info, "gamedir" )))
 		return;
 

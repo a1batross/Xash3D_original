@@ -23,11 +23,21 @@ typedef enum
 	NS_COUNT
 } netsrc_t;
 
+// Max length of unreliable message
+#define MAX_DATAGRAM		16384
+
+// Max length of a multicast message
+#define MAX_MULTICAST		8192	// some mods spamming for rain effect
+
+#define MAX_INIT_MSG		0x20000	// max length of possible message
+
+// net packets type
+#define NET_HEADER_OUTOFBANDPACKET	-1
+#define NET_HEADER_SPLITPACKET	-2
+#define NET_HEADER_COMPRESSEDPACKET	-3
+
+
 #include "netadr.h"
-
-#define MAX_ROUTEABLE_PACKET		1400
-
-#define SPLIT_SIZE			( MAX_ROUTEABLE_PACKET - sizeof( SPLITPACKET ))
 
 extern convar_t	*net_showpackets;
 extern convar_t	*net_clockwindow;
@@ -47,6 +57,8 @@ qboolean NET_StringToAdr( const char *string, netadr_t *adr );
 qboolean NET_CompareAdr( const netadr_t a, const netadr_t b );
 qboolean NET_CompareBaseAdr( const netadr_t a, const netadr_t b );
 qboolean NET_GetPacket( netsrc_t sock, netadr_t *from, byte *data, size_t *length );
+qboolean NET_BufferToBufferCompress( char *dest, uint *destLen, char *source, uint sourceLen );
+qboolean NET_BufferToBufferDecompress( char *dest, uint *destLen, char *source, uint sourceLen );
 void NET_SendPacket( netsrc_t sock, size_t length, const void *data, netadr_t to );
 void NET_ClearLagData( qboolean bClient, qboolean bServer );
 

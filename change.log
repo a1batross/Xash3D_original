@@ -1,3 +1,94 @@
+LEGEND:
+
+Client:	- client.dll or client part of xash.dll
+Server:	- hl.dll or server part of xash.dll
+Engine:	- xash.dll
+Network:	- a network part of xash.dll
+Render:	- a render part of xash.dll
+FS:	- a filesystem part of xash.dll
+GameUI	- menu.dll
+Sound:	- a sound part of xash.dll
+Input:	- a input code of xash.dll
+ImageLib:	- image loader in xash.dll
+SoundLib:	- sound loader in xash.dll
+Console:	- console code in xash.dll
+VGUI:	- a VGUI implementation code in xash.dll
+Memory:	- a memory manager in xash.dll
+Physic:	- a server physics code in xash.dll
+
+build 4097
+
+Client: implement predictable laser spot for weapon RPG
+Server: fix bug with chat code that doesn't passed russian letters
+Engine: BSP31 now is obsolete and removed from the engine (please use bsp31migrate.exe tool for migration)
+Engine: new version of extended BSP30 map format (increase clipnode limits, tuneable lightmap resolution, per-vertex lighting etc)
+Render: mirrors are no longer support and has been removed from the engine (but leaved in the mods like XashXT or P2:Savior)
+Engine: mextrasurf_t was reorganized, please check your source code
+Engine: event API was reorganized, two functions was removed new one added
+Engine: engine feature ENGINE_FIXED_FRAMERATE are no longer supported
+Engine: RenderAPI was changed version to 37 and reorganized
+Server: "decalfrequency" is now stored into config.cfg
+Engine: some unused functions from undocumented part of game and client interface was replaced with stubs
+GameUI: import interface was updated with two new functions (save file and remove file)
+Console: rewrite debug messages system like in Quake (Con_Printf instead of MsgDev)
+Network: completely rewrite the network connection to allow downloading and uploading files (missing resources, player logos)
+Network: first implementation of player customization (logos)
+Network: protocol was changed to version 49
+Engine: demo protocol was changed to version 3
+Engine: implement timedemo command
+Network: implement a signon sequence
+Sound: fixup static sounds save\restore bug
+Network: user messages max size will be increased up to 2048 bytes
+Client: rewrite HudSprite manager allow to download missed HUD sprites
+Client: rewrite SPR_GetList to prevent memory leak (old Half-Life bug)
+Console: fix the ConsolePrint to allow to goes message only to notify buffer
+Engine: fix very old bug in CheckParm export function (internal version is not bugged)
+Client: getAppID was changed to 70
+Network: IPX protocol will no longer supported and has been removed
+Client: single export for client.dll was renamed to GetClientAPI
+VGUI: class CEngineApp was declared as static
+GameUI: fix old crash with playersetup and changelevel on a background map
+Engine: new queue system for change maps (not sticked with Cbuf_Execute)
+Engine: experimental function CL_ChangeGame was removed from the engine
+Engine: enable interpolation for addangle (fixangle = 2)
+Network: new experimenal system to get maximum pack size for UDP (official size 1200 bytes but in theory it can be larger up to 64000 bytes)
+Network: new generic resource system that included sounds, models, events, decals and all other types
+Client: add mp3 command like in GoldSrc (warn this is not tested)
+Server: implement instanced baselines (baselines that specified by user)
+Server: implement a consistency resource check (model CRC and bounds)
+Network: StudioDecal message is completely moved out from the engine
+Client: request cvar value now can detect mismatch between cvar.string and cvar.value for detect potential cheaters
+Render: allow remap colors on a alias player models (Quake1)
+Client: added built-in resource pathes to list of download resources
+Client: do revision of tempents code, fix some bugs
+Client: make work EF_MUZZLEFLASH for alias-models
+Render: tune intencity from dymanic lights (alias and studio models affected)
+Render: enable built-in MSAA feature (cvar gl_enable_msaa in opengl.cfg)
+Render: fix bug with 'sticky bind' while texture is uploaded
+Render: the most of internal procedural textures has been moved out from the engine (keep'd only textures that engine is used himself)
+Render: R_LightPoint has a contain VERY old bug from Quake1 with inaccurate samples from lightmap color and produce invalid results in some cases
+Render: new extension of BSP file format (lightmaps that based on luxel per units instead of luxel per texels). Also check P2:Savior compile tools
+Render: fix bug with sort STUDIO_NF_ADDITIVE meshes in studio models (old Half-Life bug)
+Render: fix water subdivision bug that kill the prefomance while water is rendering
+Render: r_drawentities 7 is now shows world position of luxel for lighting
+Render: removed all unused GL-extensions
+Render: fixed 16-bit color mode and NPOT textures case
+Render: throw a system error on failed initalization video sybsystem instead of fallthrough into dedicated mode
+Render: remove of rotational sky support (it's just was not used by nobody)
+Sound: some minor changes in DirectSound backend code
+VGUI: rewrite Font manager, enable vertex arrays support
+Network: fragmented packets it's can be compressed by LZSS algorhytm
+Console: mapinfo now shows information about editor and compiler
+Engine: handle exception in Q_vsnprintf to prevent crash engine from the mistake of formatted args
+Engine: new polymorphic BSP loader
+Memory: fix bug in Mem_CheckFilename
+Server: first implementation of server game log
+Server: cmd 'changelevel' was no longer provided (only internal cnhagelevel is possible)
+Server: cmd 'kill' moved from server to the client
+Server: new save\restore system that compatible sav. files from GoldSrc
+Server: implement server fps control that called a 'sv_fps' use with precaution
+Server: fix some bugs with unlag system
+
 build 3886
 
 Client: fixup processing russian leter 'ÿ' in READ_STRING()

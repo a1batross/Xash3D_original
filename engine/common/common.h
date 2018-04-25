@@ -20,6 +20,25 @@ GNU General Public License for more details.
 extern "C" {
 #endif
 
+/*
+===================================================================================================================================
+Legend:
+
+INTERNAL RESOURCE			- function contain hardcoded path to resource that engine required (optional in most cases)
+OBSOLETE, UNUSED			- this function no longer used and leaved here for keep binary compatibility
+TODO				- some functionality not impemented but planned
+FIXME				- code doesn't working properly in some rare cases
+HACKHACK				- unexpected behavior on some input params (or something like)
+BUGBUG				- code doesn't working properly in most cases!
+TESTTEST				- this code may be unstable and needs to be more tested
+g-cont:				- notes from engine author
+XASH SPECIFIC			- sort of hack that works only in Xash3D not in GoldSrc
+===================================================================================================================================
+*/
+
+// configuration
+#define HACKS_RELATED_HLMODS		// some HL-mods works differently under Xash and can't be fixed without some hacks at least at current time
+
 // disable some warnings
 #pragma warning(disable : 4244)	// MIPS
 #pragma warning(disable : 4018)	// signed/unsigned mismatch
@@ -39,7 +58,10 @@ extern "C" {
 #define MAX_LOCALINFO_STRING	32768	// localinfo used on server and not sended to the clients
 #define MAX_SYSPATH		1024	// system filepath
 #define MAX_PRINT_MSG	8192	// how many symbols can handle single call of Msg or MsgDev
+#define MAX_TOKEN		2048	// parse token length
 #define MAX_MODS		512	// environment games that engine can keep visible
+#define MAX_USERMSG_LENGTH	2048	// don't modify it's relies on a client-side definitions
+
 #define EXPORT		__declspec( dllexport )
 #define BIT( n )		(1<<( n ))
 #define GAMMA		( 2.2 )		// Valve Software gamma
@@ -75,6 +97,13 @@ typedef struct
 
 enum
 {
+	DEV_NONE = 0,
+	DEV_NORMAL,
+	DEV_EXTENDED
+};
+
+enum
+{
 	D_INFO = 1,	// "-dev 1", shows various system messages
 	D_WARN,		// "-dev 2", shows not critical system warnings
 	D_ERROR,		// "-dev 3", shows critical warnings 
@@ -90,6 +119,7 @@ typedef enum
 
 #include "system.h"
 #include "com_model.h"
+#include "com_strings.h"
 #include "crtlib.h"
 #include "cvar.h"
 
@@ -98,7 +128,7 @@ typedef enum
 // PERFORMANCE INFO
 #define MIN_FPS         	20.0		// host minimum fps value for maxfps.
 #define MAX_FPS         	200.0		// upper limit for maxfps.
-#define HOST_FPS		72.0		// multiplayer games typical fps
+#define HOST_FPS		100.0		// multiplayer games typical fps
 
 #define MAX_FRAMETIME	0.25
 #define MIN_FRAMETIME	0.0001
@@ -133,6 +163,7 @@ typedef enum
 #define GI		SI.GameInfo
 #define FS_Gamedir()	SI.GameInfo->gamedir
 #define FS_Title()		SI.GameInfo->title
+#define GameState		(&host.game)
 
 #ifdef _DEBUG
 void DBG_AssertFunction( qboolean fExpr, const char* szExpr, const char* szFile, int szLine, const char* szMessage );
@@ -145,8 +176,10 @@ extern convar_t	*gl_vsync;
 extern convar_t	*scr_loading;
 extern convar_t	*scr_download;
 extern convar_t	*cmd_scripting;
+extern convar_t	*sv_maxclients;
 extern convar_t	*cl_allow_levelshots;
 extern convar_t	*vid_displayfrequency;
+extern convar_t	host_developer;
 extern convar_t	*host_limitlocal;
 extern convar_t	*host_framerate;
 extern convar_t	*host_maxfps;
@@ -169,27 +202,27 @@ internal shared gameinfo structure (readonly for engine parts)
 typedef struct gameinfo_s
 {
 	// filesystem info
-	char		gamefolder[64];	// used for change game '-game x'
-	char		basedir[64];	// base game directory (like 'id1' for Quake or 'valve' for Half-Life)
-	char		gamedir[64];	// game directory (can be match with basedir, used as game dir and as write path)
-	char		falldir[64];	// used as second basedir 
-	char		startmap[64];	// map to start singleplayer game
-	char		trainmap[64];	// map to start hazard course (if specified)
+	char		gamefolder[MAX_QPATH];	// used for change game '-game x'
+	char		basedir[MAX_QPATH];	// base game directory (like 'id1' for Quake or 'valve' for Half-Life)
+	char		gamedir[MAX_QPATH];	// game directory (can be match with basedir, used as game dir and as write path)
+	char		falldir[MAX_QPATH];	// used as second basedir 
+	char		startmap[MAX_QPATH];// map to start singleplayer game
+	char		trainmap[MAX_QPATH];// map to start hazard course (if specified)
 	char		title[64];	// Game Main Title
 	float		version;		// game version (optional)
 
 	// .dll pathes
-	char		dll_path[64];	// e.g. "bin" or "cl_dlls"
-	char		game_dll[64];	// custom path for game.dll
+	char		dll_path[MAX_QPATH];	// e.g. "bin" or "cl_dlls"
+	char		game_dll[MAX_QPATH];	// custom path for game.dll
 
 	// .ico path
-	char		iconpath[64];	// "game.ico" by default
+	char		iconpath[MAX_QPATH];	// "game.ico" by default
 
 	// about mod info
 	string		game_url;		// link to a developer's site
 	string		update_url;	// link to updates page
-	char		type[64];		// single, toolkit, multiplayer etc
-	char		date[64];
+	char		type[MAX_QPATH];	// single, toolkit, multiplayer etc
+	char		date[MAX_QPATH];
 	size_t		size;
 
 	int		gamemode;
@@ -199,7 +232,7 @@ typedef struct gameinfo_s
 	char		sp_entity[32];	// e.g. info_player_start
 	char		mp_entity[32];	// e.g. info_player_deathmatch
 
-	char		ambientsound[NUM_AMBIENTS][64];	// quake ambient sounds
+	char		ambientsound[NUM_AMBIENTS][MAX_QPATH];	// quake ambient sounds
 
 	int		max_edicts;	// min edicts is 600, max edicts is 4096
 	int		max_tents;	// min temp ents is 300, max is 2048
@@ -226,7 +259,27 @@ typedef enum
 	HOST_SLEEP,	// sleeped by different reason, e.g. minimize window
 	HOST_NOFOCUS,	// same as HOST_FRAME, but disable mouse
 	HOST_CRASHED	// an exception handler called
-} host_state;
+} host_status_t;
+
+typedef enum 
+{
+	STATE_RUNFRAME = 0,
+	STATE_LOAD_LEVEL,
+	STATE_LOAD_GAME,
+	STATE_CHANGELEVEL,
+	STATE_GAME_SHUTDOWN,
+} host_state_t;
+
+typedef struct
+{
+	host_state_t	curstate;
+	host_state_t	nextstate;
+	char		levelName[MAX_QPATH];
+	char		landmarkName[MAX_QPATH];
+	qboolean		backgroundMap;
+	qboolean		loadGame;
+	qboolean		newGame;		// unload the server.dll before start a new map
+} game_status_t;
 
 typedef enum
 {
@@ -251,15 +304,6 @@ typedef enum
 	RD_PACKET
 } rdtype_t;
 
-// game print level
-typedef enum
-{
-	PRINT_LOW,	// pickup messages
-	PRINT_MEDIUM,	// death messages
-	PRINT_HIGH,	// critical messages
-	PRINT_CHAT,	// chat messages
-} messagelevel_t;
-
 #include "net_ws.h"
 
 typedef struct host_redirect_s
@@ -273,7 +317,7 @@ typedef struct host_redirect_s
 
 typedef struct
 {
-	char		name[64];
+	char		name[MAX_QPATH];
 	short		entnum;
 	vec3_t		origin;
 	float		volume;
@@ -286,18 +330,55 @@ typedef struct
 	double		forcedEnd;
 } soundlist_t;
 
+typedef struct
+{
+	char		model[MAX_QPATH];	// curstate.modelindex = SV_ModelIndex
+	vec3_t		tentOffset;	// if attached, client origin + tentOffset = tent origin.
+	short		clientIndex;
+	float		fadeSpeed;
+	float		bounceFactor;
+	byte		hitSound;
+	qboolean		high_priority;
+	float		x, y, z;
+	int		flags;
+	float		time;
+
+	// base state
+	vec3_t		velocity;		// baseline.origin
+	vec3_t		avelocity;	// baseline.angles
+	int		fadeamount;	// baseline.renderamt
+	float		sparklife;	// baseline.framerate
+	float		thinkTime;	// baseline.scale
+
+	// current state
+	vec3_t		origin;		// entity.origin
+	vec3_t		angles;		// entity.angles
+	float		renderamt;	// curstate.renderamt
+	color24		rendercolor;	// curstate.rendercolor
+	int		rendermode;	// curstate.rendermode
+	int		renderfx;		// curstate.renderfx
+	float		framerate;	// curstate.framerate
+	float		frame;		// curstate.frame
+	byte		body;		// curstate.body
+	byte		skin;		// curstate.skin
+	float		scale;		// curstate.scale
+} tentlist_t;
+
 typedef struct host_parm_s
 {
 	HINSTANCE			hInst;
 	HANDLE			hMutex;
 	LPTOP_LEVEL_EXCEPTION_FILTER	oldFilter;
 
-	host_state	state;		// global host state
+	host_status_t	status;		// global host state
+	game_status_t	game;		// game manager
 	uint		type;		// running at
 	jmp_buf		abortframe;	// abort current frame
 	dword		errorframe;	// to prevent multiple host error
 	byte		*mempool;		// static mempool for misc allocations
 	string		finalmsg;		// server shutdown final message
+	string		downloadfile;	// filename to be downloading
+	int		downloadcount;	// how many files remain to downloading
 	host_redirect_t	rd;		// remote console
 
 	// command line parms
@@ -311,28 +392,27 @@ typedef struct host_parm_s
 	uint		framecount;	// global framecount
 
 	// list of unique decal indexes
-	char		draw_decals[MAX_DECALS][CS_SIZE];
+	char		draw_decals[MAX_DECALS][MAX_QPATH];
 
 	vec3_t		player_mins[MAX_MAP_HULLS];	// 4 hulls allowed
 	vec3_t		player_maxs[MAX_MAP_HULLS];	// 4 hulls allowed
 
 	HWND		hWnd;		// main window
-	int		developer;	// show all developer's message
-	int		old_developer;	// keep real dev state (we need enable dev-mode in multiplayer)
+	qboolean		allow_console;	// allow console in dev-mode or multiplayer game
+	qboolean		allow_console_init;	// initial value to allow the console
 	qboolean		key_overstrike;	// key overstrike mode
 	qboolean		stuffcmds_pending;	// should execute stuff commands
 	qboolean		allow_cheats;	// this host will allow cheating
 	qboolean		con_showalways;	// show console always (developer and dedicated)
 	qboolean		com_handlecolon;	// allow COM_ParseFile to handle colon as single char
+	qboolean		com_ignorebracket;	// allow COM_ParseFile to ignore () as single char
 	qboolean		change_game;	// initialize when game is changed
 	qboolean		mouse_visible;	// vgui override cursor control
-	qboolean		input_enabled;	// vgui override mouse & keyboard input
 	qboolean		shutdown_issued;	// engine is shutting down
-	qboolean		decal_loading;	// nasty hack to tell imagelib about decal
-	qboolean		overview_loading;	// another nasty hack to tell imagelib about ovierview
 	qboolean		force_draw_version;	// used when fraps is loaded
 	qboolean		write_to_clipboard;	// put image to clipboard instead of disk
 	qboolean		apply_game_config;	// when true apply only to game cvars and ignore all other commands
+	qboolean		apply_opengl_config;// when true apply only to opengl cvars and ignore all other commands
 	qboolean		config_executed;	// a bit who indicated was config.cfg already executed e.g. from valve.rc
 	int		sv_cvars_restored;	// count of restored server cvars
 	qboolean		crashed;		// set to true if crashed
@@ -343,7 +423,7 @@ typedef struct host_parm_s
 	qboolean		renderinfo_changed;
 
 	char		rootdir[256];	// member root directory
-	char		gamefolder[64];	// it's a default gamefolder	
+	char		gamefolder[MAX_QPATH];	// it's a default gamefolder	
 	byte		*imagepool;	// imagelib mempool
 	byte		*soundpool;	// soundlib mempool
 
@@ -372,16 +452,15 @@ void FS_AllowDirectPaths( qboolean enable );
 void FS_AddGameDirectory( const char *dir, int flags );
 void FS_AddGameHierarchy( const char *dir, int flags );
 void FS_LoadGameInfo( const char *rootfolder );
-void FS_FileBase( const char *in, char *out );
-const char *FS_FileExtension( const char *in );
-void FS_DefaultExtension( char *path, const char *extension );
-void FS_ExtractFilePath( const char *path, char *dest );
+void COM_FileBase( const char *in, char *out );
+const char *COM_FileExtension( const char *in );
+void COM_DefaultExtension( char *path, const char *extension );
+void COM_ReplaceExtension( char *path, const char *extension );
+void COM_ExtractFilePath( const char *path, char *dest );
 const char *FS_GetDiskPath( const char *name, qboolean gamedironly );
-const char *FS_FileWithoutPath( const char *in );
-wfile_t *W_Open( const char *filename, const char *mode, int *errorcode );
+const char *COM_FileWithoutPath( const char *in );
 byte *W_LoadLump( wfile_t *wad, const char *lumpname, size_t *lumpsizeptr, const char type );
 void W_Close( wfile_t *wad );
-file_t *FS_OpenFile( const char *path, long *filesizeptr, qboolean gamedironly );
 byte *FS_LoadFile( const char *path, long *filesizeptr, qboolean gamedironly );
 qboolean FS_WriteFile( const char *filename, const void *data, long len );
 qboolean COM_ParseVector( char **pfile, float *v, size_t size );
@@ -389,6 +468,7 @@ void COM_NormalizeAngles( vec3_t angles );
 int COM_FileSize( const char *filename );
 void COM_FixSlashes( char *pname );
 void COM_FreeFile( void *buffer );
+int COM_CheckString( const char *string );
 int COM_CompareFileTime( const char *filename1, const char *filename2, int *iCompare );
 search_t *FS_Search( const char *pattern, int caseinsensitive, int gamedironly );
 file_t *FS_Open( const char *filepath, const char *mode, qboolean gamedironly );
@@ -406,13 +486,11 @@ qboolean FS_FileExists( const char *filename, qboolean gamedironly );
 qboolean FS_FileCopy( file_t *pOutput, file_t *pInput, int fileSize );
 qboolean FS_Delete( const char *path );
 int FS_UnGetc( file_t *file, byte c );
-void FS_StripExtension( char *path );
+void COM_StripExtension( char *path );
 long FS_Tell( file_t *file );
 qboolean FS_Eof( file_t *file );
-void FS_Purge( file_t *file );
 int FS_Close( file_t *file );
 int FS_Getc( file_t *file );
-qboolean FS_Eof( file_t *file );
 long FS_FileLength( file_t *f );
 
 /*
@@ -458,6 +536,8 @@ typedef enum
 	IL_ALLOW_OVERWRITE	= BIT(2),	// allow to overwrite stored images
 	IL_DONTFLIP_TGA	= BIT(3),	// Steam background completely ignore tga attribute 0x20 (stupid lammers!)
 	IL_DDS_HARDWARE	= BIT(4),	// DXT compression is support
+	IL_LOAD_DECAL	= BIT(5),	// special mode for load gradient decals
+	IL_OVERVIEW	= BIT(6),	// overview required some unque operations
 } ilFlags_t;
 
 // goes into rgbdata_t->encode
@@ -486,6 +566,7 @@ typedef enum
 	IMAGE_DDS_FORMAT	= BIT(7),		// a hint for GL loader
 	IMAGE_MULTILAYER	= BIT(8),		// to differentiate from 3D texture
 	IMAGE_ONEBIT_ALPHA	= BIT(9),		// binary alpha
+	IMAGE_QUAKEPAL	= BIT(10),	// image has quake1 palette
 
 	// Image_Process manipulation flags
 	IMAGE_FLIP_X	= BIT(16),	// flip the image by width
@@ -493,10 +574,10 @@ typedef enum
 	IMAGE_ROT_90	= BIT(18),	// flip from upper left corner to down right corner
 	IMAGE_ROT180	= IMAGE_FLIP_X|IMAGE_FLIP_Y,
 	IMAGE_ROT270	= IMAGE_FLIP_X|IMAGE_FLIP_Y|IMAGE_ROT_90,	
-	IMAGE_ROUND	= BIT(19),	// round image to nearest Pow2
+// reserved
 	IMAGE_RESAMPLE	= BIT(20),	// resample image to specified dims
-	IMAGE_PALTO24	= BIT(21),	// turn 32-bit palette into 24-bit mode (only for indexed images)
-	IMAGE_ROUNDFILLER	= BIT(22),	// round image to Pow2 and fill unused entries with single color	
+// reserved
+// reserved
 	IMAGE_FORCE_RGBA	= BIT(23),	// force image to RGBA buffer
 	IMAGE_MAKE_LUMA	= BIT(24),	// create luma texture from indexed
 	IMAGE_QUANTIZE	= BIT(25),	// make indexed image from 24 or 32- bit image
@@ -556,10 +637,11 @@ rgbdata_t *FS_CopyImage( rgbdata_t *in );
 void FS_FreeImage( rgbdata_t *pack );
 extern const bpc_desc_t PFDesc[];	// image get pixelformat
 qboolean Image_Process( rgbdata_t **pix, int width, int height, uint flags, imgfilter_t *filter );
-void Image_PaletteHueReplace( byte *palSrc, int newHue, int start, int end );
-void Image_PaletteTranslate( byte *palSrc, int top, int bottom );
+void Image_PaletteHueReplace( byte *palSrc, int newHue, int start, int end, int pal_size );
+void Image_PaletteTranslate( byte *palSrc, int top, int bottom, int pal_size );
 void Image_SetForceFlags( uint flags );	// set image force flags on loading
 size_t Image_DXTGetLinearSize( int type, int width, int height, int depth );
+void Image_ClearForceFlags( void );
 
 /*
 ========================================================================
@@ -624,7 +706,6 @@ long FS_SetStreamPos( stream_t *stream, long newpos );
 long FS_GetStreamPos( stream_t *stream );
 void FS_FreeStream( stream_t *stream );
 qboolean Sound_Process( wavdata_t **wav, int rate, int width, uint flags );
-uint Sound_GetApproxWavePlayLen( const char *filepath );
 
 //
 // build.c
@@ -635,16 +716,10 @@ int Q_buildnum( void );
 // host.c
 //
 void EXPORT Host_Shutdown( void );
-void Host_SetServerState( int state );
-int Host_ServerState( void );
 int Host_CompareFileTime( long ft1, long ft2 );
 void Host_NewInstance( const char *name, const char *finalmsg );
-qboolean Host_NewGame( const char *mapName, qboolean loadGame );
-void Host_EndGame( const char *message, ... );
+void Host_EndGame( qboolean abort, const char *message, ... );
 void Host_AbortCurrentFrame( void );
-void Host_RestartAmbientSounds( void );
-void Host_RestartDecals( void );
-qboolean CL_ChangeGame( const char *gamefolder, qboolean bReset );
 void Host_WriteServerConfig( const char *name );
 void Host_WriteOpenGLConfig( void );
 void Host_WriteVideoConfig( void );
@@ -652,11 +727,21 @@ void Host_WriteConfig( void );
 qboolean Host_IsLocalGame( void );
 qboolean Host_IsLocalClient( void );
 void Host_ShutdownServer( void );
-void Host_Print( const char *txt );
 void Host_Error( const char *error, ... );
 void Host_PrintEngineFeatures( void );
+void Host_Frame( float time );
 void Host_InitDecals( void );
 void Host_Credits( void );
+
+//
+// host_state.c
+//
+void COM_InitHostState( void );
+void COM_NewGame( char const *pMapName );
+void COM_LoadLevel( char const *pMapName, qboolean background );
+void COM_LoadGame( char const *pSaveFileName );
+void COM_ChangeLevel( char const *pNewLevel, char const *pLandmarkName, qboolean background );
+void COM_Frame( float time );
 
 /*
 ==============================================================
@@ -672,7 +757,7 @@ void Host_ClientFrame( void );
 qboolean CL_Active( void );
 
 void SV_Init( void );
-void SV_Shutdown( qboolean reconnect );
+void SV_Shutdown( const char *finalmsg );
 void Host_ServerFrame( void );
 qboolean SV_Active( void );
 
@@ -688,8 +773,10 @@ void pfnCvar_RegisterEngineVariable( cvar_t *variable );
 cvar_t *pfnCvar_RegisterClientVariable( const char *szName, const char *szValue, int flags );
 cvar_t *pfnCvar_RegisterGameUIVariable( const char *szName, const char *szValue, int flags );
 char *COM_MemFgets( byte *pMemFile, int fileSize, int *filePos, char *pBuffer, int bufferSize );
+void COM_HexConvert( const char *pszInput, int nInputLength, byte *pOutput );
 int COM_SaveFile( const char *filename, const void *data, long len );
 byte* COM_LoadFileForMe( const char *filename, int *pLength );
+qboolean COM_IsSafeFileToDownload( const char *filename );
 cvar_t *pfnCVarGetPointer( const char *szVarName );
 int pfnDrawConsoleString( int x, int y, char *string );
 void pfnDrawSetTextColor( float r, float g, float b );
@@ -699,26 +786,17 @@ void COM_TrimSpace( const char *source, char *dest );
 edict_t* pfnPEntityOfEntIndex( int iEntIndex );
 void pfnGetModelBounds( model_t *mod, float *mins, float *maxs );
 void pfnCVarDirectSet( cvar_t *var, const char *szValue );
+int COM_CheckParm( char *parm, char **ppnext );
 void pfnGetGameDir( char *szGetGameDir );
 int pfnDecalIndex( const char *m );
 int pfnGetModelType( model_t *mod );
 int pfnIsMapValid( char *filename );
+void Con_Reportf( char *szFmt, ... );
 void Con_DPrintf( char *fmt, ... );
 void Con_Printf( char *szFmt, ... );
 int pfnNumberOfEntities( void );
 int pfnIsInGame( void );
-
-// CS:CS engfuncs (stubs)
-void *pfnSequenceGet( const char *fileName, const char *entryName );
-void *pfnSequencePickSentence( const char *groupName, int pickMethod, int *picked );
-int pfnIsCareerMatch( void );
-
-// Decay engfuncs (stubs)
-int pfnGetTimesTutorMessageShown( int mid );
-void pfnRegisterTutorMessageShown( int mid );
-void pfnConstructTutorMessageDecayBuffer( int *buffer, int buflen );
-void pfnProcessTutorMessageDecayBuffer( int *buffer, int bufferLength );
-void pfnResetTutorMessageDecayData( void );
+float pfnTime( void );
 
 /*
 ==============================================================
@@ -729,7 +807,7 @@ void pfnResetTutorMessageDecayData( void );
 */
 #define Z_Malloc( size )		Mem_Alloc( host.mempool, size )
 #define Z_Realloc( ptr, size )	Mem_Realloc( host.mempool, ptr, size )
-#define Z_Free( ptr )		if( ptr ) Mem_Free( ptr )
+#define Z_Free( ptr )		if( ptr != NULL ) Mem_Free( ptr )
 
 //
 // crclib.c
@@ -738,22 +816,37 @@ void CRC32_Init( dword *pulCRC );
 byte CRC32_BlockSequence( byte *base, int length, int sequence );
 void CRC32_ProcessBuffer( dword *pulCRC, const void *pBuffer, int nBuffer );
 void CRC32_ProcessByte( dword *pulCRC, byte ch );
-void CRC32_Final( dword *pulCRC );
+dword CRC32_Final( dword pulCRC );
 qboolean CRC32_File( dword *crcvalue, const char *filename );
 qboolean CRC32_MapFile( dword *crcvalue, const char *filename, qboolean multiplayer );
 void MD5Init( MD5Context_t *ctx );
 void MD5Update( MD5Context_t *ctx, const byte *buf, uint len );
 void MD5Final( byte digest[16], MD5Context_t *ctx );
 qboolean MD5_HashFile( byte digest[16], const char *pszFileName, uint seed[4] );
-uint Com_HashKey( const char *string, uint hashSize );
+uint COM_HashKey( const char *string, uint hashSize );
+char *MD5_Print( byte hash[16] );
+
+//
+// custom.c
+//
+void COM_ClearCustomizationList( customization_t *pHead, qboolean bCleanDecals );
+qboolean COM_CreateCustomization( customization_t *pHead, resource_t *pRes, int playernum, int flags, customization_t **pCust, int *nLumps );
+int COM_SizeofResourceList( resource_t *pList, resourceinfo_t *ri );
+
+//
+// cfgscript.c
+//
+int CSCR_LoadDefaultCVars( const char *scriptfilename );
+int CSCR_WriteGameCVars( file_t *cfg, const char *scriptfilename );
 
 //
 // hpak.c
 //
 void HPAK_Init( void );
 qboolean HPAK_GetDataPointer( const char *filename, struct resource_s *pRes, byte **buffer, int *size );
-qboolean HPAK_ResourceForHash( const char *filename, char *hash, struct resource_s *pRes );
+qboolean HPAK_ResourceForHash( const char *filename, byte *hash, struct resource_s *pRes );
 void HPAK_AddLump( qboolean queue, const char *filename, struct resource_s *pRes, byte *data, file_t *f );
+void HPAK_RemoveLump( const char *name, resource_t *resource );
 void HPAK_CheckIntegrity( const char *filename );
 void HPAK_CheckSize( const char *filename );
 void HPAK_FlushHostQueue( void );
@@ -800,36 +893,34 @@ qboolean CL_IsInMenu( void );
 qboolean CL_IsInConsole( void );
 qboolean CL_IsThirdPerson( void );
 qboolean CL_IsIntermission( void );
+qboolean CL_Initialized( void );
 char *CL_Userinfo( void );
-float CL_GetServerTime( void );
-float CL_GetLerpFrac( void );
 void CL_CharEvent( int key );
 qboolean CL_DisableVisibility( void );
 int CL_PointContents( const vec3_t point );
 char *COM_ParseFile( char *data, char *token );
 byte *COM_LoadFile( const char *filename, int usehunk, int *pLength );
-void CL_StudioEvent( struct mstudioevent_s *event, struct cl_entity_s *ent );
-qboolean CL_GetComment( const char *demoname, char *comment );
+qboolean CL_GetDemoComment( const char *demoname, char *comment );
 void COM_AddAppDirectoryToSearchPath( const char *pszBaseDir, const char *appName );
 int COM_ExpandFilename( const char *fileName, char *nameOutBuffer, int nameOutBufferSize );
 struct pmtrace_s *PM_TraceLine( float *start, float *end, int flags, int usehull, int ignore_pe );
 void SV_StartSound( edict_t *ent, int chan, const char *sample, float vol, float attn, int flags, int pitch );
 void SV_StartMusic( const char *curtrack, const char *looptrack, long position );
 void SV_CreateDecal( struct sizebuf_s *msg, const float *origin, int decalIndex, int entityIndex, int modelIndex, int flags, float scale );
-void SV_CreateStudioDecal( struct sizebuf_s *msg, const float *origin, const float *start, int decalIndex, int entityIndex, int modelIndex,
-int flags, struct modelstate_s *state );
 void Log_Printf( const char *fmt, ... );
 struct sizebuf_s *SV_GetReliableDatagram( void );
 void SV_BroadcastCommand( const char *fmt, ... );
 qboolean SV_RestoreCustomDecal( struct decallist_s *entry, edict_t *pEdict, qboolean adjacent );
-void SV_BroadcastPrintf( struct sv_client_s *ignore, int level, char *fmt, ... );
-int R_CreateDecalList( struct decallist_s *pList, qboolean changelevel );
+void SV_BroadcastPrintf( struct sv_client_s *ignore, char *fmt, ... );
+int R_CreateDecalList( struct decallist_s *pList );
+void R_DecalRemoveAll( int texture );
 void R_ClearAllDecals( void );
 void R_ClearStaticEntities( void );
 qboolean S_StreamGetCurrentState( char *currentTrack, char *loopTrack, int *position );
 struct cl_entity_s *CL_GetEntityByIndex( int index );
 struct player_info_s *CL_GetPlayerInfo( int playerIndex );
 void CL_ServerCommand( qboolean reliable, char *fmt, ... );
+void CL_HudMessage( const char *pMessage );
 const char *CL_MsgInfo( int cmd );
 void SV_DrawDebugTriangles( void );
 void SV_DrawOrthoTriangles( void );
@@ -839,19 +930,24 @@ void CL_ExtraUpdate( void );
 int CL_GetMaxClients( void );
 int SV_GetMaxClients( void );
 qboolean CL_IsRecordDemo( void );
+qboolean CL_IsTimeDemo( void );
 qboolean CL_IsPlaybackDemo( void );
 qboolean CL_IsBackgroundDemo( void );
 qboolean CL_IsBackgroundMap( void );
+qboolean SV_Initialized( void );
 qboolean CL_LoadProgs( const char *name );
-qboolean SV_GetComment( const char *savename, char *comment );
+qboolean SV_GetSaveComment( const char *savename, char *comment );
 qboolean SV_NewGame( const char *mapName, qboolean loadGame );
 void SV_ClipPMoveToEntity( struct physent_s *pe, const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end, struct pmtrace_s *tr );
 void CL_ClipPMoveToEntity( struct physent_s *pe, const vec3_t start, vec3_t mins, vec3_t maxs, const vec3_t end, struct pmtrace_s *tr );
 void CL_Particle( const vec3_t origin, int color, float life, int zpos, int zvel ); // debug thing
 void SV_SysError( const char *error_string );
+void SV_ShutdownGame( void );
+void SV_ExecLoadLevel( void );
+void SV_ExecLoadGame( void );
+void SV_ExecChangeLevel( void );
 void SV_InitGameProgs( void );
 void SV_FreeGameProgs( void );
-void SV_ForceError( void );
 void CL_WriteMessageHistory( void );
 void CL_SendCmd( void );
 void CL_Disconnect( void );
@@ -888,18 +984,15 @@ void Cmd_AutoComplete( char *complete_string );
 void COM_SetRandomSeed( long lSeed );
 long COM_RandomLong( long lMin, long lMax );
 float COM_RandomFloat( float fMin, float fMax );
-void TrimSpace( const char *source, char *dest );
+qboolean LZSS_IsCompressed( const byte *source );
+uint LZSS_GetActualSize( const byte *source );
+byte *LZSS_Compress( byte *pInput, int inputLength, uint *pOutputSize );
+uint LZSS_Decompress( const byte *pInput, byte *pOutput );
 const byte *GL_TextureData( unsigned int texnum );
 void GL_FreeImage( const char *name );
 void VID_InitDefaultResolution( void );
 void UI_SetActiveMenu( qboolean fActive );
-struct cmd_s *Cmd_GetFirstFunctionHandle( void );
-struct cmd_s *Cmd_GetNextFunctionHandle( struct cmd_s *cmd );
-struct cmdalias_s *Cmd_AliasGetList( void );
-char *Cmd_GetName( struct cmd_s *cmd );
 void Cmd_Null_f( void );
-extern const char *svc_strings[256];
-extern const char *clc_strings[11];
 
 // soundlib shared exports
 qboolean S_Init( void );

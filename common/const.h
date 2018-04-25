@@ -50,6 +50,7 @@
 #define FL_ONTRAIN		(1<<24)	// Player is _controlling_ a train, so movement commands should be ignored on client during prediction.
 #define FL_WORLDBRUSH	(1<<25)	// Not moveable/removeable brush entity (really part of the world, but represented as an entity for transparency or something)
 #define FL_SPECTATOR	(1<<26)	// This client is a spectator, don't run touch functions, etc.
+#define FL_LASERDOT		(1<<27)	// Predicted laser spot from rocket launcher
 
 #define FL_CUSTOMENTITY	(1<<29)	// This is a custom entity
 #define FL_KILLME		(1<<30)	// This entity is marked for death -- This allows the engine to kill ents at the appropriate time
@@ -90,6 +91,7 @@
 #define SOLID_SLIDEBOX		3	// touch on edge, but not an onground
 #define SOLID_BSP			4	// bsp clip, touch on edge, block
 #define SOLID_CUSTOM		5	// call external callbacks for tracing
+#define SOLID_PORTAL		6	// borrowed from FTE
 
 // edict->deadflag values
 #define DEAD_NO			0 	// alive
@@ -112,11 +114,7 @@
 #define EF_LIGHT			64	// rocket flare glow sprite
 #define EF_NODRAW			128	// don't draw entity
 
-
-
-#define EF_NOREFLECT		(1<<24)	// Entity won't reflecting in mirrors
-#define EF_REFLECTONLY		(1<<25)	// Entity will be drawing only in mirrors
-#define EF_NOWATERCSG		(1<<26)	// Do not remove sides for func_water entity
+#define EF_WATERSIDES		(1<<26)	// Do not remove sides for func_water entity
 #define EF_FULLBRIGHT		(1<<27)	// Just get fullbright
 #define EF_NOSHADOW			(1<<28)	// ignore shadow for this entity
 #define EF_MERGE_VISIBILITY		(1<<29)	// this entity allowed to merge vis (e.g. env_sky or portal camera)
@@ -733,6 +731,8 @@ typedef int		string_t;
 
 typedef unsigned char	byte;
 typedef unsigned short	word;
+
+#define Q_isspace( ch )	(ch < 32 || ch > 255)
 
 #undef true
 #undef false

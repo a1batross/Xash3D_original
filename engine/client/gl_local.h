@@ -17,7 +17,6 @@ GNU General Public License for more details.
 #define GL_LOCAL_H
 
 #include "gl_export.h"
-#include "com_model.h"
 #include "cl_entity.h"
 #include "render_api.h"
 #include "protocol.h"
@@ -26,7 +25,7 @@ GNU General Public License for more details.
 
 extern byte	*r_temppool;
 
-#define BLOCK_SIZE		world.block_size	// lightmap blocksize
+#define BLOCK_SIZE		tr.block_size	// lightmap blocksize
 #define BLOCK_SIZE_DEFAULT	128		// for keep backward compatibility
 #define BLOCK_SIZE_MAX	1024
 
@@ -34,23 +33,23 @@ extern byte	*r_temppool;
 #define MAX_DETAIL_TEXTURES	256
 #define MAX_LIGHTMAPS	256
 #define SUBDIVIDE_SIZE	64
-#define MAX_MIRRORS		32	// per one frame!
 #define MAX_DECAL_SURFS	4096
+#define MAX_DRAW_STACK	2		// normal view and menu view
 
-#define SHADEDOT_QUANT 	16	// precalculated dot products for quantized angles
+#define SHADEDOT_QUANT 	16		// precalculated dot products for quantized angles
 #define SHADE_LAMBERT	1.495f
 
 // refparams
 #define RP_NONE		0
-#define RP_MIRRORVIEW	BIT( 0 )	// lock pvs at vieworg
-#define RP_ENVVIEW		BIT( 1 )	// used for cubemapshot
-#define RP_OLDVIEWLEAF	BIT( 2 )
-#define RP_CLIPPLANE	BIT( 3 )	// mirrors used
+#define RP_ENVVIEW		BIT( 0 )	// used for cubemapshot
+#define RP_OLDVIEWLEAF	BIT( 1 )
+#define RP_CLIPPLANE	BIT( 2 )
 
-#define RP_NONVIEWERREF	(RP_MIRRORVIEW|RP_ENVVIEW)
+#define RP_NONVIEWERREF	(RP_ENVVIEW)
 #define R_ModelOpaque( rm )	( rm == kRenderNormal )
+#define R_StaticEntity( ent )	( VectorIsNull( ent->origin ) && VectorIsNull( ent->angles ))
 #define RP_LOCALCLIENT( e )	((e) != NULL && (e)->index == ( cl.playernum + 1 ) && e->player )
-#define RP_NORMALPASS()	((RI.params & RP_NONVIEWERREF) == 0 )
+#define RP_NORMALPASS()	( FBitSet( RI.params, RP_NONVIEWERREF ) == 0 )
 
 #define TF_SKY		(TF_SKYSIDE|TF_NOMIPMAP)
 #define TF_FONT		(TF_NOMIPMAP|TF_CLAMP)
@@ -90,15 +89,10 @@ typedef struct gltexture_s
 	float		xscale;
 	float		yscale;
 
+	int		servercount;
+	uint		hashValue;
 	struct gltexture_s	*nextHash;
 } gltexture_t;
-
-// mirror entity
-typedef struct gl_entity_s
-{
-	cl_entity_t	*ent;
-	mextrasurf_t	*chain;
-} gl_entity_t;
 
 typedef struct
 {
@@ -161,47 +155,35 @@ typedef struct
 
 typedef struct
 {
-	int		cinTexture;      	// cinematic texture
-	int		skyTexture;	// default sky texture
+	cl_entity_t	*solid_entities[MAX_VISIBLE_PACKET];	// opaque moving or alpha brushes
+	cl_entity_t	*trans_entities[MAX_VISIBLE_PACKET];	// translucent brushes
+	cl_entity_t	*beam_entities[MAX_VISIBLE_PACKET];
+	uint		num_solid_entities;
+	uint		num_trans_entities;
+	uint		num_beam_entities;
+} draw_list_t;
+
+typedef struct
+{
+	int		defaultTexture;   	// use for bad textures
+	int		particleTexture;
 	int		whiteTexture;
 	int		grayTexture;
 	int		blackTexture;
-	int		particleTexture;
-	int		defaultTexture;   	// use for bad textures
 	int		solidskyTexture;	// quake1 solid-sky layer
 	int		alphaskyTexture;	// quake1 alpha-sky layer
 	int		lightmapTextures[MAX_LIGHTMAPS];
 	int		dlightTexture;	// custom dlight texture
-	int		dlightTexture2;	// big dlight texture (for big lightmaps)
-	int		attenuationTexture;	// normal attenuation
-	int		attenuationTexture2;// dark attenuation
-	int		attenuationTexture3;// bright attenuation
-	int		attenuationTexture3D;// 3D attenuation
-	int		attenuationStubTexture;
-	int		blankbumpTexture;
-	int		blankdeluxeTexture;
-	int		normalizeTexture;
-	int		dlightCubeTexture;	// dynamic cubemap
-	int		vsdctCubeTexture;	// Virtual Shadow Depth Cubemap Texture
-	int		grayCubeTexture;
-	int		whiteCubeTexture;
 	int		skyboxTextures[6];	// skybox sides
-	int		mirrorTextures[MAX_MIRRORS];
-	int		num_mirrors_used;	// used mirror textures
+	int		cinTexture;      	// cinematic texture
 
 	int		skytexturenum;	// this not a gl_texturenum!
-
 	int		skyboxbasenum;	// start with 5800
 
 	// entity lists
-	cl_entity_t	*static_entities[MAX_VISIBLE_PACKET];	// opaque non-moved brushes
-	gl_entity_t	mirror_entities[MAX_VISIBLE_PACKET];	// an entities that has mirror
-	cl_entity_t	*solid_entities[MAX_VISIBLE_PACKET];	// opaque moving or alpha brushes
-	cl_entity_t	*trans_entities[MAX_VISIBLE_PACKET];	// translucent brushes
-	uint		num_static_entities;
-	uint		num_mirror_entities;
-	uint		num_solid_entities;
-	uint		num_trans_entities;
+	draw_list_t	draw_stack[MAX_DRAW_STACK];
+	int		draw_stack_pos;
+	draw_list_t	*draw_list;
 
 	msurface_t	*draw_decals[MAX_DECAL_SURFS];
 	int		num_draw_decals;
@@ -221,6 +203,7 @@ typedef struct
 
 	byte		visbytes[(MAX_MAP_LEAFS+7)/8];	// member custom PVS
 	int		lightstylevalue[MAX_LIGHTSTYLES];	// value 0 - 65536
+	int		block_size;			// lightmap blocksize
 
 	double		frametime;	// special frametime for multipass rendering (will set to 0 on a nextview)
 	float		blend;		// global blend value
@@ -244,8 +227,6 @@ typedef struct
 	uint		c_sprite_models_drawn;
 	uint		c_particle_count;
 
-	uint		c_mirror_passes;
-
 	uint		c_client_ents;	// entities that moved to client
 } ref_speeds_t;
 
@@ -258,7 +239,7 @@ extern mleaf_t		*r_viewleaf, *r_oldviewleaf;
 extern mleaf_t		*r_viewleaf2, *r_oldviewleaf2;
 extern dlight_t		cl_dlights[MAX_DLIGHTS];
 extern dlight_t		cl_elights[MAX_ELIGHTS];
-#define r_numEntities	(tr.num_solid_entities + tr.num_trans_entities + tr.num_static_entities)
+#define r_numEntities	(tr.draw_list->num_solid_entities + tr.draw_list->num_trans_entities)
 #define r_numStatics	(r_stats.c_client_ents)
 
 extern struct beam_s	*cl_active_beams;
@@ -330,17 +311,10 @@ int GL_FindTexture( const char *name );
 void GL_FreeTexture( GLenum texnum );
 void GL_FreeImage( const char *name );
 const char *GL_Target( GLenum target );
+void R_InitDlightTexture( void );
 void R_TextureList_f( void );
 void R_InitImages( void );
 void R_ShutdownImages( void );
-
-//
-// gl_mirror.c
-//
-void R_BeginDrawMirror( msurface_t *fa );
-void R_EndDrawMirror( void );
-void R_DrawMirrors( void );
-void R_FindMirrors( void );
 
 //
 // gl_refrag.c
@@ -368,7 +342,6 @@ void R_LoadIdentity( void );
 void R_RenderScene( void );
 void R_DrawCubemapView( const vec3_t origin, const vec3_t angles, int size );
 void R_SetupRefParams( const struct ref_viewpass_s *rvp );
-qboolean R_StaticEntity( cl_entity_t *ent );
 void R_TranslateForEntity( cl_entity_t *e );
 void R_RotateForEntity( cl_entity_t *e );
 void R_SetupGL( qboolean set_gl_state );
@@ -376,6 +349,8 @@ qboolean R_InitRenderAPI( void );
 void R_AllowFog( int allowed );
 void R_SetupFrustum( void );
 void R_FindViewLeaf( void );
+void R_PushScene( void );
+void R_PopScene( void );
 void R_DrawFog( void );
 
 //
@@ -409,7 +384,6 @@ imgfilter_t *R_FindTexFilter( const char *texname );
 //
 void R_MarkLeaves( void );
 void R_DrawWorld( void );
-void R_DrawMirrors( void );
 void R_DrawWaterSurfaces( void );
 void R_DrawBrushModel( cl_entity_t *e );
 void GL_SubdivideSurface( msurface_t *fa );
@@ -440,7 +414,9 @@ void R_StudioLerpMovement( cl_entity_t *e, double time, vec3_t origin, vec3_t an
 float CL_GetSequenceDuration( cl_entity_t *ent, int sequence );
 struct mstudiotex_s *R_StudioGetTexture( cl_entity_t *e );
 float CL_GetStudioEstimatedFrame( cl_entity_t *ent );
+int R_GetEntityRenderMode( cl_entity_t *ent );
 void R_DrawStudioModel( cl_entity_t *e );
+player_info_t *pfnPlayerInfo( int index );
 
 //
 // gl_alias.c
@@ -452,12 +428,12 @@ void R_AliasInit( void );
 //
 // gl_warp.c
 //
-void R_InitSky( struct mip_s *mt, struct texture_s *tx );
+void R_InitSkyClouds( struct mip_s *mt, struct texture_s *tx, qboolean custom_palette );
 void R_AddSkyBoxSurface( msurface_t *fa );
 void R_ClearSkyBox( void );
 void R_DrawSkyBox( void );
 void R_DrawClouds( void );
-void EmitWaterPolys( glpoly_t *polys, qboolean noCull, qboolean direction );
+void EmitWaterPolys( msurface_t *warp, qboolean reverse );
 
 //
 // gl_vidnt.c
@@ -528,34 +504,25 @@ enum
 	GL_WGL_EXTENSIONS,
 	GL_WGL_SWAPCONTROL,		
 	GL_WGL_PROCADDRESS,
-	GL_ARB_VERTEX_BUFFER_OBJECT_EXT,
-	GL_ARB_VERTEX_ARRAY_OBJECT_EXT,
 	GL_ARB_MULTITEXTURE,
 	GL_TEXTURE_CUBEMAP_EXT,
 	GL_ANISOTROPY_EXT,
 	GL_TEXTURE_LOD_BIAS,
-	GL_OCCLUSION_QUERIES_EXT,
 	GL_TEXTURE_COMPRESSION_EXT,
 	GL_SHADER_GLSL100_EXT,
-	GL_DRAW_RANGEELEMENTS_EXT,
 	GL_TEXTURE_2D_RECT_EXT,
 	GL_TEXTURE_ARRAY_EXT,
 	GL_TEXTURE_3D_EXT,
 	GL_CLAMPTOEDGE_EXT,
-	GL_SHADER_OBJECTS_EXT,
 	GL_ARB_TEXTURE_NPOT_EXT,
 	GL_CLAMP_TEXBORDER_EXT,
 	GL_ARB_TEXTURE_FLOAT_EXT,
-	GL_ARB_HALF_FLOAT_EXT,
 	GL_ARB_DEPTH_FLOAT_EXT,
 	GL_ARB_SEAMLESS_CUBEMAP,
-	GL_FRAMEBUFFER_OBJECT,
-	GL_DRAW_BUFFERS_EXT,
 	GL_EXT_GPU_SHADER4,		// shaders only
 	GL_ARB_TEXTURE_RG,
 	GL_DEPTH_TEXTURE,
 	GL_DEBUG_OUTPUT,
-	GL_SHADOW_EXT,
 	GL_EXTCOUNT,		// must be last
 };
 
@@ -563,9 +530,7 @@ enum
 {
 	GL_KEEP_UNIT = -1,
 	GL_TEXTURE0 = 0,
-	GL_TEXTURE1,
-	GL_TEXTURE2,
-	GL_TEXTURE3,		// g-cont. 4 units should be enough
+	GL_TEXTURE1,		// used in some cases
 	MAX_TEXTURE_UNITS = 32	// can't acess to all over units without GLSL or cg
 };
 
@@ -598,13 +563,14 @@ typedef struct
 	GLint		max_2d_texture_layers;
 	GLint		max_3d_texture_size;
 	GLint		max_cubemap_size;
-	GLint		max_draw_buffers;
 
 	GLfloat		max_texture_anisotropy;
 	GLfloat		max_texture_lod_bias;
 
 	GLint		max_vertex_uniforms;
 	GLint		max_vertex_attribs;
+
+	GLint		max_multisamples;
 
 	int		color_bits;
 	int		alpha_bits;
@@ -664,10 +630,9 @@ extern convar_t	*gl_texture_lodbias;
 extern convar_t	*gl_texture_nearest;
 extern convar_t	*gl_lightmap_nearest;
 extern convar_t	*gl_keeptjunctions;
+extern convar_t	*gl_round_down;
 extern convar_t	*gl_detailscale;
 extern convar_t	*gl_wireframe;
-extern convar_t	*gl_allow_static;
-extern convar_t	*gl_allow_mirrors;
 extern convar_t	*gl_polyoffset;
 extern convar_t	*gl_finish;
 extern convar_t	*gl_nosort;
@@ -682,7 +647,6 @@ extern convar_t	*r_lighting_modulate;
 extern convar_t	*r_lighting_ambient;
 extern convar_t	*r_studio_lambert;
 extern convar_t	*r_detailtextures;
-extern convar_t	*r_faceplanecull;
 extern convar_t	*r_drawentities;
 extern convar_t	*r_adjust_fov;
 extern convar_t	*r_decals;

@@ -80,7 +80,6 @@ typedef struct
 	float		size;
 } daliashdr_t;
 
-// TODO: could be shorts
 typedef struct
 {
 	int		onseam;

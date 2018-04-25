@@ -291,7 +291,7 @@ void Key_Unbind_f( void )
 
 	if( Cmd_Argc() != 2 )
 	{
-		Msg( "Usage: unbind <key> : remove commands from a key\n" );
+		Con_Printf( S_USAGE "unbind <key> : remove commands from a key\n" );
 		return;
 	}
 	
@@ -299,7 +299,7 @@ void Key_Unbind_f( void )
 
 	if( b == -1 )
 	{
-		Msg( "\"%s\" isn't a valid key\n", Cmd_Argv( 1 ));
+		Con_Printf( "\"%s\" isn't a valid key\n", Cmd_Argv( 1 ));
 		return;
 	}
 
@@ -358,7 +358,7 @@ void Key_Bind_f( void )
 
 	if( c < 2 )
 	{
-		Msg( "Usage: bind <key> [command] : attach a command to a key\n" );
+		Con_Printf( S_USAGE "bind <key> [command] : attach a command to a key\n" );
 		return;
 	}
 
@@ -366,15 +366,15 @@ void Key_Bind_f( void )
 
 	if( b == -1 )
 	{
-		Msg( "\"%s\" isn't a valid key\n", Cmd_Argv( 1 ));
+		Con_Printf( "\"%s\" isn't a valid key\n", Cmd_Argv( 1 ));
 		return;
 	}
 
 	if( c == 2 )
 	{
 		if( keys[b].binding )
-			Msg( "\"%s\" = \"%s\"\n", Cmd_Argv( 1 ), keys[b].binding );
-		else Msg( "\"%s\" is not bound\n", Cmd_Argv( 1 ));
+			Con_Printf( "\"%s\" = \"%s\"\n", Cmd_Argv( 1 ), keys[b].binding );
+		else Con_Printf( "\"%s\" is not bound\n", Cmd_Argv( 1 ));
 		return;
 	}
 	
@@ -425,7 +425,7 @@ void Key_Bindlist_f( void )
 	for( i = 0; i < 256; i++ )
 	{
 		if( keys[i].binding && keys[i].binding[0] )
-			Msg( "%s \"%s\"\n", Key_KeynumToString( i ), keys[i].binding );
+			Con_Printf( "%s \"%s\"\n", Key_KeynumToString( i ), keys[i].binding );
 	}
 }
 
@@ -516,6 +516,10 @@ void Key_Event( int key, qboolean down )
 {
 	const char	*kb;
 	char		cmd[1024];
+
+	// key was pressed before engine was run
+	if( !keys[key].down && !down )
+		return;
 
 	// update auto-repeat status and BUTTON_ANY status
 	keys[key].down = down;

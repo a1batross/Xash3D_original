@@ -195,17 +195,25 @@ typedef struct mextrasurf_s
 	vec3_t		origin;		// surface origin
 	struct msurface_s	*surf;		// upcast to surface
 
+	// extended light info
 	int		dlight_s, dlight_t;	// gl lightmap coordinates for dynamic lightmaps
+
+	short		lightmapmins[2];	// lightmatrix
+	short		lightextents[2];
+	float		lmvecs[2][4];
+
+	color24		*deluxemap;	// note: this is the actual deluxemap data for this surface
+	byte		*shadowmap;	// note: occlusion map for this surface
+// begin userdata
+	struct msurface_s	*lightmapchain;	// lightmapped polys
+	struct mextrasurf_s	*detailchain;	// for detail textures drawing
+	struct mextrasurf_s	*mirrorchain;	// for gl_texsort drawing
+	struct mextrasurf_s	*lumachain;	// draw fullbrights
+	struct cl_entity_s	*parent;		// upcast to owner entity
 
 	int		mirrortexturenum;	// gl texnum
 	float		mirrormatrix[4][4];
 
-	struct mextrasurf_s	*mirrorchain;	// for gl_texsort drawing
-	struct mextrasurf_s	*detailchain;	// for detail textures drawing
-	struct msurface_s	*lightmapchain;	// lightmapped polys
-	struct cl_entity_s	*parent;		// upcast to owner entity
-	color24		*deluxemap;	// note: this is the actual deluxemap data for this surface
-// begin userdata
 	struct grasshdr_s	*grass;		// grass that linked by this surface
 	unsigned short	grasscount;	// number of bushes per polygon (used to determine total VBO size)
 	unsigned short	numverts;		// world->vertexes[]
@@ -378,6 +386,9 @@ typedef struct player_info_s
 	vec3_t		prevgaitorigin;
 
 	customization_t	customdata;
+
+	// hashed cd key
+	char		hashedcdkey[16];
 } player_info_t;
 
 //

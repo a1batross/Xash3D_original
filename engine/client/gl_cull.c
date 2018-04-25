@@ -67,20 +67,9 @@ int R_CullModel( cl_entity_t *e, const vec3_t absmin, const vec3_t absmax )
 		return 1;
 	}
 
-	// don't reflect this entity in mirrors
-	if( FBitSet( e->curstate.effects, EF_NOREFLECT ) && FBitSet( RI.params, RP_MIRRORVIEW ))
-		return 1;
-
-	// draw only in mirrors
-	if( FBitSet( e->curstate.effects, EF_REFLECTONLY ) && !FBitSet( RI.params, RP_MIRRORVIEW ))
-		return 1;
-
 	// local client can't view himself if camera or thirdperson is not active
 	if( RP_LOCALCLIENT( e ) && !cl.local.thirdperson && cl.viewentity == ( cl.playernum + 1 ))
-	{
-		if( !FBitSet( RI.params, RP_MIRRORVIEW ))
-			return 1;
-	}
+		return 1;
 
 	if( R_CullBox( absmin, absmax ))
 		return 1;
@@ -102,12 +91,6 @@ int R_CullSurface( msurface_t *surf, gl_frustum_t *frustum, uint clipflags )
 	if( !surf || !surf->texinfo || !surf->texinfo->texture )
 		return CULL_OTHER;
 
-	if( !FBitSet( host.features, ENGINE_QUAKE_COMPATIBLE ))
-	{
-		if( surf->flags & SURF_WATERCSG && !( e->curstate.effects & EF_NOWATERCSG ))
-			return CULL_OTHER;
-	}
-
 	if( r_nocull->value )
 		return CULL_VISIBLE;
 
@@ -115,50 +98,48 @@ int R_CullSurface( msurface_t *surf, gl_frustum_t *frustum, uint clipflags )
 	if( RI.currententity == clgame.entities && surf->visframe != tr.framecount )
 		return CULL_VISFRAME;
 
-	if( r_faceplanecull->value && !FBitSet( surf->flags, SURF_DRAWTURB ))
+	// only static ents can be culled by frustum
+	if( !R_StaticEntity( e )) frustum = NULL;
+
+	if( !VectorIsNull( surf->plane->normal ))
 	{
-		if( !VectorIsNull( surf->plane->normal ))
+		float	dist;
+
+		// can use normal.z for world (optimisation)
+		if( RI.drawOrtho )
 		{
-			float	dist;
+			vec3_t	orthonormal;
 
-			// can use normal.z for world (optimisation)
-			if( RI.drawOrtho )
+			if( e == clgame.entities ) orthonormal[2] = surf->plane->normal[2];
+			else Matrix4x4_VectorRotate( RI.objectMatrix, surf->plane->normal, orthonormal );
+			dist = orthonormal[2];
+		}
+		else dist = PlaneDiff( tr.modelorg, surf->plane );
+
+		if( glState.faceCull == GL_FRONT )
+		{
+			if( FBitSet( surf->flags, SURF_PLANEBACK ))
 			{
-				vec3_t	orthonormal;
-
-				if( e == clgame.entities || R_StaticEntity( e ))
-					orthonormal[2] = surf->plane->normal[2];
-				else Matrix4x4_VectorRotate( RI.objectMatrix, surf->plane->normal, orthonormal );
-
-				dist = orthonormal[2];
+				if( dist >= -BACKFACE_EPSILON )
+					return CULL_BACKSIDE; // wrong side
 			}
-			else dist = PlaneDiff( tr.modelorg, surf->plane );
-
-			if( glState.faceCull == GL_FRONT || ( RI.params & RP_MIRRORVIEW ))
+			else
 			{
-				if( FBitSet( surf->flags, SURF_PLANEBACK ))
-				{
-					if( dist >= -BACKFACE_EPSILON )
-						return CULL_BACKSIDE; // wrong side
-				}
-				else
-				{
-					if( dist <= BACKFACE_EPSILON )
-						return CULL_BACKSIDE; // wrong side
-				}
+				if( dist <= BACKFACE_EPSILON )
+					return CULL_BACKSIDE; // wrong side
 			}
-			else if( glState.faceCull == GL_BACK )
+		}
+		else if( glState.faceCull == GL_BACK )
+		{
+			if( FBitSet( surf->flags, SURF_PLANEBACK ))
 			{
-				if( FBitSet( surf->flags, SURF_PLANEBACK ))
-				{
-					if( dist <= BACKFACE_EPSILON )
-						return CULL_BACKSIDE; // wrong side
-				}
-				else
-				{
-					if( dist >= -BACKFACE_EPSILON )
-						return CULL_BACKSIDE; // wrong side
-				}
+				if( dist <= BACKFACE_EPSILON )
+					return CULL_BACKSIDE; // wrong side
+			}
+			else
+			{
+				if( dist >= -BACKFACE_EPSILON )
+					return CULL_BACKSIDE; // wrong side
 			}
 		}
 	}

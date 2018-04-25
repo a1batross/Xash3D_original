@@ -66,7 +66,7 @@ void Cmd_ForwardToServer( void );
 //
 #define Q_strupr( in, out ) Q_strnupr( in, out, 99999 )
 void Q_strnupr( const char *in, char *out, size_t size_out );
-#define Q_strlwr( int, out ) Q_strnlwr( in, out, 99999 )
+#define Q_strlwr( in, out ) Q_strnlwr( in, out, 99999 )
 void Q_strnlwr( const char *in, char *out, size_t size_out );
 int Q_strlen( const char *string );
 int Q_colorstr( const char *string );
@@ -77,6 +77,7 @@ size_t Q_strncat( char *dst, const char *src, size_t siz );
 #define Q_strcpy( dst, src ) Q_strncpy( dst, src, 99999 )
 size_t Q_strncpy( char *dst, const char *src, size_t siz );
 #define copystring( s ) _copystring( host.mempool, s, __FILE__, __LINE__ )
+#define SV_CopyString( s ) _copystring( svgame.stringspool, s, __FILE__, __LINE__ )
 #define freestring( s ) if( s != NULL ) { Mem_Free( s ); s = NULL; }
 char *_copystring( byte *mempool, const char *s, const char *filename, int fileline );
 uint Q_hashkey( const char *string, uint hashSize, qboolean caseinsensitive );

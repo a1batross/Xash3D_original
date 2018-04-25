@@ -13,8 +13,8 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 GNU General Public License for more details.
 */
 
-#ifndef PROTOCOL_H
-#define PROTOCOL_H
+#ifndef NET_PROTOCOL_H
+#define NET_PROTOCOL_H
 
 #define PROTOCOL_VERSION		49
 
@@ -35,7 +35,7 @@ GNU General Public License for more details.
 #define svc_updateuserinfo		13	// [byte] playernum, [string] userinfo
 #define svc_deltatable		14	// [table header][...]
 #define svc_clientdata		15	// [...]
-#define svc_stopsound		16	// <see code>
+#define svc_resource		16	// [...] late-precached resource will be download in-game
 #define svc_pings			17	// [bit][idx][ping][packet_loss]
 #define svc_particle		18	// [float*3][char*3][byte][byte]
 #define svc_restoresound		19	// <see code>
@@ -46,9 +46,9 @@ GNU General Public License for more details.
 #define svc_setpause		24	// [byte] 0 = unpaused, 1 = paused
 #define svc_signonnum		25	// [byte] used for the signon sequence
 #define svc_centerprint		26	// [string] to put in center of the screen
-#define svc_modelindex		27	// [index][modelpath]
-#define svc_soundindex		28	// [index][soundpath]
-#define svc_ambientsound		29	// <see code>
+// reserved
+// reserved
+// reserved
 #define svc_intermission		30	// empty message (event)
 #define svc_finale			31	// empty message (event)
 #define svc_cdtrack			32	// [string] trackname
@@ -71,9 +71,9 @@ GNU General Public License for more details.
 #define svc_filetxferfailed		49	// [string]
 #define svc_hltv			50	// sending from the game.dll
 #define svc_director		51	// <variable sized>
-#define svc_studiodecal		52	// [float*3][float*3][short][short][byte]
+#define svc_voiceinit		52	// <see code>
 #define svc_voicedata		53	// [byte][short][...]
-#define svc_eventindex		54	// [index][eventname]
+// reserved
 // reserved
 #define svc_resourcelocation		56	// [string]
 #define svc_querycvarvalue		57	// [string]
@@ -94,11 +94,7 @@ GNU General Public License for more details.
 #define clc_requestcvarvalue2		10
 #define clc_lastmsg			10	// end client messages
 
-#ifdef SUPPORT_BSP2_FORMAT
-#define MAX_VISIBLE_PACKET_BITS	11	// 2048 visible entities per frame
-#else
-#define MAX_VISIBLE_PACKET_BITS	10	// 1024 visible entities per frame (hl1 has 256)
-#endif
+#define MAX_VISIBLE_PACKET_BITS	11	// 2048 visible entities per frame (hl1 has 256)
 #define MAX_VISIBLE_PACKET		(1<<MAX_VISIBLE_PACKET_BITS)
 #define MAX_VISIBLE_PACKET_VIS_BYTES	((MAX_VISIBLE_PACKET + 7) / 8)
 
@@ -106,36 +102,36 @@ GNU General Public License for more details.
 #define MAX_CLIENT_BITS		5
 #define MAX_CLIENTS			(1<<MAX_CLIENT_BITS)// 5 bits == 32 clients ( int32 limit )
 
-#define MAX_WEAPON_BITS		5
-#define MAX_WEAPONS			(1<<MAX_WEAPON_BITS)// 5 bits == 32 weapons ( int32 limit )
+#define MAX_WEAPON_BITS		6
+#define MAX_WEAPONS			(1<<MAX_WEAPON_BITS)// 6 bits == 64 predictable weapons
 
 #define MAX_EVENT_BITS		10
 #define MAX_EVENTS			(1<<MAX_EVENT_BITS)	// 10 bits == 1024 events (the original Half-Life limit)
 
+#define MAX_MODEL_BITS		12		// 12 bits == 4096 models
+#define MAX_SUPPORTED_MODELS		(1<<MAX_MODEL_BITS)
+
 #ifdef SUPPORT_BSP2_FORMAT
-#define MAX_MODEL_BITS		12	// 12 bits == 4096 models
+#define MAX_MODELS			MAX_SUPPORTED_MODELS	// because BSP2 contain too much embedded bsp-models
 #else
-#define MAX_MODEL_BITS		11	// 11 bits == 2048 models
+#define MAX_MODELS			1024		// g-cont. reduce the memory without breaking proto
 #endif
-#define MAX_MODELS			(1<<MAX_MODEL_BITS)
 
 #define MAX_SOUND_BITS		11
 #define MAX_SOUNDS			(1<<MAX_SOUND_BITS)	// 11 bits == 2048 sounds
 
-#ifdef SUPPORT_BSP2_FORMAT
-#define MAX_ENTITY_BITS		13	// 13 bits = 8192 edicts
-#else
-#define MAX_ENTITY_BITS		12	// 12 bits = 4096 edicts
-#endif
+#define MAX_ENTITY_BITS		13		// 13 bits = 8192 edicts
 #define MAX_EDICTS			(1<<MAX_ENTITY_BITS)
 #define MAX_EDICTS_BYTES		((MAX_EDICTS + 7) / 8)
+#define LAST_EDICT			(MAX_EDICTS - 1)
 
-#define MAX_CUSTOM			1024	// max custom resources per level
-#define MAX_USER_MESSAGES		197	// another 58 messages reserved for engine routines
-#define MAX_DLIGHTS			32	// dynamic lights (rendered per one frame)
-#define MAX_ELIGHTS			64	// entity only point lights
-#define MAX_LIGHTSTYLES		256	// a byte limit, don't modify
-#define MAX_RENDER_DECALS		4096	// max rendering decals per a level
+#define MAX_CUSTOM_BITS		10
+#define MAX_CUSTOM			(1<<MAX_CUSTOM_BITS)// 10 bits == 1024 generic file
+#define MAX_USER_MESSAGES		197		// another 58 messages reserved for engine routines
+#define MAX_DLIGHTS			32		// dynamic lights (rendered per one frame)
+#define MAX_ELIGHTS			64		// entity only point lights
+#define MAX_LIGHTSTYLES		64		// original quake limit
+#define MAX_RENDER_DECALS		4096		// max rendering decals per a level
 
 // sound proto
 #define MAX_SND_FLAGS_BITS		14
@@ -154,14 +150,15 @@ GNU General Public License for more details.
 #define SND_LOCALSOUND		(1<<9)	// not paused, not looped, for internal use
 #define SND_STOP_LOOPING		(1<<10)	// stop all looping sounds on the entity.
 #define SND_FILTER_CLIENT		(1<<11)	// don't send sound from local player if prediction was enabled
+#define SND_RESTORE_POSITION		(1<<12)	// passed playing position and the forced end
 
 // decal flags
 #define FDECAL_PERMANENT		0x01	// This decal should not be removed in favor of any new decals
 #define FDECAL_USE_LANDMARK		0x02	// This is a decal applied on a bmodel without origin-brush so we done in absoulute pos
-#define FDECAL_DONTSAVE		0x04	// Decal was loaded from adjacent level, don't save it for this level
-// reserved			0x08
-// reserved			0x10
-// reserved			0x20
+#define FDECAL_CUSTOM		0x04	// This is a custom clan logo and should not be saved/restored
+// reserved
+// reserved
+#define FDECAL_DONTSAVE		0x20	// Decal was loaded from adjacent level, don't save it for this level
 #define FDECAL_STUDIO		0x40	// Indicates a studio decal
 #define FDECAL_LOCAL_SPACE		0x80	// decal is in local space (any decal after serialization)
 
@@ -176,12 +173,13 @@ GNU General Public License for more details.
 #define MAX_BACKUP_COMMANDS		(1 << NUM_BACKUP_COMMAND_BITS)
 
 #define MAX_RESOURCES		(MAX_MODELS+MAX_SOUNDS+MAX_CUSTOM+MAX_EVENTS)
+#define MAX_RESOURCE_BITS		13	// 13 bits 8192 resource (4096 models + 2048 sounds + 1024 events + 1024 files)
 
-typedef struct
-{
-	int	rescount;
-	int	restype[MAX_RESOURCES];
-	char	resnames[MAX_RESOURCES][CS_SIZE];
-} resourcelist_t;
+#define FRAGMENT_MIN_SIZE		1200		// default MTU
+#define FRAGMENT_MAX_SIZE		64000		// maximal fragment size
+#define FRAGMENT_LOCAL_SIZE		FRAGMENT_MAX_SIZE	// local connection
 
-#endif//PROTOCOL_H
+extern const char	*svc_strings[svc_lastmsg+1];
+extern const char	*clc_strings[clc_lastmsg+1];
+
+#endif//NET_PROTOCOL_H

@@ -58,9 +58,10 @@ typedef struct sizebuf_s
 // common functions
 void MSG_InitExt( sizebuf_t *sb, const char *pDebugName, void *pData, int nBytes, int nMaxBits );
 void MSG_InitMasks( void );	// called once at startup engine
-void MSG_SeekToBit( sizebuf_t *sb, int bitPos );
-void MSG_SeekToByte( sizebuf_t *sb, int bytePos );
+int MSG_SeekToBit( sizebuf_t *sb, int bitPos, int whence );
 void MSG_ExciseBits( sizebuf_t *sb, int startbit, int bitstoremove );
+_inline int MSG_TellBit( sizebuf_t *sb ) { return sb->iCurBit; }
+_inline const char *MSG_GetName( sizebuf_t *sb ) { return sb->pDebugName; }
 qboolean MSG_CheckOverflow( sizebuf_t *sb );
 short MSG_BigShort( short swap );
 
@@ -90,6 +91,7 @@ void MSG_WriteDword( sizebuf_t *sb, dword val );
 void MSG_WriteCoord( sizebuf_t *sb, float val );
 void MSG_WriteFloat( sizebuf_t *sb, float val );
 void MSG_WriteVec3Coord( sizebuf_t *sb, const float *fa );
+void MSG_WriteVec3Angles( sizebuf_t *sb, const float *fa );
 qboolean MSG_WriteBytes( sizebuf_t *sb, const void *pBuf, int nBytes );	// same as MSG_WriteData
 qboolean MSG_WriteString( sizebuf_t *sb, const char *pStr );		// returns false if it overflows the buffer.
 
@@ -126,6 +128,7 @@ dword MSG_ReadDword( sizebuf_t *sb );
 float MSG_ReadCoord( sizebuf_t *sb );
 float MSG_ReadFloat( sizebuf_t *sb );
 void MSG_ReadVec3Coord( sizebuf_t *sb, vec3_t fa );
+void MSG_ReadVec3Angles( sizebuf_t *sb, vec3_t fa );
 qboolean MSG_ReadBytes( sizebuf_t *sb, void *pOut, int nBytes );
 char *MSG_ReadStringExt( sizebuf_t *sb, qboolean bLine );
 					

@@ -71,7 +71,7 @@ void SCR_CreateStartupVids( void )
 {
 	file_t	*f;
 
-	f = FS_Open( "media/StartupVids.txt", "w", false );
+	f = FS_Open( DEFAULT_VIDEOLIST_PATH, "w", false );
 	if( !f ) return;
 
 	// make standard video playlist: sierra, valve
@@ -86,17 +86,17 @@ void SCR_CheckStartupVids( void )
 	char	*afile, *pfile;
 	string	token;
 		
-	if( Sys_CheckParm( "-nointro" ) || host.developer >= 2 || cls.demonum != -1 )
+	if( Sys_CheckParm( "-nointro" ) || host_developer.value || cls.demonum != -1 || GameState->nextstate != STATE_RUNFRAME )
 	{
 		// don't run movies where we in developer-mode
 		cls.movienum = -1;
 		return;
 	}
 
-	if( !FS_FileExists( "media/StartupVids.txt", false ))
+	if( !FS_FileExists( DEFAULT_VIDEOLIST_PATH, false ))
 		SCR_CreateStartupVids();
 
-	afile = FS_LoadFile( "media/StartupVids.txt", NULL, false );
+	afile = FS_LoadFile( DEFAULT_VIDEOLIST_PATH, NULL, false );
 	if( !afile ) return; // something bad happens
 
 	pfile = afile;
@@ -107,7 +107,7 @@ void SCR_CheckStartupVids( void )
 
 		if( ++c > MAX_MOVIES - 1 )
 		{
-			MsgDev( D_WARN, "Host_StartMovies: max %i movies in StartupVids\n", MAX_MOVIES );
+			Con_Printf( S_WARN "too many movies (%d) specified in %s\n", MAX_MOVIES, DEFAULT_VIDEOLIST_PATH );
 			break;
 		}
 	}
@@ -115,13 +115,9 @@ void SCR_CheckStartupVids( void )
 	Mem_Free( afile );
 
 	// run cinematic
-	if( !SV_Active() && cls.movienum != -1 && cls.state != ca_cinematic )
-	{
-		cls.movienum = 0;
-		SCR_NextMovie ();
-		Cbuf_Execute();
-	}
-	else cls.movienum = -1;
+	cls.movienum = 0;
+	SCR_NextMovie ();
+	Cbuf_Execute();
 }
 		
 /*

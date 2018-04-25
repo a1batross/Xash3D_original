@@ -141,13 +141,9 @@ void UI_LoadBmpButtons( void )
 		}
 		else palette_sz = pInfoHdr->biClrUsed * sizeof( RGBQUAD );
 	}
-#if 0
-	// HACKHACK: reset the first color to completely black value
-	if( palette_sz > 0 && palette[0] < 8 && palette[1] < 8 && palette[2] < 8 )
-		palette[0] = palette[1] = palette[2] = 0;
-#endif
+
 	uiStatic.buttons_width = pInfoHdr->biWidth;
-	uiStatic.buttons_height = 78;	// fixed height
+	uiStatic.buttons_height = 78;	// fixed height (26 * 3)
 
 	// determine buttons count by image height...
 	int pic_count = ( pInfoHdr->biHeight / uiStatic.buttons_height );

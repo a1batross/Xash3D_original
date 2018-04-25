@@ -42,8 +42,8 @@ void VGUI_InitCursors( void )
 	s_pDefaultCursor[Cursor::dc_no]       = (HICON)LoadCursor( NULL, (LPCTSTR)OCR_NO );
 	s_pDefaultCursor[Cursor::dc_hand]     = (HICON)LoadCursor( NULL, (LPCTSTR)32649 );
 
-	host.mouse_visible = true;
 	s_hCurrentCursor = s_pDefaultCursor[Cursor::dc_arrow];
+	host.mouse_visible = true;
 }
 
 void VGUI_CursorSelect( Cursor *cursor )
@@ -230,21 +230,8 @@ KeyCode VGUI_MapKey( int keyCode )
 
 LONG VGUI_SurfaceWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 {
-	SurfaceBase *surface = NULL;
-	CEnginePanel *panel = NULL;
-	App *pApp= NULL;
-
-	if( !VGui_GetPanel( ))
+	if( !engSurface )
 		return 0;
-
-	panel = (CEnginePanel *)VGui_GetPanel();
-	ASSERT( panel != NULL );
-
-	surface = panel->getSurfaceBase();
-	ASSERT( surface != NULL );
-
-	pApp = panel->getApp();
-	ASSERT( pApp != NULL );
 
 	switch( uMsg )
 	{
@@ -252,43 +239,43 @@ LONG VGUI_SurfaceWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 		VGUI_ActivateCurrentCursor();
 		break;
 	case WM_MOUSEMOVE:
-		pApp->internalCursorMoved((short)LOWORD( lParam ), (short)HIWORD( lParam ), surface );
+		engApp->internalCursorMoved((short)LOWORD( lParam ), (short)HIWORD( lParam ), engSurface );
 		break;
 	case WM_LBUTTONDOWN:
-		pApp->internalMousePressed( MOUSE_LEFT, surface );
+		engApp->internalMousePressed( MOUSE_LEFT, engSurface );
 		break;
 	case WM_RBUTTONDOWN:
-		pApp->internalMousePressed( MOUSE_RIGHT, surface );
+		engApp->internalMousePressed( MOUSE_RIGHT, engSurface );
 		break;
 	case WM_MBUTTONDOWN:
-		pApp->internalMousePressed( MOUSE_MIDDLE, surface );
+		engApp->internalMousePressed( MOUSE_MIDDLE, engSurface );
 		break;
 	case WM_LBUTTONUP:
-		pApp->internalMouseReleased( MOUSE_LEFT, surface );
+		engApp->internalMouseReleased( MOUSE_LEFT, engSurface );
 		break;
 	case WM_RBUTTONUP:
-		pApp->internalMouseReleased( MOUSE_RIGHT, surface );
+		engApp->internalMouseReleased( MOUSE_RIGHT, engSurface );
 		break;
 	case WM_MBUTTONUP:
-		pApp->internalMouseReleased( MOUSE_MIDDLE, surface );
+		engApp->internalMouseReleased( MOUSE_MIDDLE, engSurface );
 		break;
 	case WM_LBUTTONDBLCLK:
-		pApp->internalMouseDoublePressed( MOUSE_LEFT, surface );
+		engApp->internalMouseDoublePressed( MOUSE_LEFT, engSurface );
 		break;
 	case WM_RBUTTONDBLCLK:
-		pApp->internalMouseDoublePressed( MOUSE_RIGHT, surface );
+		engApp->internalMouseDoublePressed( MOUSE_RIGHT, engSurface );
 		break;
 	case WM_MBUTTONDBLCLK:
-		pApp->internalMouseDoublePressed( MOUSE_MIDDLE, surface );
+		engApp->internalMouseDoublePressed( MOUSE_MIDDLE, engSurface );
 		break;
 	case WM_MOUSEWHEEL:
-		pApp->internalMouseWheeled(((short)HIWORD( wParam )) / 120, surface );
+		engApp->internalMouseWheeled(((short)HIWORD( wParam )) / WHEEL_DELTA, engSurface );
 		break;
 	case WM_KEYDOWN:
 	case WM_SYSKEYDOWN:
 		if( !FBitSet( lParam, BIT( 30 )))
-			pApp->internalKeyPressed( VGUI_MapKey( wParam ), surface );
-		pApp->internalKeyTyped( VGUI_MapKey( wParam ), surface );
+			engApp->internalKeyPressed( VGUI_MapKey( wParam ), engSurface );
+		engApp->internalKeyTyped( VGUI_MapKey( wParam ), engSurface );
 		break;
 	case WM_CHAR:
 	case WM_SYSCHAR:
@@ -296,7 +283,7 @@ LONG VGUI_SurfaceWndProc( HWND hWnd, UINT uMsg, WPARAM wParam, LPARAM lParam )
 		break;
 	case WM_KEYUP:
 	case WM_SYSKEYUP:
-		pApp->internalKeyReleased( VGUI_MapKey( wParam ), surface );
+		engApp->internalKeyReleased( VGUI_MapKey( wParam ), engSurface );
 		break;
 	}
 	return 1;

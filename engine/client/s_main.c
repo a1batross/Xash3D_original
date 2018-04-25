@@ -695,7 +695,6 @@ float SND_GetGain( channel_t *ch, qboolean fplayersound, qboolean flooping, floa
 	{
 		// player weapon sounds get extra gain - this compensates
 		// for npc distance effect weapons which mix louder as L+R into L, R
-		// Hack.
 		if( ch->entchannel == CHAN_WEAPON )
 			gain = gain * dB_To_Gain( SND_GAIN_PLAYER_WEAPON_DB );
 	}
@@ -907,7 +906,7 @@ void S_StartSound( const vec3_t pos, int ent, int chan, sound_t handle, float fv
 	if( !target_chan )
 	{
 		if( !bIgnore )
-			MsgDev( D_NOTE, "^1Error: ^7dropped sound \"sound/%s\"\n", sfx->name );
+			Con_DPrintf( S_ERROR "dropped sound \"%s%s\"\n", DEFAULT_SOUNDPATH, sfx->name );
 		return;
 	}
 
@@ -946,7 +945,7 @@ void S_StartSound( const vec3_t pos, int ent, int chan, sound_t handle, float fv
 		VOX_LoadSound( target_chan, S_SkipSoundChar( sfx->name ));
 		Q_strncpy( target_chan->name, sfx->name, sizeof( target_chan->name ));
 		sfx = target_chan->sfx;
-		pSource = sfx->cache;
+		if( sfx ) pSource = sfx->cache;
 	}
 	else
 	{
@@ -1027,14 +1026,13 @@ void S_RestoreSound( const vec3_t pos, int ent, int chan, sound_t handle, float 
 	}
 
 	// pick a channel to play on
-	if( chan == CHAN_STATIC )
-		target_chan = SND_PickStaticChannel( pos, sfx );
+	if( chan == CHAN_STATIC ) target_chan = SND_PickStaticChannel( pos, sfx );
 	else target_chan = SND_PickDynamicChannel( ent, chan, sfx, &bIgnore );
 
 	if( !target_chan )
 	{
 		if( !bIgnore )
-			MsgDev( D_ERROR, "S_RestoreSound: dropped sound \"sound/%s\"\n", sfx->name );
+			Con_DPrintf( S_ERROR "dropped sound \"%s%s\"\n", DEFAULT_SOUNDPATH, sfx->name );
 		return;
 	}
 
@@ -1071,8 +1069,6 @@ void S_RestoreSound( const vec3_t pos, int ent, int chan, sound_t handle, float 
 		// prepended with a '!'.  Sentence names stored in the
 		// sentence file do not have a leading '!'. 
 		VOX_LoadSound( target_chan, S_SkipSoundChar( sfx->name ));
-
-		// save the sentencename for future save\restores
 		Q_strncpy( target_chan->name, sfx->name, sizeof( target_chan->name ));
 
 		// not a first word in sentence!
@@ -1092,7 +1088,7 @@ void S_RestoreSound( const vec3_t pos, int ent, int chan, sound_t handle, float 
 		else
 		{
 			sfx = target_chan->sfx;
-			pSource = sfx->cache;
+			if( sfx ) pSource = sfx->cache;
 		}
 	}
 	else
@@ -1183,7 +1179,7 @@ void S_AmbientSound( const vec3_t pos, int ent, sound_t handle, float fvol, floa
 		VOX_LoadSound( ch, S_SkipSoundChar( sfx->name ));
 		Q_strncpy( ch->name, sfx->name, sizeof( ch->name ));
 		sfx = ch->sfx;
-		pSource = sfx->cache;
+		if( sfx ) pSource = sfx->cache;
 		fvox = 1;
 	}
 	else
@@ -2011,7 +2007,7 @@ void S_Play_f( void )
 {
 	if( Cmd_Argc() == 1 )
 	{
-		Msg( "Usage: play <soundfile>\n" );
+		Con_Printf( S_USAGE "play <soundfile>\n" );
 		return;
 	}
 
@@ -2022,7 +2018,7 @@ void S_PlayVol_f( void )
 {
 	if( Cmd_Argc() == 1 )
 	{
-		Msg( "Usage: playvol <soundfile volume>\n" );
+		Con_Printf( S_USAGE "playvol <soundfile volume>\n" );
 		return;
 	}
 
@@ -2033,7 +2029,7 @@ void S_Say_f( void )
 {
 	if( Cmd_Argc() == 1 )
 	{
-		Msg( "Usage: speak <soundfile>\n" );
+		Con_Printf( S_USAGE "speak <soundfile>\n" );
 		return;
 	}
 
@@ -2044,7 +2040,7 @@ void S_SayReliable_f( void )
 {
 	if( Cmd_Argc() == 1 )
 	{
-		Msg( "Usage: spk <soundfile>\n" );
+		Con_Printf( S_USAGE "spk <soundfile>\n" );
 		return;
 	}
 
@@ -2084,13 +2080,13 @@ void S_Music_f( void )
 			if( FS_FileExists( intro_path, false ) && FS_FileExists( main_path, false ))
 			{
 				// combined track with introduction and main loop theme
-				S_StartBackgroundTrack( intro, main, 0 );
+				S_StartBackgroundTrack( intro, main, 0, false );
 				break;
 			}
 			else if( FS_FileExists( va( "media/%s.%s", track, ext[i] ), false ))
 			{
 				// single non-looped theme
-				S_StartBackgroundTrack( track, NULL, 0 );
+				S_StartBackgroundTrack( track, NULL, 0, false );
 				break;
 			}
 		}
@@ -2098,14 +2094,14 @@ void S_Music_f( void )
 	}
 	else if( c == 3 )
 	{
-		S_StartBackgroundTrack( Cmd_Argv( 1 ), Cmd_Argv( 2 ), 0 );
+		S_StartBackgroundTrack( Cmd_Argv( 1 ), Cmd_Argv( 2 ), 0, false );
 	}
 	else if( c == 4 && Q_atoi( Cmd_Argv( 3 )) != 0 )
 	{
 		// restore command for singleplayer: all arguments are valid
-		S_StartBackgroundTrack( Cmd_Argv( 1 ), Cmd_Argv( 2 ), Q_atoi( Cmd_Argv( 3 )));
+		S_StartBackgroundTrack( Cmd_Argv( 1 ), Cmd_Argv( 2 ), Q_atoi( Cmd_Argv( 3 )), false );
 	}
-	else Msg( "Usage: music <musicfile> [loopfile]\n" );
+	else Con_Printf( S_USAGE "music <musicfile> [loopfile]\n" );
 }
 
 /*
@@ -2142,13 +2138,12 @@ S_SoundInfo_f
 */
 void S_SoundInfo_f( void )
 {
-	S_PrintDeviceName();
-
-	Msg( "%5d channel(s)\n", 2 );
-	Msg( "%5d samples\n", dma.samples );
-	Msg( "%5d bits/sample\n", 16 );
-	Msg( "%5d bytes/sec\n", SOUND_DMA_SPEED );
-	Msg( "%5d total_channels\n", total_channels );
+	Con_Printf( "Audio: DirectSound\n" );
+	Con_Printf( "%5d channel(s)\n", 2 );
+	Con_Printf( "%5d samples\n", dma.samples );
+	Con_Printf( "%5d bits/sample\n", 16 );
+	Con_Printf( "%5d bytes/sec\n", SOUND_DMA_SPEED );
+	Con_Printf( "%5d total_channels\n", total_channels );
 
 	S_PrintBackgroundTrackState ();
 }

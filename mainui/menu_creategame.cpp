@@ -88,6 +88,8 @@ static void UI_CreateGame_Begin( void )
 {
 	char	*pMapName = uiCreateGame.mapName[uiCreateGame.mapsList.curItem];
 	int	maxPlayers = atoi( uiCreateGame.maxClients.buffer );
+	int	loc = CVAR_GET_FLOAT( "sv_lan" );
+	int	pub = CVAR_GET_FLOAT( "public" );
 
 	if( !MAP_IS_VALID( pMapName ))
 		return;	// bad map
@@ -106,7 +108,7 @@ static void UI_CreateGame_Begin( void )
 	if( uiCreateGame.dedicatedServer.enabled )
 	{
 		char cmd[128], msg[128];
-		sprintf( cmd, "#%s +maxplayers %i +map %s", gMenu.m_gameinfo.gamefolder, maxPlayers, pMapName );
+		sprintf( cmd, "#%s +maxplayers %i +sv_lan %i +public %i +map %s", gMenu.m_gameinfo.gamefolder, maxPlayers, loc, pub, pMapName );
 		sprintf( msg, "startup dedicated server from '%s'", gMenu.m_gameinfo.gamefolder );
 
 		HOST_CHANGEGAME( cmd, msg );

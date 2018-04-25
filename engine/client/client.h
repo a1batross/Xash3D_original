@@ -20,7 +20,6 @@ GNU General Public License for more details.
 #include "cdll_int.h"
 #include "menu_int.h"
 #include "cl_entity.h"
-#include "com_model.h"
 #include "mod_local.h"
 #include "pm_defs.h"
 #include "pm_movevars.h"
@@ -36,8 +35,8 @@ GNU General Public License for more details.
 #define MAX_DEMOS		32
 #define MAX_MOVIES		8
 #define MAX_CDTRACKS	32
-#define MAX_IMAGES		256	// SpriteTextures
-#define MAX_EFRAGS		8192
+#define MAX_CLIENT_SPRITES	256	// SpriteTextures
+#define MAX_EFRAGS		8192	// Arcane Dimensions required
 #define MAX_REQUESTS	64
 
 // screenshot types
@@ -50,7 +49,7 @@ GNU General Public License for more details.
 // client sprite types
 #define SPR_CLIENT		0	// client sprite for temp-entities or user-textures
 #define SPR_HUDSPRITE	1	// hud sprite
-#define SPR_MAPSPRITE	2	// contain overview subdivided into frames 128x128
+#define SPR_MAPSPRITE	2	// contain overview.bmp that diced into frames 128x128
 
 typedef int		sound_t;
 
@@ -121,6 +120,9 @@ extern int CL_UPDATE_BACKUP;
 #define MIN_EX_INTERP	50.0f
 #define MAX_EX_INTERP	100.0f
 
+#define CL_MIN_RESEND_TIME	1.5f		// mininum time gap (in seconds) before a subsequent connection request is sent.    
+#define CL_MAX_RESEND_TIME	20.0f		// max time.  The cvar cl_resend is bounded by these.
+
 #define cl_serverframetime()	(cl.mtime[0] - cl.mtime[1])
 #define cl_clientframetime()	(cl.time - cl.oldtime)
 
@@ -138,6 +140,7 @@ typedef struct
 	// misc local info
 	qboolean		repredicting;	// repredicting in progress
 	qboolean		thirdperson;
+	qboolean		apply_effects;	// local player will not added but we should apply their effects: flashlight etc
 	float		idealpitch;
 	int		viewmodel;
 	int		health;		// client health
@@ -163,12 +166,31 @@ typedef struct
 	model_t		*model;
 } player_model_t;
 
-// the client_t structure is wiped completely at every
-// server map change
 typedef struct
 {
-	int		timeoutcount;
+	qboolean		bUsed;
+	float		fTime;
+	int		nBytesRemaining;
+} downloadtime_t;
 
+typedef struct
+{
+	qboolean		doneregistering;
+	int		percent;
+	qboolean		downloadrequested;
+	downloadtime_t	rgStats[8];
+	int		nCurStat;
+	int		nTotalSize;
+	int		nTotalToTransfer;
+	int		nRemainingToTransfer;
+	float		fLastStatusUpdate;
+	qboolean		custom;
+} incomingtransfer_t;
+
+// the client_t structure is wiped completely
+// at every server map change
+typedef struct
+{
 	int		servercount;		// server identification for prespawns
 	int		validsequence;		// this is the sequence number of the last good
 						// world snapshot/update we got.  If this is 0, we can't
@@ -209,6 +231,8 @@ typedef struct
 	char		serverinfo[MAX_SERVERINFO_STRING];
 	player_model_t	player_models[MAX_CLIENTS];	// cache of player models
 	player_info_t	players[MAX_CLIENTS];	// collected info about all other players include himself
+	double		lastresourcecheck;
+	string		downloadUrl;
 	event_state_t	events;
 
 	// predicting stuff but not only...
@@ -236,17 +260,30 @@ typedef struct
 	// server state information
 	int		playernum;
 	int		maxclients;
-	int		num_custombeams;			// server beams count
 
-	char		model_precache[MAX_MODELS][CS_SIZE];
-	char		sound_precache[MAX_SOUNDS][CS_SIZE];
-	char		event_precache[MAX_EVENTS][CS_SIZE];
+	entity_state_t	instanced_baseline[MAX_CUSTOM_BASELINES];
+	int		instanced_baseline_count;
+
+	char		sound_precache[MAX_SOUNDS][MAX_QPATH];
+	char		event_precache[MAX_EVENTS][MAX_QPATH];
+	char		files_precache[MAX_CUSTOM][MAX_QPATH];
 	lightstyle_t	lightstyles[MAX_LIGHTSTYLES];
+	model_t		*models[MAX_MODELS+1];		// precached models (plus sentinel slot)
+	int		nummodels;
+	int		numfiles;
 
-	int		sound_index[MAX_SOUNDS];
-	int		decal_index[MAX_DECALS];
+	consistency_t	consistency_list[MAX_MODELS];
+	int		num_consistency;
 
-	cl_entity_t	*world;
+	qboolean		need_force_consistency_response;
+	resource_t	resourcesonhand;
+	resource_t	resourcesneeded;
+	resource_t	resourcelist[MAX_RESOURCES];
+	int		num_resources;
+
+	short		sound_index[MAX_SOUNDS];
+	short		decal_index[MAX_DECALS];
+
 	model_t		*worldmodel;			// pointer to world
 } client_t;
 
@@ -302,7 +339,7 @@ typedef void (*pfnEventHook)( event_args_t *args );
 
 typedef struct
 {
-	char		name[CS_SIZE];
+	char		name[MAX_QPATH];
 	word		index;	// event index
 	pfnEventHook	func;	// user-defined function
 } cl_user_event_t;
@@ -374,6 +411,13 @@ typedef struct
 
 typedef struct
 {
+	char		szListName[MAX_QPATH];
+	client_sprite_t	*pList;
+	int		count;
+} cached_spritelist_t;
+
+typedef struct
+{
 	// centerprint stuff
 	float		time;
 	int		y, lines;
@@ -397,6 +441,7 @@ typedef struct
 
 typedef struct
 {
+	unsigned short	textures[MAX_SKINS];// alias textures
 	struct mstudiotex_s	*ptexture;	// array of textures with local copy of remapped textures
 	short		numtextures;	// textures count
 	short		topcolor;		// cached value
@@ -420,7 +465,7 @@ typedef struct
 	int			flags;	// FNETAPI_MULTIPLE_RESPONSE etc
 } net_request_t;
 
-// new versions of client dlls have a sanigle export with all callbacks
+// new versions of client dlls have a single export with all callbacks
 typedef void (*CL_EXPORT_FUNCS)( void *pv );
 
 typedef struct
@@ -440,6 +485,7 @@ typedef struct
 	int		maxEntities;
 	int		maxRemapInfos;		// maxEntities + cl.viewEnt; also used for catch entcount
 	int		numStatics;		// actual static entity count
+	int		maxModels;
 
 	// movement values from server
 	movevars_t	movevars;
@@ -455,9 +501,7 @@ typedef struct
 
 	string		cdtracks[MAX_CDTRACKS];	// 32 cd-tracks read from cdaudio.txt
 
-	model_t		sprites[MAX_IMAGES];	// client spritetextures
-	int		load_sequence;		// for unloading unneeded sprites
-
+	model_t		sprites[MAX_CLIENT_SPRITES];	// client spritetextures
 	int		viewport[4];		// viewport sizes
 
 	client_draw_t	ds;			// draw2d stuff (hud, weaponmenu etc)
@@ -467,6 +511,8 @@ typedef struct
 	SCREENINFO	scrInfo;			// actual screen info
 	ref_overview_t	overView;			// overView params
 	color24		palette[256];		// palette used for particle colors
+
+	cached_spritelist_t	sprlist[MAX_CLIENT_SPRITES];	// client list sprites
 
 	client_textmessage_t *titles;			// title messages, not network messages
 	int		numTitles;
@@ -506,6 +552,7 @@ typedef struct
 	qboolean		initialized;
 	qboolean		changelevel;		// during changelevel
 	qboolean		changedemo;		// during changedemo
+	double		timestart;		// just for profiling
 
 	// screen rendering information
 	float		disable_screen;		// showing loading plaque between levels
@@ -529,6 +576,8 @@ typedef struct
 	// connection information
 	char		servername[MAX_QPATH];	// name of server from original connect
 	double		connect_time;		// for connection retransmits
+	int		max_fragment_size;		// we needs to test a real network bandwidth
+	int		connect_retry;		// how many times we send a connect packet to the server
 	qboolean		spectator;		// not a real player, just spectator
 
 	local_state_t	spectator_state;		// init as client startup
@@ -537,10 +586,9 @@ typedef struct
 	char		physinfo[MAX_INFO_STRING];	// read-only
 
 	sizebuf_t		datagram;			// unreliable stuff. gets sent in CL_Move about cl_cmdrate times per second.
-	byte		datagram_buf[NET_MAX_PAYLOAD];
+	byte		datagram_buf[MAX_DATAGRAM];
 
 	netchan_t		netchan;
-	int		serverProtocol;		// in case we are doing some kind of version hack
 	int		challenge;		// from the server to use for connecting
 
 	float		packet_loss;
@@ -549,6 +597,10 @@ typedef struct
 	float		nextcmdtime;		// when can we send the next command packet?                
 	int		lastoutgoingcommand;	// sequence number of last outgoing command
 	int		lastupdate_sequence;	// prediction stuff
+
+	int		td_lastframe;		// to meter out one message a frame
+	int		td_startframe;		// host_framecount at start
+	double		td_starttime;		// realtime at second frame of timedemo
 
 	// game images
 	int		pauseIcon;		// draw 'paused' when game in-pause
@@ -573,8 +625,7 @@ typedef struct
 	string		shotname;
 
 	// download info
-	int		downloadcount;
-	int		downloadfileid;
+	incomingtransfer_t	dl;
 
 	// demo loop control
 	int		demonum;			// -1 = don't play demos
@@ -614,6 +665,11 @@ extern gameui_static_t	gameui;
 // cvars
 //
 extern convar_t	mp_decals;
+extern convar_t	cl_logofile;
+extern convar_t	cl_logocolor;
+extern convar_t	cl_allow_download;
+extern convar_t	cl_allow_upload;
+extern convar_t	cl_download_ingame;
 extern convar_t	*cl_nopred;
 extern convar_t	*cl_showfps;
 extern convar_t	*cl_envshot_size;
@@ -644,9 +700,8 @@ extern convar_t	*cl_lw;		// local weapons
 extern convar_t	*cl_showevents;
 extern convar_t	*scr_centertime;
 extern convar_t	*scr_viewsize;
-extern convar_t	*scr_download;
 extern convar_t	*scr_loading;
-extern convar_t	*scr_dark;	// start from dark
+extern convar_t	*v_dark;	// start from dark
 extern convar_t	*net_graph;
 extern convar_t	*rate;
 
@@ -657,9 +712,6 @@ void CL_RunLightStyles( void );
 void CL_DecayLights( void );
 
 //=================================================
-
-void CL_PrepVideo( void );
-void CL_PrepSound( void );
 
 //
 // cl_cmds.c
@@ -678,6 +730,15 @@ void SCR_Viewpos_f( void );
 void SCR_TimeRefresh_f( void );
 
 //
+// cl_custom.c
+//
+qboolean CL_CheckFile( sizebuf_t *msg, resource_t *pResource );
+void CL_AddToResourceList( resource_t *pResource, resource_t *pList );
+void CL_RemoveFromResourceList( resource_t *pResource );
+void CL_MoveToOnHandList( resource_t *pResource );
+void CL_ClearResourceLists( void );
+
+//
 // cl_main.c
 //
 void CL_Init( void );
@@ -685,6 +746,9 @@ void CL_SendCommand( void );
 void CL_Disconnect_f( void );
 void CL_ProcessFile( qboolean successfully_received, const char *filename );
 void CL_WriteUsercmd( sizebuf_t *msg, int from, int to );
+int CL_GetFragmentSize( void *unused );
+qboolean CL_PrecacheResources( void );
+void CL_SetupOverviewParams( void );
 void CL_UpdateFrameLerp( void );
 int CL_IsDevOverviewMode( void );
 void CL_PingServers_f( void );
@@ -706,6 +770,7 @@ void CL_CloseDemoHeader( void );
 void CL_StopPlayback( void );
 void CL_StopRecord( void );
 void CL_PlayDemo_f( void );
+void CL_TimeDemo_f( void );
 void CL_StartDemos_f( void );
 void CL_Demos_f( void );
 void CL_DeleteDemo_f( void );
@@ -723,9 +788,10 @@ void CL_QueueEvent( int flags, int index, float delay, event_args_t *args );
 void CL_PlaybackEvent( int flags, const edict_t *pInvoker, word eventindex, float delay, float *origin,
 	float *angles, float fparam1, float fparam2, int iparam1, int iparam2, int bparam1, int bparam2 );
 void CL_RegisterEvent( int lastnum, const char *szEvName, pfnEventHook func );
-word CL_EventIndex( const char *name );
-const char *CL_IndexEvent( word index );
+void CL_BatchResourceRequest( qboolean initialize );
+int CL_EstimateNeededResources( void );
 void CL_ResetEvent( event_info_t *ei );
+word CL_EventIndex( const char *name );
 void CL_FireEvents( void );
 
 //
@@ -742,21 +808,23 @@ void CL_InitEdicts( void );
 void CL_FreeEdicts( void );
 void CL_ClearWorld( void );
 void CL_DrawCenterPrint( void );
+void CL_ClearSpriteTextures( void );
 void CL_FreeEntity( cl_entity_t *pEdict );
 void CL_CenterPrint( const char *text, float y );
 void CL_TextMessageParse( byte *pMemFile, int fileSize );
 client_textmessage_t *CL_TextMessageGet( const char *pName );
 int pfnDecalIndexFromName( const char *szDecalName );
 int pfnIndexFromTrace( struct pmtrace_s *pTrace );
+model_t *CL_ModelHandle( int modelindex );
 void NetAPI_CancelAllRequests( void );
 int CL_FindModelIndex( const char *m );
 cl_entity_t *CL_GetLocalPlayer( void );
 model_t *CL_LoadClientSprite( const char *filename );
+model_t *CL_LoadModel( const char *modelname, int *index );
 HSPRITE pfnSPR_Load( const char *szPicName );
 HSPRITE pfnSPR_LoadExt( const char *szPicName, uint texFlags );
 void PicAdjustSize( float *x, float *y, float *w, float *h );
 void CL_FillRGBA( int x, int y, int width, int height, int r, int g, int b, int a );
-void CL_FillRGBABlend( int x, int y, int width, int height, int r, int g, int b, int a );
 void CL_PlayerTrace( float *start, float *end, int traceFlags, int ignore_pe, pmtrace_t *tr );
 void CL_PlayerTraceExt( float *start, float *end, int traceFlags, int (*pfnIgnore)( physent_t *pe ), pmtrace_t *tr );
 void CL_SetTraceHull( int hull );
@@ -775,7 +843,10 @@ _inline cl_entity_t *CL_EDICT_NUM( int n )
 //
 void CL_ParseServerMessage( sizebuf_t *msg, qboolean normal_message );
 void CL_ParseTempEntity( sizebuf_t *msg );
+void CL_StartResourceDownloading( const char *pszMessage, qboolean bCustom );
 qboolean CL_DispatchUserMessage( const char *pszName, int iSize, void *pbuf );
+qboolean CL_RequestMissingResources( void );
+void CL_RegisterResources ( sizebuf_t *msg );
 
 //
 // cl_scrn.c
@@ -824,6 +895,7 @@ int CL_PointContents( const vec3_t p );
 int CL_WaterEntity( const float *rgflPos );
 cl_entity_t *CL_GetWaterEntity( const float *rgflPos );
 void CL_SetupPMove( playermove_t *pmove, local_state_t *from, usercmd_t *ucmd, qboolean runfuncs, double time );
+int CL_TestLine( const vec3_t start, const vec3_t end, int flags );
 pmtrace_t *CL_VisTraceLine( vec3_t start, vec3_t end, int flags );
 pmtrace_t CL_TraceLine( vec3_t start, vec3_t end, int flags );
 void CL_MoveSpectatorCamera( void );
@@ -849,6 +921,7 @@ qboolean CL_GetEntitySpatialization( struct channel_s *ch );
 qboolean CL_GetMovieSpatialization( struct rawchan_s *ch );
 void CL_ComputePlayerOrigin( cl_entity_t *clent );
 void CL_UpdateEntityFields( cl_entity_t *ent );
+void CL_MoveThirdpersonCamera( void );
 qboolean CL_IsPlayerIndex( int idx );
 void CL_SetIdealPitch( void );
 void CL_EmitEntities( void );
@@ -874,8 +947,10 @@ void CL_TestLights( void );
 void CL_DrawParticlesExternal( const ref_viewpass_t *rvp, qboolean trans_pass, float frametime );
 void CL_FireCustomDecal( int textureIndex, int entityIndex, int modelIndex, float *pos, int flags, float scale );
 void CL_DecalShoot( int textureIndex, int entityIndex, int modelIndex, float *pos, int flags );
-void CL_PlayerDecal( int textureIndex, int entityIndex, float *pos );
+void CL_PlayerDecal( int playerIndex, int textureIndex, int entityIndex, float *pos );
 void R_FreeDeadParticles( struct particle_s **ppparticles );
+void CL_AddClientResource( const char *filename, int type );
+void CL_AddClientResources( void );
 int CL_FxBlend( cl_entity_t *e );
 void CL_InitParticles( void );
 void CL_ClearParticles( void );
@@ -929,7 +1004,7 @@ void Con_FastClose( void );
 // s_main.c
 //
 void S_StreamRawSamples( int samples, int rate, int width, int channels, const byte *data );
-void S_StartBackgroundTrack( const char *intro, const char *loop, long position );
+void S_StartBackgroundTrack( const char *intro, const char *loop, long position, qboolean fullpath );
 void S_StopBackgroundTrack( void );
 void S_StreamSetPause( int pause );
 void S_StartStreaming( void );

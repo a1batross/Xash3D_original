@@ -28,7 +28,7 @@ GNU General Public License for more details.
 #define MAX_LOCALLIGHTS	4
 
 CVAR_DEFINE_AUTO( r_glowshellfreq, "2.2", 0, "glowing shell frequency update" );
-CVAR_DEFINE_AUTO( r_shadows, "0", 0, "enable shadows from studiomodels" );
+CVAR_DEFINE_AUTO( r_shadows, "0", 0, "cast shadows from models" );
 
 static vec3_t hullcolor[8] = 
 {
@@ -114,7 +114,7 @@ static r_studio_interface_t	*pStudioDraw;
 static studio_draw_state_t	g_studio;		// global studio state
 
 // global variables
-qboolean			m_fDoRemap;
+static qboolean		m_fDoRemap;
 mstudiomodel_t		*m_pSubModel;
 mstudiobodyparts_t		*m_pBodyPart;
 player_info_t		*m_pPlayerInfo;
@@ -145,50 +145,6 @@ void R_StudioInit( void )
 	g_studio.interpolate = true;
 	g_studio.framecount = 0;
 	m_fDoRemap = false;
-}
-
-/*
-===============
-R_StudioTexName
-
-extract texture filename from modelname
-===============
-*/
-const char *R_StudioTexName( model_t *mod )
-{
-	static char	texname[64];
-
-	Q_strncpy( texname, mod->name, sizeof( texname ));
-	FS_StripExtension( texname );
-	Q_strncat( texname, "T.mdl", sizeof( texname ));
-
-	return texname;
-}
-
-/*
-================
-R_StudioBodyVariations
-
-calc studio body variations
-================
-*/
-static int R_StudioBodyVariations( model_t *mod )
-{
-	studiohdr_t	*pstudiohdr;
-	mstudiobodyparts_t	*pbodypart;
-	int		i, count = 1;
-
-	pstudiohdr = (studiohdr_t *)Mod_StudioExtradata( mod );
-	if( !pstudiohdr ) return 0;
-
-	pbodypart = (mstudiobodyparts_t *)((byte *)pstudiohdr + pstudiohdr->bodypartindex);
-
-	// each body part has nummodels variations so there are as many total variations as there
-	// are in a matrix of each part by each other part
-	for( i = 0; i < pstudiohdr->numbodyparts; i++ )
-		count = count * pbodypart[i].nummodels;
-
-	return count;
 }
 
 /*
@@ -400,7 +356,7 @@ pfnPlayerInfo
 
 ===============
 */
-static player_info_t *pfnPlayerInfo( int index )
+player_info_t *pfnPlayerInfo( int index )
 {
 	if( !RI.drawWorld )
 		return &gameui.playerinfo;
@@ -408,6 +364,17 @@ static player_info_t *pfnPlayerInfo( int index )
 	if( index < 0 || index > cl.maxclients )
 		return NULL;
 	return &cl.players[index];
+}
+
+/*
+===============
+pfnMod_ForName
+
+===============
+*/
+static model_t *pfnMod_ForName( const char *model, int crash )
+{
+	return Mod_ForName( model, crash, false );
 }
 
 /*
@@ -590,7 +557,7 @@ void R_StudioLerpMovement( cl_entity_t *e, double time, vec3_t origin, vec3_t an
 	if( g_studio.interpolate && ( time < e->curstate.animtime + 1.0f ) && ( e->curstate.animtime != e->latched.prevanimtime ))
 		f = ( time - e->curstate.animtime ) / ( e->curstate.animtime - e->latched.prevanimtime );
 
-	// Msg( "%4.2f %.2f %.2f\n", f, e->curstate.animtime, g_studio.time );
+	// Con_Printf( "%4.2f %.2f %.2f\n", f, e->curstate.animtime, g_studio.time );
 	VectorLerp( e->latched.prevorigin, f, e->curstate.origin, origin );
 
 	if( !VectorCompare( e->curstate.angles, e->latched.prevangles ))
@@ -781,8 +748,8 @@ void *R_StudioGetAnim( studiohdr_t *m_pStudioHeader, model_t *m_pSubModel, mstud
 	{
 		string	filepath, modelname, modelpath;
 
-		FS_FileBase( m_pSubModel->name, modelname );
-		FS_ExtractFilePath( m_pSubModel->name, modelpath );
+		COM_FileBase( m_pSubModel->name, modelname );
+		COM_ExtractFilePath( m_pSubModel->name, modelpath );
 
 		// NOTE: here we build real sub-animation filename because stupid user may rename model without recompile
 		Q_snprintf( filepath, sizeof( filepath ), "%s/%s%i%i.mdl", modelpath, modelname, pseqdesc->seqgroup / 10, pseqdesc->seqgroup % 10 );
@@ -791,7 +758,7 @@ void *R_StudioGetAnim( studiohdr_t *m_pStudioHeader, model_t *m_pSubModel, mstud
 		if( !buf || !filesize ) Host_Error( "StudioGetAnim: can't load %s\n", filepath );
 		if( IDSEQGRPHEADER != *(uint *)buf ) Host_Error( "StudioGetAnim: %s is corrupted\n", filepath );
 
-		MsgDev( D_INFO, "loading: %s\n", filepath );
+		Con_Printf( "loading: %s\n", filepath );
 			
 		paSequences[pseqdesc->seqgroup].data = Mem_Alloc( com_studiocache, filesize );
 		memcpy( paSequences[pseqdesc->seqgroup].data, buf, filesize );
@@ -1400,7 +1367,7 @@ void R_StudioBuildNormalTable( void )
 	mstudiomesh_t	*pmesh;
 	int		i, j;
 
-	ASSERT( m_pSubModel );
+	Assert( m_pSubModel != NULL );
 
 	// reset chrome cache
 	for( i = 0; i < m_pStudioHeader->numbones; i++ )
@@ -1452,7 +1419,7 @@ void R_StudioGenerateNormals( void )
 	mstudiomesh_t	*pmesh;
 	int		i, j;
 
-	ASSERT( m_pSubModel );
+	Assert( m_pSubModel != NULL );
 
 	for( i = 0; i < m_pSubModel->numverts; i++ )
 		VectorClear( g_studio.norms[i] );
@@ -1658,7 +1625,7 @@ void R_StudioDynamicLight( cl_entity_t *ent, alight_t *plight )
 	uint		lnum;
 	dlight_t		*dl;
 
-	if( !plight || !ent )
+	if( !plight || !ent || !ent->model )
 		return;
 
 	if( !RI.drawWorld || r_fullbright->value || FBitSet( ent->curstate.effects, EF_FULLBRIGHT ))
@@ -1676,16 +1643,7 @@ void R_StudioDynamicLight( cl_entity_t *ent, alight_t *plight )
 		VectorSet( lightDir, 0.0f, 0.0f, 1.0f );
 	else VectorSet( lightDir, 0.0f, 0.0f, -1.0f );
 
-	if( ent == RI.currententity )
-	{
-		int sequence = bound( 0, ent->curstate.sequence, m_pStudioHeader->numseq - 1 );
-		mstudioseqdesc_t *pseqdesc = (mstudioseqdesc_t *)((byte *)m_pStudioHeader + m_pStudioHeader->seqindex) + sequence;
-
-		if( FBitSet( pseqdesc->flags, STUDIO_LIGHT_FROM_ROOT ))
-			Matrix3x4_OriginFromMatrix( g_studio.lighttransform[0], origin );
-		else VectorCopy( ent->origin, origin );
-	}
-	else VectorCopy( ent->origin, origin );
+	VectorCopy( ent->origin, origin );
 
 	VectorSet( vecSrc, origin[0], origin[1], origin[2] - lightDir[2] * 8.0f );
 	light.r = light.g = light.b = light.a = 0;
@@ -1795,9 +1753,9 @@ void R_StudioDynamicLight( cl_entity_t *ent, alight_t *plight )
 
 			VectorAdd( lightDir, dist, lightDir );
 
-			finalLight[0] += LightToTexGamma( dl->color.r ) * ( add * 512.0f );
-			finalLight[1] += LightToTexGamma( dl->color.g ) * ( add * 512.0f );
-			finalLight[2] += LightToTexGamma( dl->color.b ) * ( add * 512.0f );
+			finalLight[0] += LightToTexGamma( dl->color.r ) * ( add / 256.0f ) * 2.0f;
+			finalLight[1] += LightToTexGamma( dl->color.g ) * ( add / 256.0f ) * 2.0f;
+			finalLight[2] += LightToTexGamma( dl->color.b ) * ( add / 256.0f ) * 2.0f;
 		}
 	}
 
@@ -2151,7 +2109,7 @@ void R_StudioRenderShadow( int iSprite, float *p1, float *p2, float *p3, float *
 	if( !p1 || !p2 || !p3 || !p4 )
 		return;
 
-	if( TriSpriteTexture( Mod_Handle( iSprite ), 0 ))
+	if( TriSpriteTexture( CL_ModelHandle( iSprite ), 0 ))
 	{
 		TriRenderMode( kRenderTransAlpha );
 		TriColor4f( 0.0f, 0.0f, 0.0f, 1.0f );
@@ -2443,6 +2401,7 @@ static void R_StudioDrawPoints( void )
 		if( FBitSet( g_nFaceFlags, STUDIO_NF_MASKED ))
 		{
 			pglEnable( GL_ALPHA_TEST );
+			pglAlphaFunc( GL_GREATER, 0.5f );
 			pglDepthMask( GL_TRUE );
 			if( R_ModelOpaque( RI.currententity->curstate.rendermode ))
 				tr.blend = 1.0f;
@@ -2468,6 +2427,7 @@ static void R_StudioDrawPoints( void )
 
 		if( FBitSet( g_nFaceFlags, STUDIO_NF_MASKED ))
 		{
+			pglAlphaFunc( GL_GREATER, 0.0f );
 			pglDisable( GL_ALPHA_TEST );
 		}
 		else if( FBitSet( g_nFaceFlags, STUDIO_NF_ADDITIVE ) && R_ModelOpaque( RI.currententity->curstate.rendermode ))
@@ -2716,7 +2676,8 @@ static model_t *R_StudioSetupPlayerModel( int index )
 
 	state = &cl.player_models[index];
 
-	if(( host.developer || !Host_IsLocalGame( )) && info->model[0] )
+	// g-cont: force for "dev-mode", non-local games and menu preview
+	if(( host_developer.value || !Host_IsLocalGame( ) || !RI.drawWorld ) && info->model[0] )
 	{
 		if( Q_strcmp( state->name, info->model ))
 		{
@@ -2726,7 +2687,7 @@ static model_t *R_StudioSetupPlayerModel( int index )
 			Q_snprintf( state->modelname, sizeof( state->modelname ), "models/player/%s/%s.mdl", info->model, info->model );
 
 			if( FS_FileExists( state->modelname, false ))
-				state->model = Mod_ForName( state->modelname, false );
+				state->model = Mod_ForName( state->modelname, false, true );
 			else state->model = NULL;
 
 			if( !state->model )
@@ -2741,6 +2702,50 @@ static model_t *R_StudioSetupPlayerModel( int index )
 	}
 
 	return state->model;
+}
+
+/*
+================
+R_GetEntityRenderMode
+
+check for texture flags
+================
+*/
+int R_GetEntityRenderMode( cl_entity_t *ent )
+{
+	studiohdr_t	*phdr;
+	mstudiotexture_t	*ptexture;
+	cl_entity_t	*oldent;
+	model_t		*model;
+	int		i;
+
+	oldent = RI.currententity;
+	RI.currententity = ent;
+
+	if( ent->player ) // check it for real playermodel
+		model = R_StudioSetupPlayerModel( ent->curstate.number - 1 );
+	else model = ent->model;
+
+	RI.currententity = oldent;
+
+	if(( phdr = Mod_StudioExtradata( model )) == NULL )
+	{
+		// forcing to choose right sorting type
+		if(( model && model->type == mod_brush ) && FBitSet( model->flags, MODEL_TRANSPARENT ))
+			return kRenderTransAlpha;
+		return ent->curstate.rendermode;
+	}
+	ptexture = (mstudiotexture_t *)((byte *)phdr + phdr->textureindex);
+
+	for( i = 0; i < phdr->numtextures; i++, ptexture++ )
+	{
+		// g-cont. this is not fully proper but better than was
+		if( FBitSet( ptexture->flags, STUDIO_NF_ADDITIVE ))
+			return kRenderTransAdd;
+//		if( FBitSet( ptexture->flags, STUDIO_NF_MASKED ))
+//			return kRenderTransAlpha;
+	}
+	return ent->curstate.rendermode;
 }
 
 /*
@@ -3003,7 +3008,7 @@ void GL_StudioSetRenderMode( int rendermode )
 		break;
 	case kRenderTransColor:
 		pglBlendFunc( GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA );
-		pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_ALPHA );
+		pglTexEnvi( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
 		pglEnable( GL_BLEND );
 		break;
 	case kRenderTransAdd:
@@ -3027,7 +3032,9 @@ void GL_StudioSetRenderMode( int rendermode )
 ===============
 GL_StudioDrawShadow
 
-NOTE: this code sucessfully working with ShadowHack only in Release build
+g-cont: don't modify this code it's 100% matched with
+original GoldSrc code and used in some mods to enable
+studio shadows with some asm tricks
 ===============
 */
 static void GL_StudioDrawShadow( void )
@@ -3102,6 +3109,32 @@ void R_StudioRenderFinal( void )
 	if( r_drawentities->value == 6 )
 	{
 		R_StudioDrawAttachments();
+	}
+
+	if( r_drawentities->value == 7 )
+	{
+		vec3_t	origin;
+
+		pglDisable( GL_TEXTURE_2D );
+		pglDisable( GL_DEPTH_TEST );
+
+		Matrix3x4_OriginFromMatrix( g_studio.rotationmatrix, origin );
+
+		pglBegin( GL_LINES );
+		pglColor3f( 1, 0.5, 0 );
+		pglVertex3fv( origin );
+		pglVertex3fv( g_studio.lightspot );
+		pglEnd();
+
+		pglPointSize( 5.0f );
+		pglColor3f( 1, 0, 0 );
+		pglBegin( GL_POINTS );
+		pglVertex3fv( g_studio.lightspot );
+		pglEnd();
+		pglPointSize( 1.0f );
+
+		pglEnable( GL_DEPTH_TEST );
+		pglEnable( GL_TEXTURE_2D );
 	}
 
 	R_StudioRestoreRenderer();
@@ -3363,10 +3396,8 @@ static int R_StudioDrawPlayer( int flags, entity_state_t *pplayer )
 			RI.currententity->curstate.body = 255;
 		}
 
-		if(!( host.developer == 0 && cl.maxclients == 1 ) && ( RI.currentmodel == RI.currententity->model ))
-		{
+		if( !( !host_developer.value && cl.maxclients == 1 ) && ( RI.currentmodel == RI.currententity->model ))
 			RI.currententity->curstate.body = 1; // force helmet
-		}
 
 		lighting.plightvec = dir;
 		R_StudioDynamicLight( RI.currententity, &lighting );
@@ -3395,7 +3426,7 @@ static int R_StudioDrawPlayer( int flags, entity_state_t *pplayer )
 		if( pplayer->weaponmodel )
 		{
 			cl_entity_t	saveent = *RI.currententity;
-			model_t		*pweaponmodel = Mod_Handle( pplayer->weaponmodel );
+			model_t		*pweaponmodel = CL_ModelHandle( pplayer->weaponmodel );
 
 			m_pStudioHeader = (studiohdr_t *)Mod_StudioExtradata( pweaponmodel );
 
@@ -3555,6 +3586,8 @@ void R_DrawStudioModel( cl_entity_t *e )
 			{
 				RI.currententity = parent;
 				R_StudioDrawModelInternal( RI.currententity, 0 );
+				VectorCopy( parent->curstate.origin, e->curstate.origin );
+				VectorCopy( parent->origin, e->origin );
 				RI.currententity = e;
 			}
 		}
@@ -3630,7 +3663,7 @@ void R_DrawViewModel( void )
 	if( !RI.currententity->model )
 		return;
 
-	// hack the depth range to prevent view model from poking into walls
+	// adjust the depth range to prevent view model from poking into walls
 	pglDepthRange( gldepthmin, gldepthmin + 0.3f * ( gldepthmax - gldepthmin ));
 	RI.currentmodel = RI.currententity->model;
 
@@ -3694,8 +3727,7 @@ static void R_StudioLoadTexture( model_t *mod, studiohdr_t *phdr, mstudiotexture
 		tx = Mem_Alloc( mod->mempool, sizeof( *tx ) + size );
 		mod->textures[i] = tx;
 
-		// parse ranges and store it
-		// HACKHACK: store ranges into anim_min, anim_max etc
+		// store ranges into anim_min, anim_max etc
 		if( !Q_strnicmp( ptexture->name, "DM_Base", 7 ))
 		{
 			Q_strncpy( tx->name, "DM_Base", sizeof( tx->name ));
@@ -3706,14 +3738,14 @@ static void R_StudioLoadTexture( model_t *mod, studiohdr_t *phdr, mstudiotexture
 		}
 		else
 		{
-			Q_strncpy( tx->name, "DM_User", sizeof( tx->name ));	// custom remapped
+			Q_strncpy( tx->name, "DM_User", sizeof( tx->name )); // custom remapped
 			Q_strncpy( val, ptexture->name + 7, 4 );  
-			tx->anim_min = bound( 0, Q_atoi( val ), 255 );	// topcolor start
+			tx->anim_min = bound( 0, Q_atoi( val ), 255 ); // topcolor start
 			Q_strncpy( val, ptexture->name + 11, 4 ); 
-			tx->anim_max = bound( 0, Q_atoi( val ), 255 );	// topcolor end
+			tx->anim_max = bound( 0, Q_atoi( val ), 255 ); // topcolor end
 			// bottomcolor start always equal is (topcolor end + 1)
 			Q_strncpy( val, ptexture->name + 15, 4 ); 
-			tx->anim_total = bound( 0, Q_atoi( val ), 255 );	// bottomcolor end
+			tx->anim_total = bound( 0, Q_atoi( val ), 255 ); // bottomcolor end
 		}
 
 		tx->width = ptexture->width;
@@ -3730,8 +3762,8 @@ static void R_StudioLoadTexture( model_t *mod, studiohdr_t *phdr, mstudiotexture
 	}
 
 	Q_strncpy( mdlname, mod->name, sizeof( mdlname ));
-	FS_FileBase( ptexture->name, name );
-	FS_StripExtension( mdlname );
+	COM_FileBase( ptexture->name, name );
+	COM_StripExtension( mdlname );
 
 	// loading texture filter for studiomodel
 	if( !FBitSet( ptexture->flags, STUDIO_NF_COLORMAP ))
@@ -3753,172 +3785,60 @@ static void R_StudioLoadTexture( model_t *mod, studiohdr_t *phdr, mstudiotexture
 
 	if( !ptexture->index )
 	{
-		MsgDev( D_WARN, "%s has null texture %s\n", mod->name, ptexture->name );
 		ptexture->index = tr.defaultTexture;
 	}
-	else
+	else if( tx )
 	{
 		// duplicate texnum for easy acess 
-		if( tx ) tx->gl_texturenum = ptexture->index;
+		tx->gl_texturenum = ptexture->index;
 	}
 }
 
 /*
 =================
-R_StudioLoadHeader
+Mod_StudioLoadTextures
 =================
 */
-studiohdr_t *R_StudioLoadHeader( model_t *mod, const void *buffer )
+void Mod_StudioLoadTextures( model_t *mod, void *data )
 {
-	byte		*pin;
-	studiohdr_t	*phdr;
+	studiohdr_t	*phdr = (studiohdr_t *)data;
 	mstudiotexture_t	*ptexture;
 	int		i;
 
-	if( !buffer ) return NULL;
+	if( !phdr || host.type == HOST_DEDICATED )
+		return;
 
-	pin = (byte *)buffer;
-	phdr = (studiohdr_t *)pin;
-	i = phdr->version;
-
-	if( i != STUDIO_VERSION )
+	ptexture = (mstudiotexture_t *)(((byte *)phdr) + phdr->textureindex);
+	if( phdr->textureindex > 0 && phdr->numtextures <= MAXSTUDIOSKINS )
 	{
-		MsgDev( D_ERROR, "%s has wrong version number (%i should be %i)\n", mod->name, i, STUDIO_VERSION );
-		return NULL;
-	}	
-
-	if( host.type != HOST_DEDICATED )
-	{
-		ptexture = (mstudiotexture_t *)(((byte *)phdr) + phdr->textureindex);
-		if( phdr->textureindex > 0 && phdr->numtextures <= MAXSTUDIOSKINS )
-		{
-			for( i = 0; i < phdr->numtextures; i++ )
-				R_StudioLoadTexture( mod, phdr, &ptexture[i] );
-		}
+		for( i = 0; i < phdr->numtextures; i++ )
+			R_StudioLoadTexture( mod, phdr, &ptexture[i] );
 	}
-
-	return (studiohdr_t *)buffer;
 }
 
 /*
 =================
-Mod_LoadStudioModel
+Mod_StudioLoadTextures
 =================
 */
-void Mod_LoadStudioModel( model_t *mod, const void *buffer, qboolean *loaded )
+void Mod_StudioUnloadTextures( void *data )
 {
-	studiohdr_t	*phdr;
-
-	if( loaded ) *loaded = false;
-	loadmodel->mempool = Mem_AllocPool( va( "^2%s^7", loadmodel->name ));
-	loadmodel->type = mod_studio;
-
-	phdr = R_StudioLoadHeader( mod, buffer );
-	if( !phdr ) return;	// bad model
-
-	if( phdr->numtextures == 0 )
-	{
-		studiohdr_t	*thdr;
-		byte		*in, *out;
-		void		*buffer2 = NULL;
-		size_t		size1, size2;
-
-		buffer2 = FS_LoadFile( R_StudioTexName( mod ), NULL, false );
-		thdr = R_StudioLoadHeader( mod, buffer2 );
-
-		if( !thdr )
-		{
-			MsgDev( D_WARN, "Mod_LoadStudioModel: %s missing textures file\n", mod->name ); 
-			if( buffer2 ) Mem_Free( buffer2 );
-		}
-                    else
-                    {
-			// give space for textures and skinrefs
-			size1 = thdr->numtextures * sizeof( mstudiotexture_t );
-			size2 = thdr->numskinfamilies * thdr->numskinref * sizeof( short );
-			mod->cache.data = Mem_Alloc( loadmodel->mempool, phdr->length + size1 + size2 );
-			memcpy( loadmodel->cache.data, buffer, phdr->length ); // copy main mdl buffer
-			phdr = (studiohdr_t *)loadmodel->cache.data; // get the new pointer on studiohdr
-			phdr->numskinfamilies = thdr->numskinfamilies;
-			phdr->numtextures = thdr->numtextures;
-			phdr->numskinref = thdr->numskinref;
-			phdr->textureindex = phdr->length;
-			phdr->skinindex = phdr->textureindex + size1;
-
-			in = (byte *)thdr + thdr->textureindex;
-			out = (byte *)phdr + phdr->textureindex;
-			memcpy( out, in, size1 + size2 );	// copy textures + skinrefs
-			phdr->length += size1 + size2;
-			Mem_Free( buffer2 ); // release T.mdl
-		}
-	}
-	else
-	{
-		// NOTE: we wan't keep raw textures in memory. just cutoff model pointer above texture base
-		loadmodel->cache.data = Mem_Alloc( loadmodel->mempool, phdr->texturedataindex );
-		memcpy( loadmodel->cache.data, buffer, phdr->texturedataindex );
-		phdr->length = phdr->texturedataindex;	// update model size
-	}
-
-	// setup bounding box
-	if( !VectorCompare( vec3_origin, phdr->bbmin ))
-	{
-		// clipping bounding box
-		VectorCopy( phdr->bbmin, loadmodel->mins );
-		VectorCopy( phdr->bbmax, loadmodel->maxs );
-	}
-	else if( !VectorCompare( vec3_origin, phdr->min ))
-	{
-		// movement bounding box
-		VectorCopy( phdr->min, loadmodel->mins );
-		VectorCopy( phdr->max, loadmodel->maxs );
-	}
-	else
-	{
-		// well compute bounds from vertices and round to nearest even values
-		Mod_StudioComputeBounds( phdr, loadmodel->mins, loadmodel->maxs, true );
-		RoundUpHullSize( loadmodel->mins );
-		RoundUpHullSize( loadmodel->maxs );
-	}
-
-	loadmodel->numframes = R_StudioBodyVariations( loadmodel );
-	loadmodel->radius = RadiusFromBounds( loadmodel->mins, loadmodel->maxs );
-	loadmodel->flags = phdr->flags; // copy header flags
-
-	if( loaded ) *loaded = true;
-}
-
-/*
-=================
-Mod_UnloadStudioModel
-=================
-*/
-void Mod_UnloadStudioModel( model_t *mod )
-{
-	studiohdr_t	*pstudio;
+	studiohdr_t	*phdr = (studiohdr_t *)data;
 	mstudiotexture_t	*ptexture;
 	int		i;
 
-	ASSERT( mod != NULL );
+	if( !phdr || host.type == HOST_DEDICATED )
+		return;
 
-	if( mod->type != mod_studio )
-		return; // not a studio
-
-	pstudio = mod->cache.data;
-	if( !pstudio ) return; // already freed
-
-	ptexture = (mstudiotexture_t *)(((byte *)pstudio) + pstudio->textureindex);
+	ptexture = (mstudiotexture_t *)(((byte *)phdr) + phdr->textureindex);
 
 	// release all textures
-	for( i = 0; i < pstudio->numtextures; i++ )
+	for( i = 0; i < phdr->numtextures; i++ )
 	{
 		if( ptexture[i].index == tr.defaultTexture )
 			continue;
 		GL_FreeTexture( ptexture[i].index );
 	}
-
-	Mem_FreePool( &mod->mempool );
-	memset( mod, 0, sizeof( *mod ));
 }
 		
 static engine_studio_api_t gStudioAPI =
@@ -3926,9 +3846,9 @@ static engine_studio_api_t gStudioAPI =
 	Mod_Calloc,
 	Mod_CacheCheck,
 	Mod_LoadCacheFile,
-	Mod_ForName,
+	pfnMod_ForName,
 	Mod_StudioExtradata,
-	Mod_Handle,
+	CL_ModelHandle,
 	pfnGetCurrentEntity,
 	pfnPlayerInfo,
 	R_StudioGetPlayerState,
@@ -3993,15 +3913,8 @@ void CL_InitStudioAPI( void )
 	if( !clgame.dllFuncs.pfnGetStudioModelInterface )
 		return;
 
-	MsgDev( D_NOTE, "InitStudioAPI " );
-
 	if( clgame.dllFuncs.pfnGetStudioModelInterface( STUDIO_INTERFACE_VERSION, &pStudioDraw, &gStudioAPI ))
-	{
-		MsgDev( D_NOTE, "- ok\n" );
 		return;
-	}
-
-	MsgDev( D_NOTE, "- failed\n" );
 
 	// NOTE: we always return true even if game interface was not correct
 	// because we need Draw our StudioModels

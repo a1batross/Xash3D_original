@@ -264,9 +264,9 @@ void Host_Say( edict_t *pEntity, int teamonly )
 	}
 
 // make sure the text has content
-	for ( char *pc = p; pc != NULL && *pc != 0; pc++ )
+	for ( byte *pc = (byte *)p; pc != NULL && *pc != 0; pc++ )
 	{
-		if ( !isspace( *pc ) )
+		if ( !Q_isspace( *pc ) )
 		{
 			pc = NULL;	// we've found an alphanumeric character,  so text is valid
 			break;
@@ -1025,7 +1025,6 @@ int AddToFullPack( struct entity_state_s *state, int e, edict_t *ent, edict_t *h
 	// Don't send entity to local client if the client says it's predicting the entity itself.
 	if ( ent->v.flags & FL_SKIPLOCALHOST )
 	{
-		if ( hostflags & 4 ) return 0; // it's a portal pass
 		if ( ( hostflags & 1 ) && ( ent->v.owner == host ) )
 			return 0;
 	}

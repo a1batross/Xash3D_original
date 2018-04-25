@@ -694,7 +694,6 @@ void QuaternionSlerpNoAlign( const vec4_t p, const vec4_t q, float t, vec4_t qt 
 		}
 		else
 		{
-			// TODO: add short circuit for cosom == 1.0f?
 			sclp = 1.0f - t;
 			sclq = t;
 		}

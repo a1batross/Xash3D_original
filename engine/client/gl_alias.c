@@ -53,6 +53,7 @@ ALIAS MODEL DISPLAY LIST GENERATION
 
 =================================================================
 */
+static qboolean	m_fDoRemap;
 static aliashdr_t	*m_pAliasHeader;
 static trivertex_t	*g_poseverts[MAXALIASFRAMES];
 static dtriangle_t	g_triangles[MAXALIASTRIS];
@@ -86,6 +87,7 @@ R_StudioInit
 void R_AliasInit( void )
 {
 	g_alias.interpolate = true;
+	m_fDoRemap = false;
 }
 
 /*
@@ -410,84 +412,21 @@ void *Mod_LoadAliasGroup( void *pin, maliasframedesc_t *frame )
 }
 
 /*
-=================================================================
-
-SKIN REFLOODING
-
-=================================================================
-*/
-typedef struct
-{
-	short	x, y;
-} floodfill_t;
-
-// must be a power of 2
-#define FLOODFILL_FIFO_SIZE	0x1000
-#define FLOODFILL_FIFO_MASK	(FLOODFILL_FIFO_SIZE - 1)
-
-#define FLOODFILL_STEP( off, dx, dy ) \
-{ \
-	if( pos[off] == fillcolor ) \
-	{ \
-		pos[off] = 255; \
-		fifo[inpt].x = x + (dx), fifo[inpt].y = y + (dy); \
-		inpt = (inpt + 1) & FLOODFILL_FIFO_MASK; \
-	} \
-	else if( pos[off] != 255 ) fdc = pos[off]; \
-}
-
-/*
-=================
-Mod_FloodFillSkin
-
-Fill background pixels so mipmapping doesn't have haloes - Ed
-=================
-*/
-void Mod_FloodFillSkin( byte *skin, int skinwidth, int skinheight )
-{
-	byte		fillcolor = *skin; // assume this is the pixel to fill
-	floodfill_t	fifo[FLOODFILL_FIFO_SIZE];
-	int		inpt = 0, outpt = 0;
-	int		filledcolor = 0; // g-cont. opaque black is probably always 0-th index
-
-	// can't fill to filled color or to transparent color (used as visited marker)
-	if(( fillcolor == filledcolor ) || ( fillcolor == 255 ))
-		return;
-
-	fifo[inpt].x = 0, fifo[inpt].y = 0;
-	inpt = (inpt + 1) & FLOODFILL_FIFO_MASK;
-
-	while( outpt != inpt )
-	{
-		int	x = fifo[outpt].x, y = fifo[outpt].y;
-		byte	*pos = &skin[x + skinwidth * y];
-		int	fdc = filledcolor;
-
-		outpt = (outpt + 1) & FLOODFILL_FIFO_MASK;
-
-		if( x > 0 ) FLOODFILL_STEP( -1, -1, 0 );
-		if( x < skinwidth - 1 ) FLOODFILL_STEP( 1, 1, 0 );
-		if( y > 0 ) FLOODFILL_STEP( -skinwidth, 0, -1 );
-		if( y < skinheight - 1 ) FLOODFILL_STEP( skinwidth, 0, 1 );
-		skin[x + skinwidth * y] = fdc;
-	}
-}
-
-/*
 ===============
 Mod_CreateSkinData
 ===============
 */
-rgbdata_t *Mod_CreateSkinData( byte *data, int width, int height )
+rgbdata_t *Mod_CreateSkinData( model_t *mod, byte *data, int width, int height )
 {
 	static rgbdata_t	skin;
+	char		name[MAX_QPATH];
 	int		i;
 
 	skin.width = width;
 	skin.height = height;
 	skin.depth = 1;
 	skin.type = PF_INDEXED_24;
-	skin.flags = IMAGE_HAS_COLOR;
+	skin.flags = IMAGE_HAS_COLOR|IMAGE_QUAKEPAL;
 	skin.encode = DXT_ENCODE_DEFAULT;
 	skin.numMips = 1;
 	skin.buffer = data;
@@ -503,18 +442,47 @@ rgbdata_t *Mod_CreateSkinData( byte *data, int width, int height )
 		}
 	}
 
+	COM_FileBase( loadmodel->name, name );
+
+	// for alias models only player can have remap textures
+	if( mod != NULL && !Q_stricmp( name, "player" ))
+	{
+		texture_t	*tx = NULL;
+		int	i, size;
+
+		i = mod->numtextures;
+		mod->textures = (texture_t **)Mem_Realloc( mod->mempool, mod->textures, ( i + 1 ) * sizeof( texture_t* ));
+		size = width * height + 768;
+		tx = Mem_Alloc( mod->mempool, sizeof( *tx ) + size );
+		mod->textures[i] = tx;
+
+		Q_strncpy( tx->name, "DM_Skin", sizeof( tx->name ));
+		tx->anim_min = SHIRT_HUE_START; // topcolor start
+		tx->anim_max = SHIRT_HUE_END; // topcolor end
+		// bottomcolor start always equal is (topcolor end + 1)
+		tx->anim_total = PANTS_HUE_END;// bottomcolor end
+
+		tx->width = width;
+		tx->height = height;
+
+		// the pixels immediately follow the structures
+		memcpy( (tx+1), data, width * height );
+		memcpy( ((byte *)(tx+1)+(width * height)), skin.palette, 768 );
+		mod->numtextures++;	// done
+	}
+
 	// make an copy
 	return FS_CopyImage( &skin );
 }
 
-void *Mod_LoadSignleSkin( daliasskintype_t *pskintype, int skinnum, int size )
+void *Mod_LoadSingleSkin( daliasskintype_t *pskintype, int skinnum, int size )
 {
 	string	name, lumaname;
 	rgbdata_t	*pic;
 
 	Q_snprintf( name, sizeof( name ), "%s:frame%i", loadmodel->name, skinnum );
 	Q_snprintf( lumaname, sizeof( lumaname ), "%s:luma%i", loadmodel->name, skinnum );
-	pic = Mod_CreateSkinData( (byte *)(pskintype + 1), m_pAliasHeader->skinwidth, m_pAliasHeader->skinheight );
+	pic = Mod_CreateSkinData( loadmodel, (byte *)(pskintype + 1), m_pAliasHeader->skinwidth, m_pAliasHeader->skinheight );
 
 	m_pAliasHeader->gl_texturenum[skinnum][0] =
 	m_pAliasHeader->gl_texturenum[skinnum][1] =
@@ -524,7 +492,7 @@ void *Mod_LoadSignleSkin( daliasskintype_t *pskintype, int skinnum, int size )
 
 	if( R_GetTexture( m_pAliasHeader->gl_texturenum[skinnum][0] )->flags & TF_HAS_LUMA )
 	{
-		pic = Mod_CreateSkinData( (byte *)(pskintype + 1), m_pAliasHeader->skinwidth, m_pAliasHeader->skinheight );
+		pic = Mod_CreateSkinData( NULL, (byte *)(pskintype + 1), m_pAliasHeader->skinwidth, m_pAliasHeader->skinheight );
 		m_pAliasHeader->fb_texturenum[skinnum][0] =
 		m_pAliasHeader->fb_texturenum[skinnum][1] =
 		m_pAliasHeader->fb_texturenum[skinnum][2] =
@@ -552,14 +520,14 @@ void *Mod_LoadGroupSkin( daliasskintype_t *pskintype, int skinnum, int size )
 	for( i = 0; i < pinskingroup->numskins; i++ )
 	{
 		Q_snprintf( name, sizeof( name ), "%s_%i_%i", loadmodel->name, skinnum, i );
-		pic = Mod_CreateSkinData( (byte *)(pskintype), m_pAliasHeader->skinwidth, m_pAliasHeader->skinheight );
+		pic = Mod_CreateSkinData( loadmodel, (byte *)(pskintype), m_pAliasHeader->skinwidth, m_pAliasHeader->skinheight );
 		m_pAliasHeader->gl_texturenum[skinnum][i & 3] = GL_LoadTextureInternal( name, pic, 0, false );
 		FS_FreeImage( pic );
 
 		if( R_GetTexture( m_pAliasHeader->gl_texturenum[skinnum][i & 3] )->flags & TF_HAS_LUMA )
 		{
 			Q_snprintf( lumaname, sizeof( lumaname ), "%s_%i_%i_luma", loadmodel->name, skinnum, i );
-			pic = Mod_CreateSkinData((byte *)(pskintype), m_pAliasHeader->skinwidth, m_pAliasHeader->skinheight );
+			pic = Mod_CreateSkinData( NULL, (byte *)(pskintype), m_pAliasHeader->skinwidth, m_pAliasHeader->skinheight );
 			m_pAliasHeader->fb_texturenum[skinnum][i & 3] = GL_LoadTextureInternal( lumaname, pic, TF_MAKELUMA, false );
 			FS_FreeImage( pic );
 		}
@@ -594,7 +562,7 @@ void *Mod_LoadAllSkins( int numskins, daliasskintype_t *pskintype )
 	{
 		if( pskintype->type == ALIAS_SKIN_SINGLE )
 		{
-			pskintype = (daliasskintype_t *)Mod_LoadSignleSkin( pskintype, i, size );
+			pskintype = (daliasskintype_t *)Mod_LoadSingleSkin( pskintype, i, size );
 		}
 		else
 		{
@@ -783,7 +751,7 @@ void Mod_UnloadAliasModel( model_t *mod )
 	aliashdr_t	*palias;
 	int		i, j;
 
-	ASSERT( mod != NULL );
+	Assert( mod != NULL );
 
 	if( mod->type != mod_alias )
 		return; // not an alias
@@ -960,9 +928,9 @@ void R_AliasDynamicLight( cl_entity_t *ent, alight_t *plight )
 
 			VectorAdd( lightDir, dist, lightDir );
 
-			finalLight[0] += LightToTexGamma( dl->color.r ) * ( add * 512.0f );
-			finalLight[1] += LightToTexGamma( dl->color.g ) * ( add * 512.0f );
-			finalLight[2] += LightToTexGamma( dl->color.b ) * ( add * 512.0f );
+			finalLight[0] += LightToTexGamma( dl->color.r ) * ( add / 256.0f ) * 2.0f;
+			finalLight[1] += LightToTexGamma( dl->color.g ) * ( add / 256.0f ) * 2.0f;
+			finalLight[2] += LightToTexGamma( dl->color.b ) * ( add / 256.0f ) * 2.0f;
 		}
 	}
 
@@ -1050,6 +1018,23 @@ void R_AliasLighting( float *lv, const vec3_t normal )
 }
 
 /*
+===============
+R_AliasSetRemapColors
+
+===============
+*/
+void R_AliasSetRemapColors( int newTop, int newBottom )
+{
+	CL_AllocRemapInfo( newTop, newBottom );
+
+	if( CL_GetRemapInfoForEntity( RI.currententity ))
+	{
+		CL_UpdateRemapInfo( newTop, newBottom );
+		m_fDoRemap = true;
+	}
+}
+
+/*
 =============
 GL_DrawAliasFrame
 =============
@@ -1087,14 +1072,14 @@ void GL_DrawAliasFrame( aliashdr_t *paliashdr )
 		do
 		{
 			// texture coordinates come from the draw list
-			if( glState.activeTMU > 0 )
+			if( GL_Support( GL_ARB_MULTITEXTURE ) && glState.activeTMU > 0 )
 			{
 				GL_MultiTexCoord2f( GL_TEXTURE0, ((float *)order)[0], ((float *)order)[1] );
 				GL_MultiTexCoord2f( GL_TEXTURE1, ((float *)order)[0], ((float *)order)[1] );
 			}
 			else
 			{
-				pglTexCoord2f (((float *)order)[0], ((float *)order)[1]);
+				pglTexCoord2f( ((float *)order)[0], ((float *)order)[1] );
 			}
 			order += 2;
 
@@ -1209,7 +1194,7 @@ void R_AliasLerpMovement( cl_entity_t *e )
 	if( e->player || e->curstate.movetype != MOVETYPE_STEP )
 		return; // monsters only
 
-	// Msg( "%4.2f %.2f %.2f\n", f, e->curstate.animtime, g_studio.time );
+	// Con_Printf( "%4.2f %.2f %.2f\n", f, e->curstate.animtime, g_studio.time );
 	VectorLerp( e->latched.prevorigin, f, e->curstate.origin, e->origin );
 
 	if( !VectorCompare( e->curstate.angles, e->latched.prevangles ))
@@ -1244,10 +1229,15 @@ void R_SetupAliasFrame( cl_entity_t *e, aliashdr_t *paliashdr )
 	oldframe = e->latched.prevframe;
 	newframe = e->curstate.frame;
 
-	if(( newframe >= paliashdr->numframes ) || ( newframe < 0 ))
+	if( newframe < 0 )
 	{
-		MsgDev( D_ERROR, "R_SetupAliasFrame: no such frame %d\n", newframe );
 		newframe = 0;
+	}
+	else if( newframe >= paliashdr->numframes )
+	{
+		if( newframe > paliashdr->numframes )
+			MsgDev( D_WARN, "R_GetAliasFrame: no such frame %d (%s)\n", newframe, e->model->name );
+		newframe = paliashdr->numframes - 1;
 	}
 
 	if(( oldframe >= paliashdr->numframes ) || ( oldframe < 0 ))
@@ -1319,6 +1309,31 @@ static void R_AliasDrawAbsBBox( cl_entity_t *e, const vec3_t absmin, const vec3_
 	TriRenderMode( kRenderNormal );
 }
 
+static void R_AliasDrawLightTrace( cl_entity_t *e )
+{
+	if( r_drawentities->value == 7 )
+	{
+		pglDisable( GL_TEXTURE_2D );
+		pglDisable( GL_DEPTH_TEST );
+
+		pglBegin( GL_LINES );
+		pglColor3f( 1, 0.5, 0 );
+		pglVertex3fv( e->origin );
+		pglVertex3fv( g_alias.lightspot );
+		pglEnd();
+
+		pglPointSize( 5.0f );
+		pglColor3f( 1, 0, 0 );
+		pglBegin( GL_POINTS );
+		pglVertex3fv( g_alias.lightspot );
+		pglEnd();
+		pglPointSize( 1.0f );
+
+		pglEnable( GL_DEPTH_TEST );
+		pglEnable( GL_TEXTURE_2D );
+	}
+}
+
 /*
 ================
 R_AliasSetupTimings
@@ -1338,6 +1353,8 @@ static void R_AliasSetupTimings( void )
 		// menu stuff
 		g_alias.time = host.realtime;
 	}
+
+	m_fDoRemap = false;
 }
 
 /*
@@ -1350,8 +1367,10 @@ void R_DrawAliasModel( cl_entity_t *e )
 {
 	model_t		*clmodel;
 	vec3_t		absmin, absmax;
+	remap_info_t	*pinfo = NULL;
 	int		anim, skin;
 	alight_t		lighting;
+	player_info_t	*playerinfo;
 	vec3_t		dir, angles;
 
 	clmodel = RI.currententity->model;
@@ -1371,7 +1390,7 @@ void R_DrawAliasModel( cl_entity_t *e )
 	// init time
 	R_AliasSetupTimings();
 
-	// HACKHACK: keep the angles unchanged
+	// angles will be modify below keep original
 	VectorCopy( e->angles, angles );
 
 	R_AliasLerpMovement( e );
@@ -1401,6 +1420,15 @@ void R_DrawAliasModel( cl_entity_t *e )
 	R_AliasSetupLighting( &lighting );
 	GL_SetRenderMode( e->curstate.rendermode );
 
+	// setup remapping only for players
+	if( e->player && ( playerinfo = pfnPlayerInfo( e->curstate.number - 1 )) != NULL )
+	{
+		// get remap colors
+		int topcolor = bound( 0, playerinfo->topcolor, 13 );
+		int bottomcolor = bound( 0, playerinfo->bottomcolor, 13 );
+		R_AliasSetRemapColors( topcolor, bottomcolor );
+	}
+
 	pglTranslatef( m_pAliasHeader->scale_origin[0], m_pAliasHeader->scale_origin[1], m_pAliasHeader->scale_origin[2] );
 
 	if( tr.fFlipViewModel )
@@ -1409,13 +1437,17 @@ void R_DrawAliasModel( cl_entity_t *e )
 
 	anim = (int)(g_alias.time * 10) & 3;
 	skin = bound( 0, RI.currententity->curstate.skin, m_pAliasHeader->numskins - 1 );
+	if( m_fDoRemap ) pinfo = CL_GetRemapInfoForEntity( e );
 
 	if( r_lightmap->value && !r_fullbright->value )
 		GL_Bind( GL_TEXTURE0, tr.whiteTexture );
+	else if( pinfo != NULL && pinfo->textures[skin] != 0 )
+		GL_Bind( GL_TEXTURE0, pinfo->textures[skin] );	// FIXME: allow remapping for skingroups someday
 	else GL_Bind( GL_TEXTURE0, m_pAliasHeader->gl_texturenum[skin][anim] );
+
 	pglTexEnvf( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_MODULATE );
 
-	if( m_pAliasHeader->fb_texturenum[skin][anim] )
+	if( GL_Support( GL_ARB_MULTITEXTURE ) && m_pAliasHeader->fb_texturenum[skin][anim] )
 	{
 		GL_Bind( GL_TEXTURE1, m_pAliasHeader->fb_texturenum[skin][anim] );
 		pglTexEnvf( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_ADD );
@@ -1424,7 +1456,7 @@ void R_DrawAliasModel( cl_entity_t *e )
 	pglShadeModel( GL_SMOOTH );
 	R_SetupAliasFrame( e, m_pAliasHeader );
 
-	if( m_pAliasHeader->fb_texturenum[skin][anim] )
+	if( GL_Support( GL_ARB_MULTITEXTURE ) && m_pAliasHeader->fb_texturenum[skin][anim] )
 		GL_CleanUpTextureUnits( 1 );
 
 	pglShadeModel( GL_FLAT );
@@ -1435,6 +1467,7 @@ void R_DrawAliasModel( cl_entity_t *e )
 	VectorAdd( e->origin, clmodel->maxs, absmax );
 
 	R_AliasDrawAbsBBox( e, absmin, absmax );
+	R_AliasDrawLightTrace( e );
 
 	pglTexEnvf( GL_TEXTURE_ENV, GL_TEXTURE_ENV_MODE, GL_REPLACE );
 
@@ -1457,7 +1490,7 @@ void R_DrawAliasModel( cl_entity_t *e )
 		R_LoadIdentity();
 	}
 
-	// HACKHACK: keep the angles unchanged
+	// restore original angles
 	VectorCopy( angles, e->angles );
 }
 

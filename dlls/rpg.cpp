@@ -47,12 +47,20 @@ LINK_ENTITY_TO_CLASS( laser_spot, CLaserSpot );
 
 //=========================================================
 //=========================================================
-CLaserSpot *CLaserSpot::CreateSpot( void )
+CLaserSpot *CLaserSpot::CreateSpot( edict_t *pOwner )
 {
 	CLaserSpot *pSpot = GetClassPtr( (CLaserSpot *)NULL );
 	pSpot->Spawn();
 
 	pSpot->pev->classname = MAKE_STRING("laser_spot");
+
+	if( pOwner ) 
+	{
+		// predictable laserspot
+		pSpot->pev->flags |= FL_SKIPLOCALHOST;
+		pOwner->v.flags |= FL_LASERDOT;
+		pSpot->pev->owner = pOwner;
+	}
 
 	return pSpot;
 }
@@ -79,6 +87,9 @@ void CLaserSpot::Spawn( void )
 void CLaserSpot::Suspend( float flSuspendTime )
 {
 	pev->effects |= EF_NODRAW;
+
+	if( !FNullEnt( pev->owner ))
+		pev->owner->v.flags &= ~FL_LASERDOT;
 	
 	SetThink( Revive );
 	pev->nextthink = gpGlobals->time + flSuspendTime;
@@ -91,7 +102,18 @@ void CLaserSpot::Revive( void )
 {
 	pev->effects &= ~EF_NODRAW;
 
+	if( !FNullEnt( pev->owner ))
+		pev->owner->v.flags |= FL_LASERDOT;
+
 	SetThink( NULL );
+}
+
+void CLaserSpot :: Killed( entvars_t *pevAttacker, int iGib )
+{
+	// tell the owner about laserspot
+	if( !FNullEnt( pev->owner ))
+		pev->owner->v.flags &= ~FL_LASERDOT;
+	CBaseEntity :: Killed( pevAttacker, iGib );
 }
 
 void CLaserSpot::Precache( void )
@@ -557,7 +579,7 @@ void CRpg::UpdateSpot( void )
 	{
 		if (!m_pSpot)
 		{
-			m_pSpot = CLaserSpot::CreateSpot();
+			m_pSpot = CLaserSpot::CreateSpot( m_pPlayer->edict());
 		}
 
 		UTIL_MakeVectors( m_pPlayer->pev->v_angle );

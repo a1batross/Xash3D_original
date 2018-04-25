@@ -777,7 +777,7 @@ void DSP_Process( int idsp, portable_samplepair_t *pbfront, int sampleCount )
 	if( dsp_off->value )
 		return;
 
-	// HACKHACK: don't process while in menu
+	// don't process DSP while in menu
 	if( cls.key_dest == key_menu || !sampleCount )
 		return;
 
@@ -868,9 +868,9 @@ float DSP_GetGain( int idsp )
 void SX_Profiling_f( void )
 {
 	portable_samplepair_t	testbuffer[512];
-	int			i, calls = 10000;
-	double			start, end;
 	float			oldroom = room_type->value;
+	double			start, end;
+	int			i, calls;
 
 	for( i = 0; i < 512; i++ )
 	{
@@ -885,16 +885,16 @@ void SX_Profiling_f( void )
 		CheckNewDspPresets(); // we just need idsp_room immediately, for message below
 	}
 
-	MsgDev( D_INFO, "Profiling 10000 calls to DSP. Sample count is 512, room_type is %i\n", idsp_room );
+	Con_Printf( "Profiling 10000 calls to DSP. Sample count is 512, room_type is %i\n", idsp_room );
 
 	start = Sys_DoubleTime();
-	for( ; calls; calls-- )
+	for( calls = 10000; calls; calls-- )
 	{
 		DSP_Process( idsp_room, testbuffer, 512 );
 	}
 	end = Sys_DoubleTime();
 
-	MsgDev( D_INFO, "----------\nTook %g seconds.\n", end - start );
+	Con_Printf( "----------\nTook %g seconds.\n", end - start );
 
 	if( Cmd_Argc() > 1 )
 	{

@@ -44,6 +44,7 @@ RSC=rc.exe
 # PROP Target_Dir ""
 # ADD BASE CPP /nologo /W3 /GX /O2 /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /YX /c
 # ADD CPP /nologo /MD /W3 /GX /O2 /I "./" /I "common" /I "common/imagelib" /I "common/soundlib" /I "server" /I "client" /I "client/vgui" /I "../common" /I "../game_shared" /I "../pm_shared" /I "../utils/vgui/include" /D "WIN32" /D "NDEBUG" /D "_WINDOWS" /FD /c
+# SUBTRACT CPP /Fr /YX
 # ADD BASE MTL /nologo /D "NDEBUG" /win32
 # ADD MTL /nologo /D "NDEBUG" /mktyplib203 /win32
 # ADD BASE RSC /l 0x409 /d "NDEBUG"
@@ -63,8 +64,8 @@ SOURCE="$(InputPath)"
 BuildCmds= \
 	copy $(TargetDir)\xash.dll "D:\Xash3D\xash.dll" \
 	copy $(TargetDir)\xash.dll "D:\Paranoia2\xash.dll" \
-	copy $(TargetDir)\xash.dll "D:\Area51\xash.dll" \
 	copy $(TargetDir)\xash.dll "D:\Quake\xash.dll" \
+	copy $(TargetDir)\xash.dll "E:\Xash3D\xash.dll" \
 	
 
 "D:\Xash3D\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
@@ -73,10 +74,10 @@ BuildCmds= \
 "D:\Paranoia2\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
    $(BuildCmds)
 
-"D:\Area51\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+"D:\Quake\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
    $(BuildCmds)
 
-"D:\Quake\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+"E:\Xash3D\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
    $(BuildCmds)
 # End Custom Build
 
@@ -115,8 +116,8 @@ SOURCE="$(InputPath)"
 BuildCmds= \
 	copy $(TargetDir)\xash.dll "D:\Xash3D\xash.dll" \
 	copy $(TargetDir)\xash.dll "D:\Paranoia2\xash.dll" \
-	copy $(TargetDir)\xash.dll "D:\Area51\xash.dll" \
 	copy $(TargetDir)\xash.dll "D:\Quake\xash.dll" \
+	copy $(TargetDir)\xash.dll "E:\Xash3D\xash.dll" \
 	
 
 "D:\Xash3D\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
@@ -125,10 +126,10 @@ BuildCmds= \
 "D:\Paranoia2\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
    $(BuildCmds)
 
-"D:\Area51\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+"D:\Quake\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
    $(BuildCmds)
 
-"D:\Quake\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
+"E:\Xash3D\xash.dll" : $(SOURCE) "$(INTDIR)" "$(OUTDIR)"
    $(BuildCmds)
 # End Custom Build
 
@@ -151,7 +152,15 @@ SOURCE=.\common\build.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\common\cfgscript.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\client\cl_cmds.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\client\cl_custom.c
 # End Source File
 # Begin Source File
 
@@ -235,6 +244,10 @@ SOURCE=.\common\crtlib.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\common\custom.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\common\cvar.c
 # End Source File
 # Begin Source File
@@ -276,10 +289,6 @@ SOURCE=.\client\gl_frustum.c
 # Begin Source File
 
 SOURCE=.\client\gl_image.c
-# End Source File
-# Begin Source File
-
-SOURCE=.\client\gl_mirror.c
 # End Source File
 # Begin Source File
 
@@ -331,7 +340,7 @@ SOURCE=.\common\host.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\common\host_cmd.c
+SOURCE=.\common\host_state.c
 # End Source File
 # Begin Source File
 
@@ -388,6 +397,10 @@ SOURCE=.\common\mathlib.c
 # Begin Source File
 
 SOURCE=.\common\matrixlib.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\common\mod_bmodel.c
 # End Source File
 # Begin Source File
 
@@ -551,10 +564,6 @@ SOURCE=.\client\vgui\vgui_draw.c
 # End Source File
 # Begin Source File
 
-SOURCE=.\client\vgui\vgui_font.cpp
-# End Source File
-# Begin Source File
-
 SOURCE=.\client\vgui\vgui_input.cpp
 # End Source File
 # Begin Source File
@@ -584,6 +593,10 @@ SOURCE=.\client\cl_tent.h
 # Begin Source File
 
 SOURCE=.\client\client.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\common\com_strings.h
 # End Source File
 # Begin Source File
 

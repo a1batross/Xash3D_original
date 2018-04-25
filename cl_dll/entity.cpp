@@ -19,6 +19,7 @@
 #include "pm_defs.h"
 #include "pmtrace.h"	
 #include "pm_shared.h"
+#include "com_weapons.h"
 
 #define DLLEXPORT __declspec( dllexport )
 
@@ -27,6 +28,7 @@ void Game_AddObjects( void );
 extern vec3_t v_origin;
 
 int g_iAlive = 1;
+int g_iLaserDot = 0;
 
 extern "C" 
 {
@@ -88,6 +90,8 @@ structure, we need to copy them into the state structure at this point.
 void DLLEXPORT HUD_TxferLocalOverrides( struct entity_state_s *state, const struct clientdata_s *client )
 {
 	VectorCopy( client->origin, state->origin );
+
+	g_iLaserDot = (client->flags & FL_LASERDOT) ? 1 : 0;
 
 	// Spectator
 	state->iuser1 = client->iuser1;
@@ -504,6 +508,60 @@ void Beams( void )
 }
 #endif
 
+TEMPENTITY *m_pLaserSpot = NULL;
+
+void CL_UpdateLaserSpot( void )
+{
+	cl_entity_t *player = gEngfuncs.GetLocalPlayer();
+
+	if( !player ) return;
+
+	if(( g_iLaserDot && cl_lw->value ) && !m_pLaserSpot )
+	{
+		// create laserspot
+		int m_iSpotModel = gEngfuncs.pEventAPI->EV_FindModelIndex( "sprites/laserdot.spr" );
+	
+		m_pLaserSpot = gEngfuncs.pEfxAPI->R_TempSprite( Vector( 0, 0, 0), Vector( 0, 0, 0), 1.0, m_iSpotModel, kRenderGlow, kRenderFxNoDissipation, 1.0, 9999, FTENT_SPRCYCLE );
+		if( !m_pLaserSpot ) return;
+
+		m_pLaserSpot->entity.curstate.rendercolor.r = 200;
+		m_pLaserSpot->entity.curstate.rendercolor.g = 12;
+		m_pLaserSpot->entity.curstate.rendercolor.b = 12;
+//		gEngfuncs.Con_Printf( "CLaserSpot::Create()\n" );
+	}
+	else if(( !g_iLaserDot || !cl_lw->value ) && m_pLaserSpot )
+	{
+		// destroy laserspot
+//		gEngfuncs.Con_Printf( "CLaserSpot::Killed()\n" );
+		m_pLaserSpot->die = 0.0f;
+		m_pLaserSpot = NULL;
+		return;
+	}
+	else if( !m_pLaserSpot )
+	{
+		// inactive
+		return;		
+	}
+
+	assert( m_pLaserSpot != NULL );
+
+	Vector forward, vecSrc, vecEnd, origin, angles, view_ofs;
+
+	gEngfuncs.GetViewAngles( (float *)angles );
+			
+	AngleVectors( angles, forward, NULL, NULL );
+	gEngfuncs.pEventAPI->EV_LocalPlayerViewheight( view_ofs );
+
+	vecSrc = player->origin + view_ofs;
+	vecEnd = vecSrc + forward * 8192.0f;
+
+	pmtrace_t *trace = gEngfuncs.PM_TraceLine( vecSrc, vecEnd, PM_TRACELINE_ANYVISIBLE, 2, -1 );
+
+	// update laserspot endpos
+	m_pLaserSpot->entity.origin = trace->endpos;
+	m_pLaserSpot->die = gEngfuncs.GetClientTime() + 0.1f;
+}
+
 /*
 =========================
 HUD_CreateEntities
@@ -535,6 +593,8 @@ void DLLEXPORT HUD_CreateEntities( void )
 #if defined( BEAM_TEST )
 	Beams();
 #endif
+	// predictable laserdot
+	CL_UpdateLaserSpot();
 
 	// Add in any game specific objects
 	Game_AddObjects();

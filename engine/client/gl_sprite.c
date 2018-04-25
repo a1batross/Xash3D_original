@@ -28,6 +28,7 @@ GNU General Public License for more details.
 
 convar_t		*r_sprite_lerping;
 convar_t		*r_sprite_lighting;
+char		sprite_name[MAX_QPATH];
 char		group_suffix[8];
 static uint	r_texFlags = 0;
 static int	sprite_version;
@@ -67,12 +68,12 @@ static dframetype_t *R_SpriteLoadFrame( model_t *mod, void *pin, mspriteframe_t 
 	// build uinque frame name
 	if( FBitSet( mod->flags, MODEL_CLIENT )) // it's a HUD sprite
 	{
-		Q_snprintf( texname, sizeof( texname ), "#HUD/%s_%s_%i%i.spr", mod->name, group_suffix, num / 10, num % 10 );
+		Q_snprintf( texname, sizeof( texname ), "#HUD/%s(%s:%i%i).spr", sprite_name, group_suffix, num / 10, num % 10 );
 		gl_texturenum = GL_LoadTexture( texname, pin, pinframe->width * pinframe->height * bytes, r_texFlags, NULL );
 	}
 	else
 	{
-		Q_snprintf( texname, sizeof( texname ), "#%s_%s_%i%i.spr", mod->name, group_suffix, num / 10, num % 10 );
+		Q_snprintf( texname, sizeof( texname ), "#%s(%s:%i%i).spr", sprite_name, group_suffix, num / 10, num % 10 );
 		gl_texturenum = GL_LoadTexture( texname, pin, pinframe->width * pinframe->height * bytes, r_texFlags, NULL );
 	}	
 
@@ -223,6 +224,9 @@ void Mod_LoadSpriteModel( model_t *mod, const void *buffer, qboolean *loaded, ui
 		return;
 	}
 
+	Q_strncpy( sprite_name, mod->name, sizeof( sprite_name ));
+	COM_StripExtension( sprite_name );
+
 	if( numi == NULL )
 	{
 		rgbdata_t	*pal;
@@ -273,15 +277,15 @@ void Mod_LoadSpriteModel( model_t *mod, const void *buffer, qboolean *loaded, ui
 		switch( frametype )
 		{
 		case FRAME_SINGLE:
-			Q_strncpy( group_suffix, "one", sizeof( group_suffix ));
+			Q_strncpy( group_suffix, "frame", sizeof( group_suffix ));
 			pframetype = R_SpriteLoadFrame( mod, pframetype + 1, &psprite->frames[i].frameptr, i );
 			break;
 		case FRAME_GROUP:
-			Q_strncpy( group_suffix, "grp", sizeof( group_suffix ));
+			Q_strncpy( group_suffix, "group", sizeof( group_suffix ));
 			pframetype = R_SpriteLoadGroup( mod, pframetype + 1, &psprite->frames[i].frameptr, i );
 			break;
 		case FRAME_ANGLED:
-			Q_strncpy( group_suffix, "ang", sizeof( group_suffix ));
+			Q_strncpy( group_suffix, "angle", sizeof( group_suffix ));
 			pframetype = R_SpriteLoadGroup( mod, pframetype + 1, &psprite->frames[i].frameptr, i );
 			break;
 		}
@@ -312,9 +316,9 @@ void Mod_LoadMapSprite( model_t *mod, const void *buffer, size_t size, qboolean 
 
 	if( loaded ) *loaded = false;
 	Q_snprintf( texname, sizeof( texname ), "#%s", mod->name );
-	host.overview_loading = true;
+	Image_SetForceFlags( IL_OVERVIEW );
 	pix = FS_LoadImage( texname, buffer, size );
-	host.overview_loading = false;
+	Image_ClearForceFlags();
 	if( !pix ) return;	// bad image or something else
 
 	mod->type = mod_sprite;
@@ -426,33 +430,35 @@ void Mod_UnloadSpriteModel( model_t *mod )
 	mspriteframe_t	*pspriteframe;
 	int		i, j;
 
-	ASSERT( mod != NULL );
+	Assert( mod != NULL );
 
-	if( mod->type != mod_sprite )
-		return; // not a sprite
-
-	psprite = mod->cache.data;
-	if( !psprite ) return; // already freed
-
-	// release all textures
-	for( i = 0; i < psprite->numframes; i++ )
+	if( mod->type == mod_sprite )
 	{
-		if( host.type == HOST_DEDICATED )
-			break; // nothing to release
-
-		if( psprite->frames[i].type == SPR_SINGLE )
+		if( host.type != HOST_DEDICATED )
 		{
-			pspriteframe = psprite->frames[i].frameptr;
-			GL_FreeTexture( pspriteframe->gl_texturenum );
-		}
-		else
-		{
-			pspritegroup = (mspritegroup_t *)psprite->frames[i].frameptr;
+			psprite = mod->cache.data;
 
-			for( j = 0; j < pspritegroup->numframes; j++ )
+			if( psprite )
 			{
-				pspriteframe = pspritegroup->frames[i];
-				GL_FreeTexture( pspriteframe->gl_texturenum );
+				// release all textures
+				for( i = 0; i < psprite->numframes; i++ )
+				{
+					if( psprite->frames[i].type == SPR_SINGLE )
+					{
+						pspriteframe = psprite->frames[i].frameptr;
+						GL_FreeTexture( pspriteframe->gl_texturenum );
+					}
+					else
+					{
+						pspritegroup = (mspritegroup_t *)psprite->frames[i].frameptr;
+
+						for( j = 0; j < pspritegroup->numframes; j++ )
+						{
+							pspriteframe = pspritegroup->frames[i];
+							GL_FreeTexture( pspriteframe->gl_texturenum );
+						}
+					}
+				}
 			}
 		}
 	}
@@ -477,7 +483,7 @@ mspriteframe_t *R_GetSpriteFrame( const model_t *pModel, int frame, float yaw )
 	int		i, numframes;
 	float		targettime;
 
-	ASSERT( pModel );
+	Assert( pModel != NULL );
 	psprite = pModel->cache.data;
 
 	if( frame < 0 )
@@ -486,7 +492,8 @@ mspriteframe_t *R_GetSpriteFrame( const model_t *pModel, int frame, float yaw )
 	}
 	else if( frame >= psprite->numframes )
 	{
-		MsgDev( D_WARN, "R_GetSpriteFrame: no such frame %d (%s)\n", frame, pModel->name );
+		if( frame > psprite->numframes )
+			MsgDev( D_WARN, "R_GetSpriteFrame: no such frame %d (%s)\n", frame, pModel->name );
 		frame = psprite->numframes - 1;
 	}
 
@@ -768,14 +775,6 @@ qboolean R_SpriteOccluded( cl_entity_t *e, vec3_t origin, float *pscale )
 	{
 		float	blend;
 		vec3_t	v;
-
-		// don't reflect this entity in mirrors
-		if( e->curstate.effects & EF_NOREFLECT && RI.params & RP_MIRRORVIEW )
-			return true;
-
-		// draw only in mirrors
-		if( e->curstate.effects & EF_REFLECTONLY && !( RI.params & RP_MIRRORVIEW ))
-			return true;
 
 		TriWorldToScreen( origin, v );
 

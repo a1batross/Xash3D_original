@@ -206,7 +206,7 @@ qboolean PM_RecursiveHullCheck( hull_t *hull, int num, float p1f, float p2f, vec
 	float		frac, midf;
 	int		side;
 	vec3_t		mid;
-
+loc0:
 	// check for empty
 	if( num < 0 )
 	{
@@ -223,7 +223,7 @@ qboolean PM_RecursiveHullCheck( hull_t *hull, int num, float p1f, float p2f, vec
 
 	if( hull->firstclipnode >= hull->lastclipnode )
 	{
-		// studiotrace issues
+		// empty hull?
 		trace->allsolid = false;
 		trace->inopen = true;
 		return true;
@@ -236,21 +236,20 @@ qboolean PM_RecursiveHullCheck( hull_t *hull, int num, float p1f, float p2f, vec
 	node = hull->clipnodes + num;
 	plane = hull->planes + node->planenum;
 
-	if( plane->type < 3 )
-	{
-		t1 = p1[plane->type] - plane->dist;
-		t2 = p2[plane->type] - plane->dist;
-	}
-	else
-	{
-		t1 = DotProduct( plane->normal, p1 ) - plane->dist;
-		t2 = DotProduct( plane->normal, p2 ) - plane->dist;
-	}
+	t1 = PlaneDiff( p1, plane );
+	t2 = PlaneDiff( p2, plane );
 
 	if( t1 >= 0.0f && t2 >= 0.0f )
-		return PM_RecursiveHullCheck( hull, node->children[0], p1f, p2f, p1, p2, trace );
+	{
+		num = node->children[0];
+		goto loc0;
+	}
+
 	if( t1 < 0.0f && t2 < 0.0f )
-		return PM_RecursiveHullCheck( hull, node->children[1], p1f, p2f, p1, p2, trace );
+	{
+		num = node->children[1];
+		goto loc0;
+	}
 
 	// put the crosspoint DIST_EPSILON pixels on the near side
 	side = (t1 < 0.0f);
