@@ -16,6 +16,29 @@ VGUI:	- a VGUI implementation code in xash.dll
 Memory:	- a memory manager in xash.dll
 Physic:	- a server physics code in xash.dll
 
+build 4140
+
+Engine: finalize custom bsp lumps representation standard (see bspfile.h for details)
+Engine: decal_t struct is some expanded with reserved variables for mod-makers
+Engine: client trace is now allowed trace mins and trace maxs same as on the server (see EventAPI for details)
+Render: added special texture that called "alphacontrast" (for MSAA)
+Engine: implement new debug system of visualization collision hulls (original code from TyrQuake), cvar called "r_showhull"
+Memory: remove code that clumps small allocations (no need anymore)
+Client: fixed bug with hot precache in singleplayer
+Sound: increase MAX_SENTENCES up to 4096 (and do some changes with network proto, but keep compatible with previous version)
+Client: fixed bug with downloading resources "in-game"
+Client: fixed bug with ScreenFade duration
+Client: r_speeds message string increased up to 2048 characters
+Render: now models can use deluxe map vectors for more realistic lighting (Note: ENGINE_LOAD_DELUXEDATA must be set)
+Render: fix alias models flip code for viewmodel
+Render: remove image gamma processing, only lightmaps.
+Render: implement support alpha to coverage mode for MSAA processing
+Render: fixed very old bug with broken lightmaps on individual brush models in Quake (like shells, healthkits etc)
+Render: now MSAA can be controlled dynamically in game
+Engine: some code changes for support new MSVC compilers
+Server: fixed trigger_endsection
+Server: fixed unlag code
+
 build 4097
 
 Client: implement predictable laser spot for weapon RPG

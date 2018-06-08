@@ -10,6 +10,7 @@ backup.lst
 backup.bat
 release.bat
 change.log
+gnu.txt
 
 cl_dll\
 cl_dll\hl\

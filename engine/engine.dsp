@@ -404,6 +404,10 @@ SOURCE=.\common\mod_bmodel.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\common\mod_dbghulls.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\common\mod_studio.c
 # End Source File
 # Begin Source File
