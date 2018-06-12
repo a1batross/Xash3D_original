@@ -1,3 +1,0 @@
-colorstrings support:
-Font.cpp
-TextImage.cpp

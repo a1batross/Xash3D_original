@@ -16,6 +16,12 @@ VGUI:	- a VGUI implementation code in xash.dll
 Memory:	- a memory manager in xash.dll
 Physic:	- a server physics code in xash.dll
 
+build 4143
+
+Engine: fixed crash with debug collision hulls
+Engine: fixed bug with bsp-lumps management functions
+Engine: some minor changes
+
 build 4140
 
 Engine: finalize custom bsp lumps representation standard (see bspfile.h for details)

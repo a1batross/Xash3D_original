@@ -39,6 +39,18 @@ Package=<4>
 
 ###############################################################################
 
+Project: "game"=.\game_launch\game.dsp - Package Owner=<4>
+
+Package=<5>
+{{{
+}}}
+
+Package=<4>
+{{{
+}}}
+
+###############################################################################
+
 Project: "mainui"=.\mainui\mainui.dsp - Package Owner=<4>
 
 Package=<5>

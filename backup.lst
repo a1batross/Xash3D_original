@@ -27,7 +27,6 @@ engine\common\imagelib\
 engine\common\soundlib\
 pm_shared\
 mainui\
-mainui\legacy
 utils\
 utils\vgui\
 utils\vgui\include\
