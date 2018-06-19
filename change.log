@@ -16,6 +16,24 @@ VGUI:	- a VGUI implementation code in xash.dll
 Memory:	- a memory manager in xash.dll
 Physic:	- a server physics code in xash.dll
 
+build 4150
+
+Server: fixed a very old bug with ambient_generic restating sounds after save\restore
+Client: first implementation of playback Quake demos. May be bugly
+Engine: rewrite static entities proto. Now available full entity_state_t across network instead of sv_static_entity_t
+Physic: fixed bug with underwater fog
+Client: fixed bug with TE_BEAMCYLINDER message (houndeye attack)
+Render: optimize R_RecursiveWorldNode
+Render: fixed a bug with bonecontrollers in internal studio renderer
+Render: added experimental commandline option -glcore to switch to WGL_CONTEXT_CORE_PROFILE instead of WGL_CONTEXT_COMPATIBILITY_PROFILE
+FS: fixed a bug with custom dll loader in some cases
+Engine: added a fatal error if gfx.wad is missed (needes to rendering console chars)
+Input: potentially fix a bug with camera infinity rotation after vid_mode change
+Engine: now maploader shows list of really used wads in the loaded map
+Network: change the MSG_WriteCoord multiplier to allow coords +\- 32768
+Sound: fixed a crash while playing too small mp3 sounds
+Engine: allow console command "reload" from commandline
+
 build 4143
 
 Engine: fixed crash with debug collision hulls

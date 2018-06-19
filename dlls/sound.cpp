@@ -140,7 +140,7 @@ LINK_ENTITY_TO_CLASS( ambient_generic, CAmbientGeneric );
 TYPEDESCRIPTION	CAmbientGeneric::m_SaveData[] = 
 {
 	DEFINE_FIELD( CAmbientGeneric, m_flAttenuation, FIELD_FLOAT ),
-	DEFINE_FIELD( CAmbientGeneric, m_fActive, FIELD_BOOLEAN ),
+//	DEFINE_FIELD( CAmbientGeneric, m_fActive, FIELD_BOOLEAN ),
 	DEFINE_FIELD( CAmbientGeneric, m_fLooping, FIELD_BOOLEAN ),
 
 	// HACKHACK - This is not really in the spirit of the save/restore design, but save this

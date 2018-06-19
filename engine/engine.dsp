@@ -164,6 +164,10 @@ SOURCE=.\client\cl_custom.c
 # End Source File
 # Begin Source File
 
+SOURCE=.\client\cl_debug.c
+# End Source File
+# Begin Source File
+
 SOURCE=.\client\cl_demo.c
 # End Source File
 # Begin Source File
@@ -197,6 +201,10 @@ SOURCE=.\client\cl_parse.c
 # Begin Source File
 
 SOURCE=.\client\cl_pmove.c
+# End Source File
+# Begin Source File
+
+SOURCE=.\client\cl_qparse.c
 # End Source File
 # Begin Source File
 
