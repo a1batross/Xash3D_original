@@ -16,6 +16,65 @@ VGUI:	- a VGUI implementation code in xash.dll
 Memory:	- a memory manager in xash.dll
 Physic:	- a server physics code in xash.dll
 
+build 4253
+
+Render: remove flags TF_TEXTURE_1D, TF_TEXTURE_2D_ARRAY it's just not needs
+Engine: RenderAPI added new functions GL_UpdateTexSize for statistics
+FS: wad imagetypes is no more longer supported (prefixes _mask, _norm etc)
+Server: PhysicAPI was reimplemented PrepWorldFrame instead of obsolete function pfnCreateEntitiesInTransitionList
+Engine: most debug messages was replaced from MsgDev with Con_Printf, Con_Dprintf and Con_Reportf
+Sound: s_combine_channels is now set 0 as default
+Console: buffer scrolling reset while new command or autocomplete issued
+Client: fixup server beams pause bug
+Client: remove interpolation experiments
+Client: fixed bug with default renderamt value while rendermode is normal (beam brightness)
+Client: internal studio lerp is now not switch the movetype to MOVETYPE_STEP to avoid collisions in custom renderers
+Client: user messages now is case-insensative (GoldSrc rules)
+Client: create deferred startup commands for Cry Of Fear background map system
+Client: change query format to the master-server
+Client: fixed bug with large sentence indexes (up to 2048)
+Client: eliminate Cry Of Fear anti-save protecion (because it's stupid)
+Client: fixed Quake demo players rendering in multiplayer demos
+Client: allow CD forcetrack in Quake demos
+Render: correct seamless between beam segments
+Render: reduce brightness for decals on semi-transparent surfaces
+Render: get support for compressed image format ATI2N (normalmaps)
+Render: rectangle textures is not nessesary to match with current screen resolution
+Render: translate gl-errors code to string while loading textures
+Render: texture manager is completely rewritten, some bugs is fixed
+Render: rotate culling bbox for static client entities for right culling
+Render: improve r_lighting_extended, get lighting from ceiling or bmodels if world light gather is failed (completely black)
+Render: fix fog rendering for Spirit 1.6 and higher
+Render: remove alpha to coverage mode, it's too bugly
+Render: remove auto-generation for detail textures list
+Render: correct fog for studio parts with 'additive' and 'masked' flag
+Render: fixup some bugs in alpha-blend sorting
+Render: remove -glcore setting it has no effect
+Render: restore "width" and "height" read-only console cvars, it's used by debug systems of XashXT
+Sound: dsp_off now saved into config.cfg
+Sound: fix crash in dsp processing
+Sound: eliminate stupid message FS_LoadSound: couldn't load ""
+Sound: default sound is now keep in memory permanently
+Sound: fix playing for CHAN_STREAM
+VGUI: revision for string rendering, fix some bugs
+Console: tune linewidth length
+FS: grab field "edicts" from liblist.gam that used to conversion into gameinfo.txt
+Engine: IMPORTANT: console variable "build" is renamed to "buildnum" to avoid confilcs with gameplay command in TeamFortress!!!
+Engine: disallow to load save, change map or somewhat until finale credits is active
+Input: properly pass key events into client user-side
+Engine: fix bug in custom library loader
+Studio: correct bbox compute for giantic models
+Engine: revert old code for PVS to keep it compressed (save memory)
+Engine: flag for ignore lightmaps SURF_DRAWTILED is now based once and only by TEX_SPECIAL flag (not a special texture names)
+Engine: prevent to potential crash if logfile couldn't be created
+Sound: fix crash while playing mp3 files through ambient_generic
+Server: making freezing player on background maps an options that called "sv_background_freeze" (console variable)
+Server: keep network messages for one frame before changelevel and send them during changelevel (GoldSrc rules).
+Server: fix critical bug in pfnSetModel function
+Server: NPC is now ignore corpses and don't stuck into them
+Server: physics pusher is now completely matched with GoldSrc (but extended version can be enabled by engine feature)
+GameUI: fix savegame menu bugs after engine global update
+
 build 4150
 
 Server: fixed a very old bug with ambient_generic restating sounds after save\restore
