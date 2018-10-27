@@ -58,9 +58,10 @@ int		uiColorWhite	= 0xFFFFFFFF;	// 255, 255, 255, 255	// useful for bitmaps
 int		uiColorDkGrey	= 0xFF404040;	// 64,  64,  64,  255	// shadow and grayed items
 int		uiColorBlack	= 0xFF000000;	//  0,   0,   0,  255	// some controls background
 int		uiColorConsole	= 0xFFF0B418;	// just for reference 
+int		uiColorSelect	= 0xFF503818;	// 80,  56,  24,  255
 
 // color presets (this is nasty hack to allow color presets to part of text)
-const int g_iColorTable[8] =
+int g_iColorTable[8] =
 {
 0xFF000000, // black
 0xFFFF0000, // red
@@ -68,7 +69,7 @@ const int g_iColorTable[8] =
 0xFFFFFF00, // yellow
 0xFF0000FF, // blue
 0xFF00FFFF, // cyan
-0xFFF0B418, // dialog or button letters color
+0xFFF0B418, // INPUT_TEXT_COLOR
 0xFFFFFFFF, // white
 };
 
@@ -1424,12 +1425,21 @@ void UI_ApplyCustomColors( void )
 		{
 			UI_ParseColor( pfile, &uiColorConsole );
 		}
+		else if( !stricmp( token, "SELECT_TEXT_COLOR" ))
+		{
+			UI_ParseColor( pfile, &uiColorSelect );
+		}
 	}
 
 	int	r, g, b;
 
 	UnpackRGB( r, g, b, uiColorConsole );
 	ConsoleSetColor( r, g, b );
+
+	// replace some colors in table (key controls)
+	g_iColorTable[3] = uiPromptFocusColor;
+	g_iColorTable[6] = uiInputTextColor;
+
 
 	FREE_FILE( afile );
 }

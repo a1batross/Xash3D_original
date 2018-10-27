@@ -43,7 +43,7 @@ Foundation, Inc., 59 Temple Place - Suite 330, Boston, MA  02111-1307, USA.
 #define TYPE_LENGTH		16
 #define NAME_SPACE		4
 #define NAME_LENGTH		32+TYPE_LENGTH
-#define VER_LENGTH		6+NAME_LENGTH
+#define VER_LENGTH		8+NAME_LENGTH
 #define SIZE_LENGTH		10+VER_LENGTH
 
 typedef struct
@@ -214,7 +214,7 @@ static void UI_CustomGame_Callback( void *self, int event )
 	case ID_YES:
 		// restart all engine systems with new game
 		char cmd[128];
-		sprintf( cmd, "game %s\n", uiCustomGame.modsDir[uiCustomGame.modList.curItem] );
+		sprintf( cmd, "game \"%s\"\n", uiCustomGame.modsDir[uiCustomGame.modList.curItem] );
 		CLIENT_COMMAND( FALSE, cmd );
 		UI_EndGameDialog();
 		break;

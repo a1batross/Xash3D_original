@@ -550,7 +550,6 @@ void UI_ScrollList_Draw( menuScrollList_s *sl )
 	int	justify;
 	int	shadow;
 	int	i, x, y, w, h;
-	int	selColor = 0xFF503818; // Red 80, Green 56, Blue 24, Alpha 255
 	int	arrowWidth, arrowHeight, upX, upY, downX, downY;
 	int	upFocus, downFocus, scrollbarFocus;
 
@@ -591,7 +590,7 @@ void UI_ScrollList_Draw( menuScrollList_s *sl )
 
 			if( i == sl->curItem )
 			{
-				UI_FillRect( sl->generic.x, y, sl->generic.width - arrowWidth, sl->generic.charHeight, selColor );
+				UI_FillRect( sl->generic.x, y, sl->generic.width - arrowWidth, sl->generic.charHeight, uiColorSelect );
 				break;
 			}
 		}
@@ -2172,7 +2171,7 @@ void UI_PicButton_Draw( menuPicButton_s *item )
  	if( item->generic.bPressed )
  		state = BUTTON_PRESSED;
 
-	if( item->generic.statusText && item->generic.flags & QMF_NOTIFY )
+	if( item->generic.statusText && item->generic.flags & QMF_NOTIFY && !FBitSet( gMenu.m_gameinfo.flags, GFL_NOSKILLS ))
 	{
 		int	charW, charH;
 		int	x, w;
