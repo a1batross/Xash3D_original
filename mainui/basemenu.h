@@ -319,12 +319,12 @@ void UI_PicButton_Draw( menuPicButton_s *item );
 extern cvar_t	*ui_precache;
 extern cvar_t	*ui_showmodels;
 
-#define BACKGROUND_ROWS	3
-#define BACKGROUND_COLUMNS	4
+#define MAX_BACKGROUNDS	48 // SC 5.0 have 35 tiled backgrounds!
 
 typedef struct
 {
 	HIMAGE	hImage;
+	int	x, y;
 	int	width;
 	int	height;
 } bimage_t;
@@ -346,7 +346,8 @@ typedef struct
 	HIMAGE		hFont;		// mainfont
 
 	// handle steam background images
-	bimage_t		m_SteamBackground[BACKGROUND_ROWS][BACKGROUND_COLUMNS];
+	bimage_t		m_SteamBackground[MAX_BACKGROUNDS];
+	int		m_iBackgroundCount;
 	float		m_flTotalWidth;
 	float		m_flTotalHeight;
 	bool		m_fHaveSteamBackground;

@@ -16,6 +16,18 @@ VGUI:	- a VGUI implementation code in xash.dll
 Memory:	- a memory manager in xash.dll
 Physic:	- a server physics code in xash.dll
 
+build 4312
+
+Client: demos moved from folder that called "demos" into the root of gamefolder
+Client: demoshots are removed
+Client: automatically detection of demo type (Quake or Xash3D)
+Render: a new debug visualization of world bsp-tree (cvar r_showtree 0\1)
+Render: do a some corrections for Quake fog settings
+Client: fix bug playing AVI with compressed soundtracks
+Input: ignore to suspend display while game window is foreground 
+Server: development command that called "nextmap". change the maps with alphabethical order
+GameUI: fully support for steam background splashes (with BackgroundLayout.txt script)
+
 build 4281
 
 GameUI: new gameinfo setting "noskills" 0/1 that disables sub-menu for skill selection

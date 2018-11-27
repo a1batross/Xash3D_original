@@ -341,36 +341,104 @@ void UI_DrawBackground_Callback( void *self )
 		return;
 	}
 
-	int xpos, ypos;
 	float xScale, yScale;
 
 	// work out scaling factors
-	xScale = ScreenWidth / uiStatic.m_flTotalWidth;
-	yScale = ScreenHeight / uiStatic.m_flTotalHeight;
+	if( ScreenWidth * uiStatic.m_flTotalHeight > ScreenHeight * uiStatic.m_flTotalWidth )
+	{
+		xScale = ScreenWidth / uiStatic.m_flTotalWidth;
+		yScale = xScale;
+	}
+	else
+	{
+		yScale = ScreenHeight / uiStatic.m_flTotalHeight;
+		xScale = yScale;
+	}
 
 	// iterate and draw all the background pieces
-	ypos = 0;
-	for (int y = 0; y < BACKGROUND_ROWS; y++)
+	for( int i = 0; i < uiStatic.m_iBackgroundCount; i++ )
 	{
-		xpos = 0;
-		for (int x = 0; x < BACKGROUND_COLUMNS; x++)
-		{
-			bimage_t &bimage = uiStatic.m_SteamBackground[y][x];
+		bimage_t &bimage = uiStatic.m_SteamBackground[i];
+		int dx = (int)ceil( bimage.x * xScale );
+		int dy = (int)ceil( bimage.y * yScale );
+		int dw = (int)ceil( bimage.width * xScale );
+		int dt = (int)ceil( bimage.height * yScale );
 
-			int dx = (int)ceil(xpos * xScale);
-			int dy = (int)ceil(ypos * yScale);
-			int dw = (int)ceil(bimage.width * xScale);
-			int dt = (int)ceil(bimage.height * yScale);
-
-			if (x == 0) dx = 0;
-			if (y == 0) dy = 0;
-
-			PIC_Set( bimage.hImage, 255, 255, 255, 255 );
-			PIC_Draw( dx, dy, dw, dt );
-			xpos += bimage.width;
-		}
-		ypos += uiStatic.m_SteamBackground[y][0].height;
+		PIC_Set( bimage.hImage, 255, 255, 255, 255 );
+		PIC_Draw( dx, dy, dw, dt );
 	}
+}
+
+/*
+=================
+UI_LoadSteamBackground
+=================
+*/
+bool UI_LoadSteamBackground( void )
+{
+	char *afile = NULL, *pfile;
+	char token[4096];
+
+	bool loaded = false;
+
+	afile = (char *)LOAD_FILE( "resource/BackgroundLayout.txt", NULL );
+	uiStatic.m_iBackgroundCount = 0;
+
+	if( !afile ) return false;
+
+	pfile = afile;
+
+	pfile = COM_ParseFile( pfile, token );
+	if( !pfile || stricmp( token, "resolution" )) // resolution at first!
+		goto cleanup;
+
+	pfile = COM_ParseFile( pfile, token );
+	if( !pfile ) goto cleanup;
+
+	uiStatic.m_flTotalWidth = atoi( token );
+
+	pfile = COM_ParseFile( pfile, token );
+	if( !pfile ) goto cleanup;
+
+	uiStatic.m_flTotalHeight = atoi( token );
+
+	// Now read all tiled background list
+	while(( pfile = COM_ParseFile( pfile, token )) != NULL )
+	{
+		bimage_t img;
+
+		if( !FILE_EXISTS( token ))
+			goto cleanup;
+
+		img.hImage = PIC_Load( token, PIC_NOFLIP_TGA );
+
+		if( !img.hImage ) goto cleanup;
+
+		// ignore "scaled" attribute. What does it mean?
+		pfile = COM_ParseFile( pfile, token );
+		if( !pfile ) goto cleanup;
+
+		pfile = COM_ParseFile( pfile, token );
+		if( !pfile ) goto cleanup;
+		img.x = atoi( token );
+
+		pfile = COM_ParseFile( pfile, token );
+		if( !pfile ) goto cleanup;
+		img.y = atoi( token );
+
+		img.width = PIC_Width( img.hImage );
+		img.height = PIC_Height( img.hImage );
+
+		uiStatic.m_SteamBackground[uiStatic.m_iBackgroundCount] = img;
+		uiStatic.m_iBackgroundCount++;
+	}
+
+	loaded = true;
+
+cleanup:
+	FREE_FILE( afile );
+
+	return loaded;
 }
 
 /*
@@ -380,44 +448,14 @@ UI_LoadBackgroundImage
 */
 void UI_LoadBackgroundImage( void )
 {
-	int num_background_images = 0;
-	char filename[512];
-
-	for( int y = 0; y < BACKGROUND_ROWS; y++ )
+	if( UI_LoadSteamBackground( ))
 	{
-		for( int x = 0; x < BACKGROUND_COLUMNS; x++ )
-		{
-			sprintf( filename, "resource/background/800_%d_%c_loading.tga", y + 1, 'a' + x );
-			if (g_engfuncs.pfnFileExists( filename, TRUE ))
-				num_background_images++;
-		}
-	}
-
-	if (num_background_images == (BACKGROUND_COLUMNS * BACKGROUND_ROWS))
 		uiStatic.m_fHaveSteamBackground = TRUE;
-	else uiStatic.m_fHaveSteamBackground = FALSE;
-
-	if (uiStatic.m_fHaveSteamBackground)
-	{
-		uiStatic.m_flTotalWidth = uiStatic.m_flTotalHeight = 0.0f;
-
-		for( int y = 0; y < BACKGROUND_ROWS; y++ )
-		{
-			for( int x = 0; x < BACKGROUND_COLUMNS; x++ )
-			{
-				bimage_t &bimage = uiStatic.m_SteamBackground[y][x];
-				sprintf(filename, "resource/background/800_%d_%c_loading.tga", y + 1, 'a' + x);
-				bimage.hImage = PIC_Load( filename, PIC_NOFLIP_TGA );
-				bimage.width = PIC_Width( bimage.hImage );
-				bimage.height = PIC_Height( bimage.hImage );
-
-				if (y==0) uiStatic.m_flTotalWidth += bimage.width;
-				if (x==0) uiStatic.m_flTotalHeight += bimage.height;
-			}
-		}
 	}
 	else
 	{
+		uiStatic.m_fHaveSteamBackground = FALSE;
+
 		if( g_engfuncs.pfnFileExists( "gfx/shell/splash.bmp", TRUE ))
 		{
 			// if we doesn't have logo.avi in gamedir we don't want to draw it
