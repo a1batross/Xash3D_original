@@ -16,6 +16,18 @@ VGUI:	- a VGUI implementation code in xash.dll
 Memory:	- a memory manager in xash.dll
 Physic:	- a server physics code in xash.dll
 
+build 4344
+
+Render: added scroll-side effect on world surfaces like Doom (and for Doom Remake)
+Client: quake demos with invalid proto no more invoked Host_Error, just stopped.
+Render: implenet custom external palette for Quake Wrapper
+Render: disable luma-pixels for non-Quake palette
+Render: allow HD-textures on alias models
+Console: disable colored strings on non-luminance conchars to avoid color degradation
+ImageLib: more reliable alpha detection for .lmp images
+ImageLib: check 'conchars' image by matched size
+
+
 build 4312
 
 Client: demos moved from folder that called "demos" into the root of gamefolder
