@@ -5,10 +5,10 @@ echo 			Prepare source for backup
 echo.
 
 if exist backup.log del /f /q backup.log
-if not exist D:\!backup/ mkdir D:\!backup\
+if not exist D:\Xash3D\!backup/ mkdir D:\Xash3D\!backup\
 echo 			     Prepare OK!
 echo 		     Please wait: backup in progress
-C:\Progra~1\WinRar\rar a -agMMMYYYY-DD D:\!backup\.rar -dh -m5 @backup.lst >>backup.log
+C:\Progra~1\WinRar\rar a -agMMMYYYY-DD D:\Xash3D\!backup\.rar -dh -m5 @backup.lst >>backup.log
 if errorlevel 1 goto error
 if errorlevel 0 goto ok
 :ok

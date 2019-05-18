@@ -16,6 +16,33 @@ VGUI:	- a VGUI implementation code in xash.dll
 Memory:	- a memory manager in xash.dll
 Physic:	- a server physics code in xash.dll
 
+build 4483
+
+Engine: implementation of improved line trace that can be collided with solid-pixels on grates or fences. (see features.h for details)
+Render: new param to request total video memory that allocated by textures (for debug purpoces)
+Engine: contents detection for PM-code was rewritten to close match with GoldSrc
+Client: fix bug with hot-precaching on the client-side
+Client: tune some constants in R_DrawDisk function
+Render: get support for DDS Luminaince textures
+Render: cleanup some bugs with dedicated server
+Client: fixup bug with AVI-sound (was placed into previous version)
+Engine: fix function that checks allowed file extensions for downloading
+Engine: fix potentially stack overflow in CRC32_MapFile.
+Engine: restore variable host_serverstate (XashXT uses this)
+Engine: in multiplayer-mode when fps_max is 0 force to default fps (100) to avoid confuse users
+Input:  auto-bind "cancelselect" command while called "unbindall"
+Engine: fixup range-errors in Mod_BoxLeafnums
+Engine: revision of bsp lump serialization code
+Server: recalc attachment angles on a server (use new relationship)
+Network: check and clamp ranges on a network messages
+Network: initialized delta can be updated on a each new connection client (this prevents stuck client on an obsolete protocol when server is changed)
+Network: revision of fragment header length
+ImageLib: fix detection alpha in DXT3 format
+Server: "nextmap" command is now used "con_mapfilter" value
+Server: fix bug in SET_MODEL function
+Server: fix some bugs with KeyValues memory deallocation
+Server: fix a typos in unlag code
+
 build 4344
 
 Render: added scroll-side effect on world surfaces like Doom (and for Doom Remake)
