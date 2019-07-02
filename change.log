@@ -16,6 +16,10 @@ VGUI:	- a VGUI implementation code in xash.dll
 Memory:	- a memory manager in xash.dll
 Physic:	- a server physics code in xash.dll
 
+build 4529
+
+Render: add support for hardware compression 3DC for old ATI-cards
+
 build 4511
 
 Engine: some expansion of RenderAPI (with keep compatibility of course)
